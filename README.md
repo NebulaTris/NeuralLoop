@@ -45,8 +45,6 @@ Built for developers, engineers, researchers, and lifelong learners, NeuralLoop 
 
 <summary>Idea Reference</summary>
 
-### You can add a header
-
 We talk a lot about AI writing code. We don’t really talk about AI helping us learn better.
 
 Recently I finished reading Designing Machine Learning Systems by Chip Huyen. I grabbed the PDF in a Humble Bundle a while ago (and it’s genuinely a great read if you’re building modern ML systems!)
@@ -73,5 +71,12 @@ Audio + text → dual coding
 Self-quiz with AI → active recall
 
 Worth trying if you've got technical books gathering dust. how to automate this workflow and code
-
+<details>
+  <summary>Links to follow</summary>
+  https://chatgpt.com/share/69fe1f1c-9a98-8323-96b6-c4198c522c14
+  
+  https://www.xda-developers.com/engineer-behind-notebooklms-best-feature-showed-me-his-exact-setup/
+  
+  https://www.makeuseof.com/used-claude-and-notebooklm-for-research-theyre-solving-different-problems/
+</details>
 </details>
