@@ -1,6 +1,6 @@
 ## NeuralLoop
 
-NeuralLoop is an AI-powered learning operating system that transforms technical books, research papers, and dense educational content into interactive learning loops designed for long-term retention instead of passive consumption.
+NeuralLoop is an AI-powered learning system that transforms technical books, research papers, and dense educational content into interactive learning loops designed for long-term retention instead of passive consumption.
 
 Instead of simply summarizing material, NeuralLoop combines AI-generated audio discussions, focused reading guidance, active recall, mind maps, architecture visualizations, and spaced repetition into a single workflow grounded in cognitive science principles like priming, dual coding, and retrieval practice.
 
