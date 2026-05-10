@@ -78,5 +78,7 @@ Worth trying if you've got technical books gathering dust. how to automate this 
   https://www.xda-developers.com/engineer-behind-notebooklms-best-feature-showed-me-his-exact-setup/
   
   https://www.makeuseof.com/used-claude-and-notebooklm-for-research-theyre-solving-different-problems/
+
+  https://claude.ai/share/2bfd6486-7024-4b5c-bda1-509bcecca3c7
 </details>
 </details>
