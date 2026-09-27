@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NeuralLoop study site</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fredoka:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="pip-poses.js"></script>
+<script src="book-data.js"></script>
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <div class="brand"><span class="pipicon pip moving" id="pipicon"></span><div><p>NeuralLoop · made with NotebookLM</p><h1 id="booktitle">Your book</h1></div></div>
+  <nav class="tabs" aria-label="Sections"><button data-go="home">Chapters</button><button data-go="map">Book map</button><button data-go="review">Review</button></nav>
+</div></header>
+<main id="main"></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

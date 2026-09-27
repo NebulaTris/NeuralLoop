@@ -1,0 +1,159 @@
+# CLAUDE.md — working in the NeuralLoop repo
+
+Read this first, every session. Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
+(where it disagrees with this file or the specs, **this file and `docs/specs` win**; notably the repo license is **MIT**).
+
+## What this repo is
+
+NeuralLoop turns a book the user owns (PDF or EPUB) into five-step learning loops per chapter, made with Google NotebookLM:
+**Listen & watch → Read → Recall → Map → Remember**. Chapters unlock one at a time; the book map grows as chapters are mapped.
+Pip, a cute red panda, lives in the menu bar and nudges gently (never guilt).
+
+Three parts, one repo:
+
+| Part | Language | Path | Runs as |
+|---|---|---|---|
+| Book pipeline | Python 3.10+ | `pipeline` | `python pipeline/nl_book.py BOOK …` (the desktop app spawns this) |
+| Study site | JavaScript (ES modules, bundled) | `pipeline/site` | static files copied into each book folder |
+| Desktop app | Rust (Tauri 2) + JavaScript | `src-tauri`, `src` | `NeuralLoop Books.app` |
+
+## Golden rules
+
+1. **Test first.** Write the failing test, watch it fail, make it pass, refactor. Every task in `docs/specs` lists its tests.
+2. **Logic stays pure and tested; screens stay thin.** Pure logic belongs in `pipeline/neuralloop_books/*.py`,
+   `pipeline/site/src/core/*.js`, `src/js/logic.js` (or a new pure module next to it), and pure Rust functions like
+   `nudge::decide`. Screens (`pipeline/site/src/ui/*`, `src/js/*` other than logic) only render and wire events; cover them
+   with browser tests that click the real UI.
+3. **Never hand-edit generated files:**
+   `pipeline/site/app.js` (run `npm run build` in `pipeline/site`), `pipeline/site/pip-poses.js` and `src/pip-poses.js`
+   (run `python design/pip/generate_pip.py`), `src-tauri/icons/*` (run `npx tauri icon design/pip/app-icon.png`).
+4. **`make check` must pass before every commit.** It runs formatters, linters, and all tests.
+5. **Small commits** with imperative messages (`Add book import preview`, `Fix EPUB nav with nested lists`).
+6. **Respect contracts** (section "Contracts" below). If you change one, update this file and the tests in the same commit.
+7. **No secrets, no user books, no generated media in git.** `.gitignore` covers `node_modules/`, `target/`, `gen/`,
+   and book output folders (`neuralloop-*/`).
+8. **Copy for people is warm and plain.** Sentence case, no guilt ("You missed…" is never OK), errors say what happened and how
+   to fix it. Pip is never sad, angry, or disappointed.
+
+## Setup and commands
+
+```bash
+make setup      # once: pip install -e "pipeline[dev]" + playwright + chromium, npm install (root and pipeline/site)
+make test       # all tests
+make lint       # ruff, prettier --check, cargo fmt --check, clippy -D warnings
+make check      # lint + test (CI runs this: .github/workflows/check.yml)
+make site       # rebuild pipeline/site/app.js from pipeline/site/src
+npm run dev     # run the desktop app with hot reload (needs Rust: https://rustup.rs)
+npm run build   # build the .app/.dmg into src-tauri/target/release/bundle/
+python pipeline/nl_book.py --dry-run --out /tmp/demo   # whole pipeline offline with a fake NotebookLM
+```
+
+Per part: `cd pipeline && pytest -q` · `cd pipeline/site && npm test` · `cd src && npm test` ·
+`PYTHONPATH=pipeline pytest -q tests` (desktop browser tests) · `cd src-tauri && cargo test --lib`.
+
+The user's Python lives at `~/neuralloop-poc/.venv/bin/python` (3.12, has `notebooklm-py`); the app finds it automatically.
+
+## File map
+
+### `pipeline` — Python package `neuralloop_books`
+| File | Responsibility |
+|---|---|
+| `nl_book.py` | Entry point; friendly exit on Python < 3.10; calls `cli.main()` |
+| `neuralloop_books/cli.py` | Argument parsing, exit codes (0 ok, 2 invalid input, 3 not signed in, 130 interrupted), final summary |
+| `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run` (add sources, make items with a semaphore, quota handling, rebuild site after every item) |
+| `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, safety limits); front-matter filter |
+| `neuralloop_books/notebook.py` | `ChapterMaker.make(task, chapter)`: one item via notebooklm-py; `is_quota_error`; `open_client` |
+| `neuralloop_books/convert.py` | NotebookLM outputs → our formats: `loose_json`, `quiz`, `flashcards`, `study`, `concept_graph` |
+| `neuralloop_books/book_graph.py` | Chapter graphs → one Understand-Anything knowledge graph; `similar_to` links across chapters |
+| `neuralloop_books/state.py` | `BookState` (state.json): statuses, `apply_selection`, `pending`, `counts` |
+| `neuralloop_books/site.py` | Writes `book-data.js`, `knowledge-graph.json`, copies `site/{index.html,styles.css,app.js,pip-poses.js}` |
+| `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `ENUMS`) |
+| `neuralloop_books/selection.py` | `parse_selection("1-3,5", n)` |
+| `neuralloop_books/prompts.py` | Chat prompts (sent verbatim; long lines allowed) |
+| `neuralloop_books/config.py` | Task names, format/style enums, front-matter regex, timeouts, copy |
+| `neuralloop_books/testing.py` | `write_epub`, `write_pdf`, `LONG`: builders for test books, shared by all suites |
+| `tests` | Unit tests; `tests/e2e/test_study_site.py` drives the study site in Chromium |
+| `sample/sample-book.epub` | Bundled sample for dry runs |
+
+### `pipeline/site` — the study site (one per book)
+| File | Responsibility |
+|---|---|
+| `index.html`, `styles.css` | Page shell and styles (tokens at the top of `styles.css`) |
+| `src/main.js` | Routing, header nav, live refresh of `book-data.js` while the pipeline runs |
+| `src/core/fsrs.js` | FSRS-4.5 `grade`, `retrievability`, `formatWait` |
+| `src/core/loop.js` | `STAGES`, `completeStage`, `nextStage`, `isUnlocked` (chapter N needs N−1 closed), `isMapped` |
+| `src/core/cards.js` | `unlockedCards`, `dueCards` |
+| `src/core/recall.js` | `recallScore`, `namesMatch`, `compareRemake` (remake the mind map from memory) |
+| `src/core/growth.js` | `sproutPoint` (golden-angle spiral for the growing book map) |
+| `src/core/text.js` | `escapeHtml`, `markdownToHtml` with reading-plan labels, `withoutRepeatedTitle` |
+| `src/ui/context.js` | `book`, `store` (localStorage + `postMessage` to the desktop app), `route`, `go` |
+| `src/ui/home.js`, `chapter.js`, `stages.js`, `quiz.js`, `flashcards.js`, `mindmap.js`, `graph.js`, `bookmap.js` | Screens |
+| `src/ui/dom.js` | `$`, `pip(pose)`, `toast`, `confetti`, `notReady`, icons, status labels |
+| `test/core.test.mjs` | Unit tests for `src/core` (`npm test`) |
+
+### `src` — desktop app screens (ES modules, no build step)
+| File | Responsibility |
+|---|---|
+| `index.html`, `styles.css`, `fonts/` | Shell, styles, bundled fonts (Fredoka, Atkinson Hyperlegible) |
+| `js/main.js` | Entry: navigation, backend events (`pipeline`, `menu-add-book`, `toast`, `nudge`) |
+| `js/logic.js` | Pure: `isValidMediaSpec`, `pipGreeting`, `statusPills`, `setupSteps`, `friendlyError` |
+| `js/library.js` | Shelf, setup checklist, add-book options sheet, remove |
+| `js/book.js` | Study site in an iframe via `nlbook://`; saves progress messages |
+| `js/settings.js` | Nudges, quiet hours, Python path |
+| `js/state.js`, `js/tauri.js`, `js/dom.js` | Shared state, Tauri API wrapper (`invoke`, `listen`, `pickFile`, `BOOKS_BASE`), DOM helpers |
+| `test/logic.test.mjs` | Unit tests (`cd src && npm test`) |
+
+### `src-tauri/src` — desktop backend (Rust)
+| File | Responsibility |
+|---|---|
+| `lib.rs` | Wiring only: plugins, `nlbook` scheme, commands, window close → hide, nudge loop |
+| `pipeline.rs` | `start_pipeline`, `cancel_pipeline`, `Jobs`; streams stdout as `pipeline` events; notifies when a book is ready |
+| `library.rs` | `list_books`, `delete_book`, `save_progress`; `loops_closed`, `status_counts` |
+| `nudge.rs` | Pure `decide()` (one a day, quiet hours, back-off) + `tick`, `nudge_engaged`, `pause_until_tomorrow` |
+| `server.rs` | `nlbook://` file server with byte ranges (video seeking on macOS), traversal protection |
+| `settings.rs` | `Settings` (settings.json), `find_python`, `check_setup` |
+| `storage.rs` | Paths, atomic JSON writes, `valid_id`, `slug`, `now_ms` |
+| `tray.rs` | Menu-bar/tray icon and menu |
+| `../tauri.conf.json`, `../capabilities/default.json` | Windows, CSP, bundle resources, permissions |
+
+### Other
+`design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
+`tests/test_desktop_ui.py` (desktop screens in Chromium with a simulated backend) · `docs/DEVELOPMENT.md` · `Makefile`.
+
+## Contracts
+
+- **Pipeline CLI** (used by `src-tauri/src/pipeline.rs`): `nl_book.py BOOK --out DIR --no-open --media SPEC --style S --audio A
+  --video V --language L [--dry-run] [--retry]`. Progress lines on stdout: `  added chapter N: …`, `  ✓ chapter N task (Xs)`,
+  `  … chapter N task: NotebookLM limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`.
+- **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
+  `progress.json` (study progress from the site), `book-data.js`, `index.html`, `styles.css`, `app.js`, `pip-poses.js`,
+  `chapters/NN.{pdf,md}`, `media/`, `raw/`, `knowledge-graph.json`.
+- **`book-data.js`**: `window.BOOK = {title, source, made, dryRun, options, chapters:[{n, title, pages, read:{kind:"pdf",file}|{kind:"text",text},
+  status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall}], graph}`.
+- **Study progress** (`store`, saved as localStorage `nlbook:<title>` and `progress.json`): `{cards:{"n:i":{s,d,reps,last,due}},
+  quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage}}`.
+- **Tauri commands**: `get_settings`, `set_settings`, `check_setup`, `start_pipeline(opts)`, `cancel_pipeline(bookId)`,
+  `list_books`, `delete_book(bookId)`, `save_progress(bookId, data)`, `nudge_engaged`, `pause_nudges_today`.
+  **Events**: `pipeline {bookId, line} | {bookId, done, code, stderr}`, `menu-add-book`, `toast`, `nudge {title, body}`.
+
+## Work queue (do in this order)
+
+0. **Baseline.** `make setup && make check` must pass on this machine before any change. If something fails because of the
+   environment (for example a missing Chromium), fix the setup, not the tests. Commit: `Add NeuralLoop Books desktop app`.
+1. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
+2. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
+3. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
+4. Split `pipeline/site/src/ui/graph.js` (≈540 lines) into `graph/render.js`, `graph/panels.js`, `graph/growth.js`; behavior unchanged, tests stay green.
+
+`docs/specs/03-pip-design-system.md` is the reference for anything showing Pip.
+
+## Conventions
+
+- **Python**: type hints on public functions, dataclasses for option bundles, no bare `except` (catch specific errors or
+  `Exception` with a comment saying why), `ruff format` (line length 110). Tests: pytest, fixtures in `conftest.py`, builders in `testing.py`.
+- **JavaScript**: ES modules, `const`/`let`, no globals except `window.BOOK`/`window.PIP`/`window.__TAURI__`, every user string
+  through `esc()` before it touches `innerHTML`, `prettier` (width 120 site / 140 desktop). Tests: `node:test`.
+- **Rust**: one module per responsibility, commands return `Result<T, String>` with `code: message` errors
+  (`setup:`, `network:` …) that `friendlyError` strips, `cargo fmt` + `clippy -D warnings`, tests in `#[cfg(test)] mod tests`.
+- **Accessibility**: every interactive element keyboard-reachable with a visible focus ring; `prefers-reduced-motion` disables
+  Pip animation, confetti, and card flips; contrast AA in light and dark.

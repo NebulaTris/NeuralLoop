@@ -1,0 +1,28 @@
+[project]
+name = "neuralloop-books-pipeline"
+version = "0.2.0"
+description = "Turn a PDF or EPUB into NotebookLM-powered learning loops and a study site"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["notebooklm-py>=0.8", "pypdf>=4"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools]
+packages = ["neuralloop_books"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001"]
+
+[tool.ruff.lint.per-file-ignores]
+"neuralloop_books/prompts.py" = ["E501"]   # prompt text is sent verbatim
+"nl_book.py" = ["UP036", "UP031", "E402"]  # friendly message for Python < 3.10 must run before imports

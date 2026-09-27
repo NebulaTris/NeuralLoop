@@ -1,0 +1,21 @@
+# dependencies and builds
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# generated books and media: never commit someone's book
+neuralloop-*/
+poc_out/
+neuralloop_media/
+*.m4a
+*.mp4
+
+.DS_Store
+
+# editor settings
+.idea/
