@@ -46,6 +46,7 @@ window.emit = (name, payload) => (listeners[name] || []).forEach((handler) => ha
 
 @pytest.fixture(scope="module")
 def served(tmp_path_factory):
+    from neuralloop_books.engines.notebooklm import NotebookLMEngine
     from neuralloop_books.fake_client import ENUMS, FakeClient
     from neuralloop_books.pipeline import Options, run
     from neuralloop_books.testing import LONG, write_epub
@@ -53,7 +54,8 @@ def served(tmp_path_factory):
     root = tmp_path_factory.mktemp("desktop")
     shutil.copytree(ROOT / "src", root, dirs_exist_ok=True)
     book = write_epub(root / "book.epub", [("Caching", LONG), ("Queues", LONG)])
-    asyncio.run(run(Options(book=book, out=root / "books" / "sample", log=lambda _: None), FakeClient(delay=0), ENUMS))
+    opts = Options(book=book, out=root / "books" / "sample", log=lambda _: None)
+    asyncio.run(run(opts, NotebookLMEngine(FakeClient(delay=0), ENUMS, opts)))
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(root))
     handler.log_message = lambda *args: None
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)

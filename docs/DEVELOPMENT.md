@@ -1,15 +1,27 @@
 # NeuralLoop Books (desktop)
 
-Pip lives in your menu bar. Add a PDF or EPUB, and NeuralLoop prepares every chapter as a learning loop with Google NotebookLM: listen (video + podcast), read with a guide, recall in your own words + quiz, remake the mind map from memory, and flashcards on a spaced-repetition schedule. Pip nudges you gently when cards are due or a chapter is half done.
+Pip lives in your menu bar. Add a PDF or EPUB, and NeuralLoop prepares every chapter as a learning loop with the AI you choose (Claude, OpenAI, OpenRouter, a local Ollama model, opencode, or Google NotebookLM): listen (video + podcast), read with a guide, recall in your own words + quiz, remake the mind map from memory, and flashcards on a spaced-repetition schedule. Pip nudges you gently when cards are due or a chapter is half done.
 
 ## 1. One-time setup (the Python side)
-NeuralLoop uses your Python 3.10+ with the NotebookLM library. If you followed the POC steps, you already have this in `~/neuralloop-poc/.venv`, and the app finds it automatically.
+NeuralLoop uses your Python 3.10+. Install the pipeline with the providers you want:
 ```bash
 python3.12 -m venv ~/neuralloop-poc/.venv && source ~/neuralloop-poc/.venv/bin/activate
-pip install "notebooklm-py[browser]" pypdf
-python -m playwright install chromium
-notebooklm login
+pip install -e "pipeline[anthropic,openai]"     # add rumik for Rumik voices, notebooklm for NotebookLM, or use [all]
 ```
+Then pick one way to make study material:
+
+| Choice | Set up | Run with |
+|---|---|---|
+| Claude | `export ANTHROPIC_API_KEY=…` | `--provider anthropic` (default model `claude-opus-5`) |
+| OpenAI | `export OPENAI_API_KEY=…` | `--provider openai` |
+| OpenRouter | `export OPENROUTER_API_KEY=…` | `--provider openrouter --model deepseek/deepseek-v4.1-flash` |
+| Ollama (free, on your Mac) | install Ollama, `ollama pull <model>` | `--provider ollama` (uses the first installed model) |
+| opencode (e.g. DeepSeek) | install opencode and sign in to your provider there | `--provider opencode --model deepseek/deepseek-v4-pro` |
+| NotebookLM | `pip install "pipeline[notebooklm]"`, then `notebooklm login` | `--engine notebooklm` |
+
+With no flags, `--provider auto` uses the first key it finds, then Ollama. Voices: `--speech rumik` (Rumik OSS-1, expressive,
+needs `pip install "pipeline[rumik]"` and ~4 GB of memory; CC-BY-NC, non-commercial use) or `--speech say` (macOS voices).
+Bigger models write better material: small local models (around 4B) work, but take longer and need more retries.
 
 ## 2. Build and run the app on your Mac
 Install [Rust](https://rustup.rs) and [Node.js 20+](https://nodejs.org), then:
@@ -26,9 +38,9 @@ Notifications appear in the built app (macOS doesn't show them for `npm run dev`
 Windows and Linux builds: push a tag like `v0.1.0` to GitHub and the included workflow builds installers for all three systems.
 
 ## Using it
-- **Add a book**: pick a PDF or EPUB, choose which chapters get a podcast + video (start with `1-2`; NotebookLM limits these per day), pick a video style (Kawaii matches Pip). Everything else is made for every chapter.
+- **Add a book**: pick a PDF or EPUB, choose which chapters get a podcast + video (start with `1-2`; they take the longest), pick a video style (Kawaii matches Pip). Everything else is made for every chapter.
 - The book card shows live progress. **Study** opens the book's learning loop inside the app; you can start on ready chapters while the rest are still being made.
-- **Prepare more** adds videos for more chapters or retries anything that hit NotebookLM's daily limit.
+- **Prepare more** adds videos for more chapters or retries anything that hit your AI provider's limit.
 - **Practice run** makes pretend materials without Google, to try the app.
 - Closing the window keeps Pip in the menu bar so nudges keep working. Quit from the menu-bar icon.
 
@@ -46,10 +58,14 @@ pipeline/                     Python package: a book in, learning loops and a st
   nl_book.py                  command-line entry point (the desktop app runs this)
   neuralloop_books/
     cli.py                    argument parsing and exit codes
-    pipeline.py               orchestration: split, add sources, make items, keep the site current
+    pipeline.py               orchestration: split, prepare the engine, make items, keep the site current
+    engines/                  local (any model + speech) and notebooklm
+    models/, speech/          text models (anthropic, openai, openrouter, ollama, opencode, fake) and voices (rumik, say, fake)
+    audio.py, context.py      speech clips -> m4a; condensing long chapters
+    schemas.py                JSON shapes that keep small local models on track
     chapters.py               PDF bookmarks / EPUB table of contents -> chapter files
     notebook.py               one item (quiz, video, ...) for one chapter via notebooklm-py
-    convert.py                NotebookLM answers -> NeuralLoop formats (tolerant parsing)
+    convert.py                model and NotebookLM answers -> NeuralLoop formats (tolerant parsing)
     book_graph.py             per-chapter concept graphs -> one Understand-Anything knowledge graph
     state.py                  resumable progress (state.json)
     site.py                   writes book-data.js and copies the site

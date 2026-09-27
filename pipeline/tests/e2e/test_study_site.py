@@ -18,17 +18,15 @@ pytestmark = pytest.mark.skipif(not D3.exists(), reason="run `npm install` in si
 
 @pytest.fixture(scope="module")
 def site_dir(tmp_path_factory):
+    from neuralloop_books.engines.notebooklm import NotebookLMEngine
     from neuralloop_books.fake_client import ENUMS, FakeClient
     from neuralloop_books.pipeline import Options, run
     from neuralloop_books.testing import LONG, write_epub
 
     root = tmp_path_factory.mktemp("book")
     book = write_epub(root / "book.epub", [("Caching", LONG), ("Queues", LONG)])
-    asyncio.run(
-        run(
-            Options(book=book, out=root / "site", media="1-2", log=lambda _: None), FakeClient(delay=0), ENUMS
-        )
-    )
+    opts = Options(book=book, out=root / "site", media="1-2", log=lambda _: None)
+    asyncio.run(run(opts, NotebookLMEngine(FakeClient(delay=0), ENUMS, opts)))
     return root / "site"
 
 

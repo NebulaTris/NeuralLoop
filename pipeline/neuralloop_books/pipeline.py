@@ -1,20 +1,18 @@
-"""Run the whole book pipeline: split, add sources, make every item, and keep the site up to date."""
+"""Run the whole book pipeline: split, prepare the engine, make every item, and keep the site up to date."""
 
 import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 
 from . import site
 from .chapters import split_book
-from .config import DEFAULT_INSTRUCTIONS, QUOTA_MESSAGE, SOURCE_TIMEOUT
-from .notebook import ChapterMaker, MediaOptions, is_quota_error
+from .config import DEFAULT_INSTRUCTIONS, quota_message
+from .models import SetupError
+from .notebook import is_quota_error
 from .selection import parse_selection
-from .state import DONE, FAILED, SKIPPED, WAITING, WORKING, BookState
-
-DRY_RUN_VIDEO_NOTE = "Dry runs don't make video."
+from .state import DONE, FAILED, WAITING, WORKING, BookState
 
 
 @dataclass
@@ -29,6 +27,12 @@ class Options:
     language: str = "en"
     instructions: str = DEFAULT_INSTRUCTIONS
     parallel: int = 2
+    engine: str = "local"
+    provider: str = "auto"
+    model: str | None = None
+    context: int | None = None
+    speech: str = "auto"
+    voices: str | None = None
     title: str | None = None
     retry: bool = False
     dry_run: bool = False
@@ -60,13 +64,9 @@ def prepare_state(opts: Options) -> BookState:
         chosen,
         media,
         audio=opts.audio != "none",
-        video=opts.video != "none" and not opts.dry_run,
+        video=opts.video != "none",
         retry=opts.retry,
     )
-    if opts.dry_run:
-        for chapter in state.chapters:
-            if chapter["tasks"]["video"]["status"] == SKIPPED and chapter["n"] in media:
-                chapter["tasks"]["video"]["error"] = DRY_RUN_VIDEO_NOTE
     state.data["options"] = site_options(opts)
     state.save()
     opts.log(
@@ -80,58 +80,29 @@ def site_options(opts: Options) -> dict:
     return {"audio": opts.audio, "video": opts.video, "style": opts.style, "language": opts.language}
 
 
-async def run(opts: Options, client, enums: ModuleType) -> BookState:
+async def run(opts: Options, engine) -> BookState:
     state = prepare_state(opts)
     site.build(opts.out, state, site_options(opts))
-    async with client:
-        await _add_sources(opts, state, client)
-        maker = ChapterMaker(
-            client,
-            enums,
-            state.data["notebookId"],
-            opts.out,
-            MediaOptions(opts.audio, opts.video, opts.style, opts.language, opts.instructions),
-        )
+    async with engine:
+        await engine.prepare(state)
         pending = state.pending()
-        opts.log(f"Making {len(pending)} items, {opts.parallel} at a time.")
+        opts.log(f"Making {len(pending)} items with {engine.name}, {opts.parallel} at a time.")
         limiter, quota_hit = asyncio.Semaphore(opts.parallel), set()
-        await asyncio.gather(*(_make(opts, state, maker, limiter, quota_hit, c, t) for c, t in pending))
+        await asyncio.gather(*(_make(opts, state, engine, limiter, quota_hit, c, t) for c, t in pending))
     site.build(opts.out, state, site_options(opts))
     return state
 
 
-async def _add_sources(opts: Options, state: BookState, client) -> None:
-    if not state.data["notebookId"]:
-        notebook = await client.notebooks.create(f"NeuralLoop: {state.data['title']}"[:90])
-        state.data["notebookId"] = notebook.id
-        state.save()
-    notebook_id = state.data["notebookId"]
-    for chapter in state.chapters:
-        if chapter["sourceId"] or not any(chapter["tasks"][t]["status"] != SKIPPED for t in chapter["tasks"]):
-            continue
-        file, title = opts.out / "chapters" / chapter["file"], f"{chapter['n']:02d} {chapter['title']}"[:90]
-        if file.suffix == ".pdf":
-            source = await client.sources.add_file(
-                notebook_id, str(file), wait=True, wait_timeout=SOURCE_TIMEOUT, title=title
-            )
-        else:
-            source = await client.sources.add_text(
-                notebook_id, title, file.read_text(encoding="utf-8"), wait=True, wait_timeout=SOURCE_TIMEOUT
-            )
-        chapter["sourceId"] = source.id
-        state.save()
-        opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
-
-
-async def _make(opts, state, maker, limiter, quota_hit, chapter, task) -> None:
+async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
     entry = chapter["tasks"][task]
+    waiting = quota_message(engine.name)
     if task in quota_hit:
-        entry.update(status=WAITING, error=QUOTA_MESSAGE)
+        entry.update(status=WAITING, error=waiting)
         state.save()
         return
     async with limiter:
         if task in quota_hit:  # another item of this kind hit the limit while we waited
-            entry.update(status=WAITING, error=QUOTA_MESSAGE)
+            entry.update(status=WAITING, error=waiting)
             state.save()
             return
         entry["status"] = WORKING
@@ -139,15 +110,17 @@ async def _make(opts, state, maker, limiter, quota_hit, chapter, task) -> None:
         site.build(opts.out, state, site_options(opts))
         started = time.monotonic()
         try:
-            chapter.update(await maker.make(task, chapter))
+            chapter.update(await engine.make(task, chapter))
             entry.update(status=DONE, error="")
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
-        except Exception as error:
+        except SetupError:
+            raise  # e.g. a revoked key: stop the run and say what to fix
+        except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if is_quota_error(error):
                 quota_hit.add(task)
-                entry.update(status=WAITING, error=QUOTA_MESSAGE)
+                entry.update(status=WAITING, error=waiting)
                 opts.log(
-                    f"  … chapter {chapter['n']} {task}: NotebookLM limit reached; will continue next run"
+                    f"  … chapter {chapter['n']} {task}: {engine.name} limit reached; will continue next run"
                 )
             else:
                 entry.update(status=FAILED, error=f"{type(error).__name__}: {str(error)[:200]}")

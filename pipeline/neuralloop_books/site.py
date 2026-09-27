@@ -24,6 +24,8 @@ CHAPTER_FIELDS = (
     "video",
     "guide",
     "recall",
+    "explainer",
+    "transcript",
 )
 
 
@@ -33,6 +35,9 @@ def build(out_dir: Path, state: BookState, options: dict) -> None:
         "source": state.data["source"],
         "made": time.strftime("%Y-%m-%d %H:%M"),
         "dryRun": state.data.get("dryRun", False),
+        "engine": state.data.get("engine", "notebooklm"),
+        "provider": state.data.get("provider", ""),
+        "model": state.data.get("model", ""),
         "options": options,
         "chapters": [_chapter_payload(out_dir, c) for c in state.chapters],
         "graph": book_graph.build(state.chapters),

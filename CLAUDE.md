@@ -5,7 +5,8 @@ Read this first, every session. Specs for new work live in `docs/specs`. The lon
 
 ## What this repo is
 
-NeuralLoop turns a book the user owns (PDF or EPUB) into five-step learning loops per chapter, made with Google NotebookLM:
+NeuralLoop turns a book the user owns (PDF or EPUB) into five-step learning loops per chapter, made with any AI model the user
+plugs in (Anthropic, OpenAI, OpenRouter, local Ollama, opencode) or, optionally, Google NotebookLM:
 **Listen & watch → Read → Recall → Map → Remember**. Chapters unlock one at a time; the book map grows as chapters are mapped.
 Pip, a cute red panda, lives in the menu bar and nudges gently (never guilt).
 
@@ -45,13 +46,14 @@ make check      # lint + test (CI runs this: .github/workflows/check.yml)
 make site       # rebuild pipeline/site/app.js from pipeline/site/src
 npm run dev     # run the desktop app with hot reload (needs Rust: https://rustup.rs)
 npm run build   # build the .app/.dmg into src-tauri/target/release/bundle/
-python pipeline/nl_book.py --dry-run --out /tmp/demo   # whole pipeline offline with a fake NotebookLM
+python pipeline/nl_book.py --dry-run --out /tmp/demo   # whole pipeline offline with a practice model and voices
 ```
 
 Per part: `cd pipeline && pytest -q` · `cd pipeline/site && npm test` · `cd src && npm test` ·
 `PYTHONPATH=pipeline pytest -q tests` (desktop browser tests) · `cd src-tauri && cargo test --lib`.
 
 The user's Python lives at `~/neuralloop-poc/.venv/bin/python` (3.12, has `notebooklm-py`); the app finds it automatically.
+For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/bin/python`.
 
 ## File map
 
@@ -59,17 +61,24 @@ The user's Python lives at `~/neuralloop-poc/.venv/bin/python` (3.12, has `noteb
 | File | Responsibility |
 |---|---|
 | `nl_book.py` | Entry point; friendly exit on Python < 3.10; calls `cli.main()` |
-| `neuralloop_books/cli.py` | Argument parsing, exit codes (0 ok, 2 invalid input, 3 not signed in, 130 interrupted), final summary |
-| `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run` (add sources, make items with a semaphore, quota handling, rebuild site after every item) |
+| `neuralloop_books/cli.py` | Argument parsing, engine choice, exit codes (0 ok, 2 invalid input, 3 setup needed: key, model, Ollama, sign-in; 130 interrupted), final summary |
+| `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run(opts, engine)` (prepare the engine, make items with a semaphore, quota handling, rebuild site after every item) |
 | `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, safety limits); front-matter filter |
+| `neuralloop_books/engines/local.py` | `LocalEngine`: any text model writes each item (checked, retried once with the reason); podcasts and explainers voiced by a speech engine |
+| `neuralloop_books/engines/notebooklm.py` | `NotebookLMEngine`: adds chapters as sources, then `ChapterMaker` makes each item |
 | `neuralloop_books/notebook.py` | `ChapterMaker.make(task, chapter)`: one item via notebooklm-py; `is_quota_error`; `open_client` |
-| `neuralloop_books/convert.py` | NotebookLM outputs → our formats: `loose_json`, `quiz`, `flashcards`, `study`, `concept_graph` |
+| `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`; `anthropic`, `openai_compat` (OpenAI, OpenRouter), `ollama` (native API, JSON schemas), `opencode` (subprocess), `fake` |
+| `neuralloop_books/speech/` | Speech engines: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, CC-BY-NC), `say` (macOS voices), `fake` |
+| `neuralloop_books/audio.py` | `split_for_speech`, `join_wavs` (with pauses, returns durations), `to_m4a` (afconvert) |
+| `neuralloop_books/context.py` | `chunks`, `source_for`: long chapters are condensed into notes that fit the model's budget |
+| `neuralloop_books/schemas.py` | JSON schemas per item; Ollama uses them to constrain small models |
+| `neuralloop_books/convert.py` | Model and NotebookLM outputs → our formats: `loose_json`, `quiz`, `flashcards`, `study`, `concept_graph`, `mind_map`, `podcast_script`, `explainer` |
 | `neuralloop_books/book_graph.py` | Chapter graphs → one Understand-Anything knowledge graph; `similar_to` links across chapters |
 | `neuralloop_books/state.py` | `BookState` (state.json): statuses, `apply_selection`, `pending`, `counts` |
 | `neuralloop_books/site.py` | Writes `book-data.js`, `knowledge-graph.json`, copies `site/{index.html,styles.css,app.js,pip-poses.js}` |
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `ENUMS`) |
 | `neuralloop_books/selection.py` | `parse_selection("1-3,5", n)` |
-| `neuralloop_books/prompts.py` | Chat prompts (sent verbatim; long lines allowed) |
+| `neuralloop_books/prompts.py` | NotebookLM chat prompts and the local engine's prompts (sent verbatim; long lines allowed) |
 | `neuralloop_books/config.py` | Task names, format/style enums, front-matter regex, timeouts, copy |
 | `neuralloop_books/testing.py` | `write_epub`, `write_pdf`, `LONG`: builders for test books, shared by all suites |
 | `tests` | Unit tests; `tests/e2e/test_study_site.py` drives the study site in Chromium |
@@ -123,13 +132,18 @@ The user's Python lives at `~/neuralloop-poc/.venv/bin/python` (3.12, has `noteb
 ## Contracts
 
 - **Pipeline CLI** (used by `src-tauri/src/pipeline.rs`): `nl_book.py BOOK --out DIR --no-open --media SPEC --style S --audio A
-  --video V --language L [--dry-run] [--retry]`. Progress lines on stdout: `  added chapter N: …`, `  ✓ chapter N task (Xs)`,
-  `  … chapter N task: NotebookLM limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`.
+  --video V --language L [--engine local|notebooklm] [--provider auto|anthropic|openai|openrouter|ollama|opencode|fake]
+  [--model M] [--context CHARS] [--speech auto|rumik|say|fake] [--voices A,B] [--dry-run] [--retry]`. Keys only from
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` (never argv or files). Progress lines on stdout:
+  `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  … chapter N task: {Engine} limit reached…`,
+  `  ✗ chapter N task: …`, final `Study site: PATH`.
 - **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
   `progress.json` (study progress from the site), `book-data.js`, `index.html`, `styles.css`, `app.js`, `pip-poses.js`,
   `chapters/NN.{pdf,md}`, `media/`, `raw/`, `knowledge-graph.json`.
 - **`book-data.js`**: `window.BOOK = {title, source, made, dryRun, options, chapters:[{n, title, pages, read:{kind:"pdf",file}|{kind:"text",text},
-  status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall}], graph}`.
+  status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall,
+  explainer:{slides:[{title,points,narration,pose,audio,duration}]}, transcript}], graph, engine, provider, model}`.
+  `transcript` points at `media/NN-podcast.json`: `{title, lines:[{speaker,voice,text,start}]}`.
 - **Study progress** (`store`, saved as localStorage `nlbook:<title>` and `progress.json`): `{cards:{"n:i":{s,d,reps,last,due}},
   quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage}}`.
 - **Tauri commands**: `get_settings`, `set_settings`, `check_setup`, `start_pipeline(opts)`, `cancel_pipeline(bookId)`,

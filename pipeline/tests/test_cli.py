@@ -22,3 +22,22 @@ def test_bad_media_spec_is_reported_not_crashed(epub, tmp_path, capsys):
 def test_dry_run_end_to_end(epub, tmp_path, capsys):
     assert main([str(epub), "--dry-run", "--no-open", "--out", str(tmp_path / "o")]) == 0
     assert "Study site:" in capsys.readouterr().out
+
+
+def test_new_flags_parse(epub):
+    args = parse_args(
+        [str(epub), "--provider", "ollama", "--model", "qwen", "--speech", "say", "--voices", "Ira,Zoya"]
+    )
+    assert (args.engine, args.provider, args.model, args.speech, args.voices) == (
+        "local",
+        "ollama",
+        "qwen",
+        "say",
+        "Ira,Zoya",
+    )
+
+
+def test_a_missing_key_exits_3_with_a_friendly_message(epub, tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    code = main([str(epub), "--provider", "openai", "--no-open", "--out", str(tmp_path / "o")])
+    assert code == 3 and "OPENAI_API_KEY" in capsys.readouterr().out

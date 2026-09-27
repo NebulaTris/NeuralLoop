@@ -1,13 +1,18 @@
 [project]
 name = "neuralloop-books-pipeline"
 version = "0.2.0"
-description = "Turn a PDF or EPUB into NotebookLM-powered learning loops and a study site"
+description = "Turn a PDF or EPUB into learning loops, made with any AI model (or NotebookLM)"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["notebooklm-py>=0.8", "pypdf>=4"]
+dependencies = ["pypdf>=4"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+anthropic = ["anthropic>=1.8"]
+openai = ["openai>=3"]              # also OpenRouter; Ollama and opencode need no Python package
+rumik = ["mlx-audio", "numpy"]      # Rumik OSS-1 speech on Apple silicon (CC-BY-NC 4.0)
+notebooklm = ["notebooklm-py>=0.8"]
+all = ["neuralloop-books-pipeline[anthropic,openai,rumik,notebooklm]"]
+dev = ["pytest>=8", "ruff>=0.6", "anthropic>=1.8", "openai>=3"]
 
 [tool.setuptools]
 packages = ["neuralloop_books"]

@@ -28,6 +28,10 @@ class UnusableAnswer(ValueError):
 
 
 def is_quota_error(error: BaseException) -> bool:
+    from .models import QuotaError
+
+    if isinstance(error, QuotaError):
+        return True
     text = f"{type(error).__name__} {error}".lower()
     return any(hint in text for hint in _QUOTA_HINTS)
 

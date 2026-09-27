@@ -2,12 +2,22 @@
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 import webbrowser
 from pathlib import Path
 
-from .config import AUDIO_FORMATS, DEFAULT_INSTRUCTIONS, VIDEO_FORMATS, VIDEO_STYLES
+from .config import (
+    AUDIO_FORMATS,
+    DEFAULT_INSTRUCTIONS,
+    LOCAL_PROVIDERS,
+    PROVIDERS,
+    SPEECH_ENGINES,
+    VIDEO_FORMATS,
+    VIDEO_STYLES,
+)
+from .models import SetupError, resolve_provider
 from .pipeline import Options, run
 from .state import FAILED, WAITING
 
@@ -30,13 +40,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--language", default="en")
     parser.add_argument("--instructions", default=DEFAULT_INSTRUCTIONS)
-    parser.add_argument("--parallel", type=int, default=2, help="items made at the same time")
+    parser.add_argument(
+        "--parallel", type=int, help="items made at the same time (default 2; 1 for local models)"
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["local", "notebooklm"],
+        default="local",
+        help="who makes the items (default local)",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=PROVIDERS,
+        default="auto",
+        help="text model for the local engine (auto: first key set)",
+    )
+    parser.add_argument("--model", help="model name for the provider (each has a sensible default)")
+    parser.add_argument("--context", type=int, help="characters of chapter text sent at once")
+    parser.add_argument(
+        "--speech", choices=SPEECH_ENGINES, default="auto", help="voices for podcasts and explainers"
+    )
+    parser.add_argument("--voices", help='two voices, host A then host B, e.g. "Ira,Zoya"')
     parser.add_argument("--title")
     parser.add_argument("--out")
     parser.add_argument("--retry", action="store_true", help="retry failed and quota-limited items")
     parser.add_argument("--no-open", action="store_true", help="don't open the study site")
     parser.add_argument(
-        "--dry-run", action="store_true", help="run everything offline with a fake NotebookLM"
+        "--dry-run", action="store_true", help="run everything offline with a practice model and voices"
     )
     args = parser.parse_args(argv)
     if args.dry_run and not args.book:
@@ -49,6 +79,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if book.suffix.lower() not in (".pdf", ".epub"):
         parser.error("the book must be a PDF or an EPUB")
     args.out = args.out or f"neuralloop-{_slug(book.stem)}"
+    if args.dry_run:
+        args.engine, args.provider, args.speech = "local", "fake", "fake"
     return args
 
 
@@ -56,21 +88,35 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "book"
 
 
-def _client(dry_run: bool):
-    if dry_run:
-        from .fake_client import ENUMS, FakeClient
+def _engine(opts: Options):
+    if opts.engine == "notebooklm":
+        try:
+            import notebooklm
+        except ImportError:
+            sys.exit(
+                'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
+                "Then sign in once: notebooklm login"
+            )
+        from .engines.notebooklm import NotebookLMEngine
+        from .notebook import open_client
 
-        return FakeClient(), ENUMS
-    try:
-        import notebooklm
-    except ImportError:
-        sys.exit(
-            'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
-            "Then sign in once: notebooklm login"
-        )
-    from .notebook import open_client
+        return NotebookLMEngine(asyncio.run(open_client(notebooklm.NotebookLMClient)), notebooklm, opts)
+    from .engines.local import LocalEngine
+    from .models import make_model
+    from .speech import make_speech
 
-    return asyncio.run(open_client(notebooklm.NotebookLMClient)), notebooklm
+    return LocalEngine.from_options(
+        opts, make_model(opts.provider, opts.model), make_speech(opts.speech, opts.voices)
+    )
+
+
+def _default_parallel(args: argparse.Namespace) -> int:
+    if args.parallel:
+        return max(1, args.parallel)
+    local = args.engine == "local" and (
+        resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS or args.speech == "rumik"
+    )
+    return 1 if local else 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,19 +131,28 @@ def main(argv: list[str] | None = None) -> int:
         style=args.style,
         language=args.language,
         instructions=args.instructions,
-        parallel=max(1, args.parallel),
+        parallel=_default_parallel(args),
+        engine=args.engine,
+        provider=args.provider,
+        model=args.model,
+        context=args.context,
+        speech=args.speech,
+        voices=args.voices,
         title=args.title,
         retry=args.retry,
         dry_run=args.dry_run,
     )
     try:
-        client, enums = _client(opts.dry_run)
+        engine = _engine(opts)
         if not args.no_open:
             opts.out.mkdir(parents=True, exist_ok=True)
-        state = asyncio.run(run(opts, client, enums))
+        state = asyncio.run(run(opts, engine))
     except KeyboardInterrupt:
         print("\nPaused. Run the same command again to continue.")
         return 130
+    except SetupError as error:
+        print(error)
+        return 3
     except ValueError as error:
         print(error)
         return 2
@@ -110,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nDone: " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in sorted(counts.items())))
     if counts.get(WAITING):
         print(
-            "Some items are waiting for NotebookLM's daily limit. "
+            "Some items are waiting for the AI provider's limit. "
             "Run the same command again later to continue."
         )
     if counts.get(FAILED):

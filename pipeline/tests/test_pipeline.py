@@ -3,8 +3,13 @@ import json
 
 import pytest
 
+from neuralloop_books.engines.local import LocalEngine
+from neuralloop_books.engines.notebooklm import NotebookLMEngine
 from neuralloop_books.fake_client import ENUMS, FakeClient, FakeQuotaClient
-from neuralloop_books.pipeline import DRY_RUN_VIDEO_NOTE, Options, run
+from neuralloop_books.models import QuotaError
+from neuralloop_books.models.fake import FakeModel
+from neuralloop_books.pipeline import Options, run
+from neuralloop_books.speech.fake import FakeSpeech
 from neuralloop_books.state import DONE, SKIPPED, WAITING
 
 
@@ -14,7 +19,12 @@ def options(epub, tmp_path):
 
 
 def run_with(opts, client):
-    return asyncio.run(run(opts, client, ENUMS))
+    return asyncio.run(run(opts, NotebookLMEngine(client, ENUMS, opts)))
+
+
+def run_local(opts, model=None):
+    engine = LocalEngine.from_options(opts, model or FakeModel(), FakeSpeech())
+    return asyncio.run(run(opts, engine))
 
 
 def book_data(out):
@@ -52,11 +62,33 @@ def test_quota_limits_are_deferred_then_retried(options):
     assert state.chapters[0]["tasks"]["audio"]["status"] == DONE
 
 
-def test_dry_runs_explain_the_missing_video(options):
-    options.dry_run = True
-    state = run_with(options, FakeClient(delay=0))
-    video = state.chapters[0]["tasks"]["video"]
-    assert video["status"] == SKIPPED and video["error"] == DRY_RUN_VIDEO_NOTE
+def test_local_engine_makes_every_item_including_podcast_and_explainer(options):
+    state = run_local(options)
+    first, second = state.chapters
+    assert all(entry["status"] == DONE for entry in first["tasks"].values())
+    assert second["tasks"]["video"]["status"] == SKIPPED
+    assert first["explainer"]["slides"] and first["transcript"].endswith(".json")
+    assert state.data["engine"] == "local"
+    data = book_data(options.out)
+    assert data["chapters"][0]["explainer"]["slides"] and data["chapters"][0]["transcript"]
+
+
+class LimitedModel(FakeModel):
+    async def complete(self, kind, system, source, prompt):
+        if kind == "quiz":
+            raise QuotaError("429 rate limit")
+        return await super().complete(kind, system, source, prompt)
+
+
+def test_local_rate_limits_wait_for_the_next_run(options):
+    lines = []
+    options.log = lines.append
+    state = run_local(options, LimitedModel())
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == WAITING
+    assert state.chapters[0]["tasks"]["cards"]["status"] == DONE
+    assert any("Pip's practice brain limit reached" in line for line in lines)
+    options.retry = True
+    assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
 
 
 def test_widening_media_on_a_later_run_adds_only_the_new_media(options):

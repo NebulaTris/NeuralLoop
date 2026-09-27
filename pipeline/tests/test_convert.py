@@ -83,3 +83,65 @@ def test_concept_graph_removes_dangling_references_and_fills_defaults():
 
 def test_concept_graph_without_concepts_is_none():
     assert convert.concept_graph({"concepts": []}) is None
+
+
+def test_mind_map_drops_empty_names_and_caps_depth():
+    deep = {"name": "L3", "children": [{"name": "L4", "children": [{"name": "L5"}]}]}
+    data = {
+        "name": "Root",
+        "children": [{"name": ""}, {"name": "L1", "children": [{"name": "L2", "children": [deep]}]}],
+    }
+    tree = convert.mind_map(data)
+    assert [c["name"] for c in tree["children"]] == ["L1"]
+    level3 = tree["children"][0]["children"][0]["children"][0]
+    assert level3["name"] == "L3" and "children" not in level3
+
+
+def test_mind_map_needs_a_named_root():
+    assert convert.mind_map({"children": [{"name": "x"}]}) is None
+    assert convert.mind_map(["not", "a", "tree"]) is None
+
+
+def test_podcast_script_needs_both_speakers_and_text():
+    data = {
+        "title": "Caching",
+        "lines": [
+            {"speaker": "A", "text": "Welcome back!", "delivery": "excited"},
+            {"speaker": "b", "text": "  "},
+            {"speaker": "B", "text": "Let's talk caches."},
+            {"speaker": "C", "text": "Who am I?"},
+        ],
+    }
+    script = convert.podcast_script(data)
+    assert script["title"] == "Caching"
+    assert [(line["speaker"], line["text"]) for line in script["lines"]] == [
+        ("A", "Welcome back!"),
+        ("B", "Let's talk caches."),
+    ]
+    assert script["lines"][1]["delivery"] == ""
+    assert convert.podcast_script({"lines": [{"speaker": "A", "text": "Just me"}]}) is None
+
+
+def test_explainer_caps_slides_and_defaults_unknown_poses():
+    slides = [
+        {"title": f"S{i}", "points": ["a", "", "b"], "narration": "Say this.", "pose": "moonwalk"}
+        for i in range(12)
+    ]
+    slides.append({"title": "No narration", "points": []})
+    result = convert.explainer({"slides": slides})
+    assert len(result["slides"]) == 8
+    assert result["slides"][0] == {
+        "title": "S0",
+        "points": ["a", "b"],
+        "narration": "Say this.",
+        "pose": "read",
+    }
+    assert convert.explainer({"slides": []}) is None
+
+
+def test_loose_json_rescues_curly_quotes_that_close_strings():
+    broken = '{"cards":[{"front":"What is a snapshot?", "back":"A system frozen in time.”}]}'
+    assert convert.loose_json(broken) == {
+        "cards": [{"front": "What is a snapshot?", "back": "A system frozen in time."}]
+    }
+    assert convert.loose_json('{"quote": "She said “hi”."}') == {"quote": "She said “hi”."}

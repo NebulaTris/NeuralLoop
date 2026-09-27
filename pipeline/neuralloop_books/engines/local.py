@@ -1,0 +1,288 @@
+"""The local engine: any text model writes each item; a speech engine voices podcasts and explainers."""
+
+import asyncio
+import json
+import re
+from pathlib import Path
+
+from pypdf import PdfReader
+
+from .. import audio, context, convert, prompts
+from ..config import CONTEXT_CHARS
+from ..notebook import UnusableAnswer
+from ..state import BookState
+
+LANGUAGES = {
+    "en": "English",
+    "hi": "Hindi",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "ja": "Japanese",
+}
+_VOCALISATION = re.compile(r"\s*<(laugh|chuckle|sigh)>\s*")
+# Descriptions from the prompts' JSON shapes; small models sometimes copy them instead of writing content.
+_PLACEHOLDER = re.compile(
+    r"\b(max \d+ words|\d+-\d+ (spoken )?words|kebab-case-id|layer id|concept ids?"
+    r"|main branch|what they say)\b|^\.\.\.$",
+    re.IGNORECASE,
+)
+# JSON structure inside a string value: a curly quote ended the string early and the rest leaked in.
+_LEAKED_STRUCTURE = re.compile(r'[”"]\s*[}\]]|[}\]]\s*,\s*[{\["“]|["”]\s*,\s*["“]')
+LINE_PAUSE = 0.35
+# Fewer than this many items means the model skimped: ask again, saying so. (Prompts ask for more.)
+MINIMUMS = {
+    "study": ("recall prompts", lambda r: len(r["recall"]), 1),
+    "graph": ("concepts", lambda r: len(r["concepts"]), 4),
+    "quiz": ("questions", len, 2),
+    "cards": ("cards", len, 3),
+    "mindmap": ("branches", lambda r: len(r.get("children", [])), 2),
+    "audio": ("lines", lambda r: len(r["lines"]), 4),
+    "video": ("slides", lambda r: len(r["slides"]), 3),
+}
+
+
+class LocalEngine:
+    def __init__(
+        self,
+        model,
+        speech,
+        out_dir: Path,
+        *,
+        budget: int,
+        audio: str,
+        video: str,
+        language: str,
+        instructions: str,
+    ):
+        self.model, self.speech, self.out_dir, self.budget = model, speech, out_dir, budget
+        self.audio_format, self.video_format, self.instructions = audio, video, instructions
+        self.system = prompts.SYSTEM.format(language=LANGUAGES.get(language, language))
+        self.name = model.name
+        self._sources: dict[int, str] = {}
+        self._source_locks: dict[int, asyncio.Lock] = {}
+        self._speaking = asyncio.Lock()  # speech models are big: one clip at a time
+
+    @classmethod
+    def from_options(cls, opts, model, speech) -> "LocalEngine":
+        budget = opts.context or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
+        return cls(
+            model,
+            speech,
+            opts.out,
+            budget=budget,
+            audio=opts.audio,
+            video=opts.video,
+            language=opts.language,
+            instructions=opts.instructions,
+        )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def prepare(self, state: BookState) -> None:
+        await self.model.check()
+        self.speech.check()
+        state.data.update(
+            engine="local", provider=getattr(self.model, "provider", ""), model=self.model.model or ""
+        )
+        state.save()
+
+    async def make(self, task: str, chapter: dict) -> dict:
+        return await getattr(self, f"_{task}")(chapter)
+
+    # ---- the chapter text, condensed when it doesn't fit ----
+
+    async def _source(self, chapter: dict) -> str:
+        n = chapter["n"]
+        async with self._source_locks.setdefault(n, asyncio.Lock()):
+            if n not in self._sources:
+                text = await asyncio.to_thread(_chapter_text, self.out_dir / "chapters" / chapter["file"])
+                cache = self.out_dir / "raw" / f"{n:02d}-notes.json"
+                self._sources[n] = await context.source_for(self.model, text, self.budget, cache, self.system)
+        return self._sources[n]
+
+    async def _ask(self, kind: str, chapter: dict, prompt: str, check, label: str):
+        """Ask for one JSON item; if it's unusable or skimpy, ask once more saying exactly what was wrong."""
+        source = await self._source(chapter)
+        answer = await self.model.complete(kind, self.system, source, prompt)
+        result, problem = self._judge(kind, answer, check)
+        if problem:
+            self._keep_rejected(chapter, kind, answer)
+            retry = prompt + prompts.RETRY.format(problem=problem)
+            second = await self.model.complete(kind, self.system, source, retry)
+            again, second_problem = self._judge(kind, second, check)
+            if second_problem:
+                self._keep_rejected(chapter, kind, second)
+            # A short but valid answer beats nothing; keep whichever of the two has more.
+            result = max((r for r in (result, again) if r), key=lambda r: MINIMUMS[kind][1](r), default=None)
+        if not result:
+            raise UnusableAnswer(f"{self.name}'s {label} wasn't usable, even on a second try")
+        raw = self.out_dir / "raw" / f"{chapter['n']:02d}-{kind}.json"
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        return result
+
+    @staticmethod
+    def _judge(kind: str, answer: str, check):
+        """(result or None, problem or "")."""
+        result = check(convert.loose_json(answer))
+        if not result:
+            return None, "it wasn't valid JSON in the shape asked for"
+        if any(_LEAKED_STRUCTURE.search(text) for text in _strings(result)):
+            return (
+                None,
+                'some strings contain JSON punctuation; use straight double quotes (") only, never “ or ”',
+            )
+        if any(_PLACEHOLDER.search(text) for text in _strings(result)):
+            return None, "it copied the example text from the shape instead of writing about the chapter"
+        noun, count, minimum = MINIMUMS[kind]
+        if count(result) < minimum:
+            return result, f"it had only {count(result)} {noun}; follow the rules above for how many"
+        return result, ""
+
+    def _keep_rejected(self, chapter: dict, kind: str, answer: str) -> None:
+        path = self.out_dir / "raw" / f"{chapter['n']:02d}-{kind}-rejected.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as file:
+            file.write(answer + "\n\n-----\n\n")
+
+    def _fill(self, template: str, chapter: dict, **extra) -> str:
+        return template.format(title=chapter["title"], instructions=self.instructions, **extra)
+
+    # ---- the items ----
+
+    async def _study(self, chapter):
+        return await self._ask(
+            "study", chapter, self._fill(prompts.LOCAL_STUDY, chapter), convert.study, "study guide"
+        )
+
+    async def _graph(self, chapter):
+        graph = await self._ask(
+            "graph", chapter, self._fill(prompts.LOCAL_GRAPH, chapter), convert.concept_graph, "concept graph"
+        )
+        return {"graph": graph}
+
+    async def _quiz(self, chapter):
+        return {
+            "quiz": await self._ask("quiz", chapter, self._fill(prompts.QUIZ, chapter), convert.quiz, "quiz")
+        }
+
+    async def _cards(self, chapter):
+        return {
+            "cards": await self._ask(
+                "cards", chapter, self._fill(prompts.CARDS, chapter), convert.flashcards, "flashcards"
+            )
+        }
+
+    async def _mindmap(self, chapter):
+        return {
+            "mindmap": await self._ask(
+                "mindmap", chapter, self._fill(prompts.MINDMAP, chapter), convert.mind_map, "mind map"
+            )
+        }
+
+    async def _audio(self, chapter):
+        style = prompts.PODCAST_FORMATS.get(self.audio_format, prompts.PODCAST_FORMATS["deep-dive"])
+        script = await self._ask(
+            "audio",
+            chapter,
+            self._fill(prompts.PODCAST, chapter, format=style),
+            convert.podcast_script,
+            "podcast script",
+        )
+        n = chapter["n"]
+        clips: list[Path] = []
+        first_clip_of_line: list[int] = []
+        for i, line in enumerate(script["lines"]):
+            voice = self.speech.voices[0 if line["speaker"] == "A" else 1]
+            first_clip_of_line.append(len(clips))
+            for j, piece in enumerate(audio.split_for_speech(line["text"])):
+                clip = self._clip_path(f"{n:02d}-podcast-{i:03d}-{j}")
+                await self._say(piece, voice, line["delivery"], clip)
+                clips.append(clip)
+        wav = self._media(f"{n:02d}-podcast.wav")
+        durations = await asyncio.to_thread(audio.join_wavs, clips, wav, LINE_PAUSE)
+        starts = [round(sum(durations[:k]) + LINE_PAUSE * k, 3) for k in range(len(durations))]
+        transcript = {
+            "title": script["title"],
+            "lines": [
+                {
+                    "speaker": line["speaker"],
+                    "voice": self.speech.voices[0 if line["speaker"] == "A" else 1],
+                    "text": _VOCALISATION.sub(" ", line["text"]).strip(),
+                    "start": starts[first_clip_of_line[i]],
+                }
+                for i, line in enumerate(script["lines"])
+            ],
+        }
+        final = await asyncio.to_thread(audio.to_m4a, wav)
+        transcript_file = self.out_dir / "media" / f"{n:02d}-podcast.json"
+        transcript_file.write_text(json.dumps(transcript, ensure_ascii=False, indent=1), encoding="utf-8")
+        _remove(clips)
+        return {"audio": f"media/{final.name}", "transcript": f"media/{transcript_file.name}"}
+
+    async def _video(self, chapter):
+        style = prompts.EXPLAINER_FORMATS.get(self.video_format, prompts.EXPLAINER_FORMATS["explainer"])
+        explainer = await self._ask(
+            "video",
+            chapter,
+            self._fill(prompts.EXPLAINER, chapter, format=style),
+            convert.explainer,
+            "explainer",
+        )
+        n = chapter["n"]
+        for k, slide in enumerate(explainer["slides"], 1):
+            clips = []
+            for j, piece in enumerate(audio.split_for_speech(slide["narration"])):
+                clip = self._clip_path(f"{n:02d}-explainer-{k:02d}-{j}")
+                await self._say(piece, self.speech.voices[0], "warm, playful, steady pace", clip)
+                clips.append(clip)
+            wav = self._media(f"{n:02d}-explainer-{k:02d}.wav")
+            durations = await asyncio.to_thread(audio.join_wavs, clips, wav, 0.2)
+            final = await asyncio.to_thread(audio.to_m4a, wav)
+            slide.update(
+                audio=f"media/{final.name}", duration=round(sum(durations) + 0.2 * (len(durations) - 1), 3)
+            )
+            _remove(clips)
+        return {"explainer": explainer}
+
+    # ---- speech ----
+
+    def _media(self, name: str) -> Path:
+        folder = self.out_dir / "media"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / name
+
+    def _clip_path(self, stem: str) -> Path:
+        folder = self.out_dir / "raw" / "speech"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{stem}.wav"
+
+    async def _say(self, text: str, voice: str, delivery: str, path: Path) -> None:
+        async with self._speaking:
+            await asyncio.to_thread(self.speech.synth, text, voice, delivery, path)
+
+
+def _strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _chapter_text(file: Path) -> str:
+    if file.suffix == ".pdf":
+        return "\n\n".join((page.extract_text() or "").strip() for page in PdfReader(str(file)).pages)
+    return file.read_text(encoding="utf-8")
+
+
+def _remove(paths: list[Path]) -> None:
+    for path in paths:
+        path.unlink(missing_ok=True)

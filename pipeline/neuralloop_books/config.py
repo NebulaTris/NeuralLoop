@@ -34,6 +34,36 @@ AUDIO_TIMEOUT = 2400.0
 VIDEO_TIMEOUT = 3600.0
 
 QUOTA_MESSAGE = "NotebookLM's limit was reached. Run the same command again later."
+
+
+def quota_message(engine_name: str) -> str:
+    return f"{engine_name}'s limit was reached. Run the same command again later."
+
+
+# The local engine's text models. Keys are read from these environment variables only.
+PROVIDERS = ("auto", "anthropic", "openai", "openrouter", "ollama", "opencode", "fake")
+PROVIDER_KEYS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+DEFAULT_MODELS = {
+    "anthropic": "claude-opus-5",
+    "openai": "gpt-6-sol",
+    "openrouter": "deepseek/deepseek-v4.1-flash",
+    "opencode": "deepseek/deepseek-v4-pro",
+    # ollama: the first model already installed
+}
+# How much chapter text (characters) goes to a model at once; longer chapters are condensed into notes first.
+CONTEXT_CHARS = {
+    "anthropic": 400_000,
+    "openai": 400_000,
+    "openrouter": 400_000,
+    "ollama": 24_000,
+    "opencode": 24_000,
+}
+LOCAL_PROVIDERS = frozenset({"ollama", "opencode"})  # one item at a time by default
+SPEECH_ENGINES = ("auto", "rumik", "say", "fake")
 DEFAULT_INSTRUCTIONS = (
     "A friendly deep-dive for software engineers: section by section, "
     "concrete analogies and real engineering examples."
