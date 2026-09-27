@@ -140,10 +140,11 @@ The user's Python lives at `~/neuralloop-poc/.venv/bin/python` (3.12, has `noteb
 
 0. **Baseline.** `make setup && make check` must pass on this machine before any change. If something fails because of the
    environment (for example a missing Chromium), fix the setup, not the tests. Commit: `Add NeuralLoop Books desktop app`.
-1. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
-2. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
-3. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
-4. Split `pipeline/site/src/ui/graph.js` (≈540 lines) into `graph/render.js`, `graph/panels.js`, `graph/growth.js`; behavior unchanged, tests stay green.
+1. `docs/specs/04-native-macos-app.md` — replace the study site and the Tauri app with one native SwiftUI app. Specs 01 and 02 then
+   target the Swift files.
+2. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
+3. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
+4. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
 
 `docs/specs/03-pip-design-system.md` is the reference for anything showing Pip.
 

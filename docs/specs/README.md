@@ -2,7 +2,8 @@
 
 | Spec | Status |
 |---|---|
-| [02 — Upload a PDF or EPUB, preview the chapters, parse it correctly](02-book-import-and-parsing.md) | Next |
+| [04 — One native Mac app (no study site, no web UI)](04-native-macos-app.md) | Next |
+| [02 — Upload a PDF or EPUB, preview the chapters, parse it correctly](02-book-import-and-parsing.md) | After 04 |
 | [01 — Pip on your desktop](01-pip-desktop-companion.md) | After 02 |
 | [03 — Pip design system](03-pip-design-system.md) | Reference |
 
