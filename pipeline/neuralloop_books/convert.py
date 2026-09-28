@@ -130,14 +130,19 @@ def concept_graph(data: Any) -> dict | None:
 
 
 def mind_map(data: Any) -> dict | None:
-    """Model answer -> {name, children:[{name, children}]}; empty names dropped, depth capped."""
+    """Model answer -> {name, children:[{name, children}]}; empty and repeated names dropped, depth capped."""
 
     def node(item: Any, depth: int) -> dict | None:
         if not isinstance(item, dict) or not str(item.get("name", "")).strip():
             return None
         result: dict = {"name": str(item["name"]).strip()[:80]}
         if depth < _MIND_MAP_DEPTH - 1:
-            children = [c for c in (node(child, depth + 1) for child in _list(item, "children")) if c]
+            seen = {result["name"].lower()}  # a branch that repeats a sibling or its parent adds nothing
+            children = []
+            for child in (node(c, depth + 1) for c in _list(item, "children")):
+                if child and child["name"].lower() not in seen:
+                    seen.add(child["name"].lower())
+                    children.append(child)
             if children:
                 result["children"] = children
         return result

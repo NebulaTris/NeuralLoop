@@ -145,3 +145,15 @@ def test_loose_json_rescues_curly_quotes_that_close_strings():
         "cards": [{"front": "What is a snapshot?", "back": "A system frozen in time."}]
     }
     assert convert.loose_json('{"quote": "She said “hi”."}') == {"quote": "She said “hi”."}
+
+
+def test_mind_map_drops_repeated_branches_and_echoes_of_the_parent():
+    branch = {
+        "name": "Systems Fail",
+        "children": [{"name": "Drift"}, {"name": "drift"}, {"name": "Systems fail"}],
+    }
+    tree = convert.mind_map(
+        {"name": "Why Systems Fail", "children": [branch, dict(branch), {"name": "Why systems fail"}]}
+    )
+    assert [c["name"] for c in tree["children"]] == ["Systems Fail"]
+    assert [c["name"] for c in tree["children"][0]["children"]] == ["Drift"]
