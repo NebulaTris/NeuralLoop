@@ -192,3 +192,37 @@ def test_podcast_hosts_are_named_after_their_voices(tmp_path, chapter):
     make(engine_for(tmp_path, model), "audio", chapter)
     prompt = next(p for kind, p in model.calls if kind == "audio")
     assert "Tone A" in prompt and "Tone B" in prompt and "never say" in prompt
+
+
+class WatchingSpeech(FakeSpeech):
+    """Looks at the transcript file each time a new line is voiced."""
+
+    def __init__(self, folder):
+        super().__init__()
+        self.folder, self.seen = folder, []
+
+    def synth(self, text, voice, delivery, path):
+        transcript = self.folder / "media" / "01-podcast.json"
+        if transcript.exists():
+            self.seen.append(json.loads(transcript.read_text()))
+        super().synth(text, voice, delivery, path)
+
+
+def test_the_podcast_streams_line_by_line_so_playback_can_start_early(tmp_path, chapter):
+    speech = WatchingSpeech(tmp_path)
+    engine = LocalEngine(
+        FakeModel(),
+        speech,
+        tmp_path,
+        budget=400_000,
+        audio="deep-dive",
+        video="explainer",
+        language="en",
+        instructions="",
+    )
+    result = asyncio.run(engine.make("audio", chapter))
+    partial = speech.seen[0]  # what the app could play while line 2 was being voiced
+    assert partial["complete"] is False and len(partial["lines"]) == 1
+    assert (tmp_path / partial["lines"][0]["clip"]).exists()
+    final = json.loads((tmp_path / result["transcript"]).read_text())
+    assert final["complete"] is True and all("clip" in line for line in final["lines"])

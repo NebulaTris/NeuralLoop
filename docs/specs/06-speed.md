@@ -1,6 +1,6 @@
 # Spec 06 — Fast enough to feel instant
 
-Status: in progress (items 1–2 done) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: `pipeline/`, the app
+Status: in progress (items 1, 2, and 6 done) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: `pipeline/`, the app
 
 ## Where the time goes (measured, Apple M5, 24 GB)
 
@@ -31,7 +31,7 @@ text items for chapter 1 arrive in under a minute, and audio starts playing whil
    quota errors already fall back to the local engine per item.
 5. **Right tool per item.** With `auto`, text items come from the local model (seconds to a minute) while NotebookLM makes
    its excellent podcasts and videos in the background. `ai.json` already allows this per item.
-6. **Stream audio.** Voice the podcast line by line and let the app start playing as soon as the first lines exist (first
+6. **Stream audio.** *(done in the pipeline; the app plays `clip`s in order until `complete`)* Voice the podcast line by line and let the app start playing as soon as the first lines exist (first
    sound in about a minute instead of 18). The transcript already has per-line start times; write it progressively.
 7. **One warm worker instead of a process per run.** A long-lived pipeline worker that the app talks to over stdin/stdout
    JSON keeps Rumik and the models loaded: no 20-second Rumik load per book, and a recall check in 1–2 seconds instead of

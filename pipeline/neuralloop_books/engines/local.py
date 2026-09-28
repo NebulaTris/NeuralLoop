@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import shutil
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -213,34 +214,42 @@ class LocalEngine:
             "podcast script",
         )
         n = chapter["n"]
-        clips: list[Path] = []
-        first_clip_of_line: list[int] = []
+        transcript_file = self._media(f"{n:02d}-podcast.json")
+        transcript = {"title": script["title"], "complete": False, "lines": []}
+        line_wavs: list[Path] = []
+        position = 0.0
         for i, line in enumerate(script["lines"]):
             voice = self.speech.voices[0 if line["speaker"] == "A" else 1]
-            first_clip_of_line.append(len(clips))
+            pieces = []
             for j, piece in enumerate(audio.split_for_speech(line["text"])):
                 clip = self._clip_path(f"{n:02d}-podcast-{i:03d}-{j}")
                 await self._say(piece, voice, line["delivery"], clip)
-                clips.append(clip)
-        wav = self._media(f"{n:02d}-podcast.wav")
-        durations = await asyncio.to_thread(audio.join_wavs, clips, wav, LINE_PAUSE)
-        starts = [round(sum(durations[:k]) + LINE_PAUSE * k, 3) for k in range(len(durations))]
-        transcript = {
-            "title": script["title"],
-            "lines": [
+                pieces.append(clip)
+            line_wav = self._clip_path(f"{n:02d}-podcast-line-{i:03d}")
+            lengths = await asyncio.to_thread(audio.join_wavs, pieces, line_wav, 0.2)
+            seconds = sum(lengths) + 0.2 * (len(pieces) - 1)
+            _remove(pieces)
+            # Each line is published once it's voiced, so the app can start playing while the rest is made.
+            published = _copy(line_wav, self._media(f"{n:02d}-podcast-lines/{i:03d}.wav"))
+            clip = await asyncio.to_thread(audio.to_m4a, published)
+            transcript["lines"].append(
                 {
                     "speaker": line["speaker"],
-                    "voice": self.speech.voices[0 if line["speaker"] == "A" else 1],
+                    "voice": voice,
                     "text": _VOCALISATION.sub(" ", line["text"]).strip(),
-                    "start": starts[first_clip_of_line[i]],
+                    "start": round(position, 3),
+                    "clip": clip.relative_to(self.out_dir).as_posix(),
                 }
-                for i, line in enumerate(script["lines"])
-            ],
-        }
+            )
+            _write_json(transcript_file, transcript)
+            line_wavs.append(line_wav)
+            position += seconds + LINE_PAUSE
+        wav = self._media(f"{n:02d}-podcast.wav")
+        await asyncio.to_thread(audio.join_wavs, line_wavs, wav, LINE_PAUSE)
         final = await asyncio.to_thread(audio.to_m4a, wav)
-        transcript_file = self.out_dir / "media" / f"{n:02d}-podcast.json"
-        transcript_file.write_text(json.dumps(transcript, ensure_ascii=False, indent=1), encoding="utf-8")
-        _remove(clips)
+        transcript["complete"] = True
+        _write_json(transcript_file, transcript)
+        _remove(line_wavs)
         return {"audio": f"media/{final.name}", "transcript": f"media/{transcript_file.name}"}
 
     async def _video(self, chapter):
@@ -305,6 +314,19 @@ def _chapter_text(file: Path) -> str:
     return _FIGURE.sub(
         lambda m: f"[Figure: {m.group(1)}]" if m.group(1) else "", file.read_text(encoding="utf-8")
     )
+
+
+def _copy(source: Path, target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return target
+
+
+def _write_json(path: Path, data: dict) -> None:
+    """Atomic, so the app never reads half a transcript."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _remove(paths: list[Path]) -> None:

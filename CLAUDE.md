@@ -157,7 +157,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
 - **`book-data.js`**: `window.BOOK = {title, source, made, dryRun, options, chapters:[{n, title, pages, read:{kind:"pdf",file}|{kind:"text",text},
   status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall,
   explainer:{slides:[{title,points,narration,pose,audio,duration}]}, transcript}], graph, engine, provider, model}`.
-  `transcript` points at `media/NN-podcast.json`: `{title, lines:[{speaker,voice,text,start}]}`.
+  `transcript` points at `media/NN-podcast.json`: `{title, complete, lines:[{speaker,voice,text,start,clip}]}`, rewritten
+  after every voiced line (`complete: false`, each line's `clip` in `media/NN-podcast-lines/`), so playback can start early.
 - **Study progress** (`store`, saved as localStorage `nlbook:<title>` and `progress.json`): `{cards:{"n:i":{s,d,reps,last,due}},
   quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage}}`.
 - **Tauri commands**: `get_settings`, `set_settings`, `check_setup`, `start_pipeline(opts)`, `cancel_pipeline(bookId)`,
@@ -170,8 +171,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
    environment (for example a missing Chromium), fix the setup, not the tests. Commit: `Add NeuralLoop Books desktop app`.
 1. ~~`docs/specs/05-own-pipeline-any-model.md`~~ — done: `auto` engine (NotebookLM, local fallback), any model, Rumik voices,
    recall checking, per-person `ai.json`, self-contained runtime.
-2. `docs/specs/06-speed.md` — reading-order queue and media lane done; next: submit-then-poll for NotebookLM, streamed audio,
-   a warm worker process.
+2. `docs/specs/06-speed.md` — reading-order queue, media lane, and streamed podcast lines done; next: submit-then-poll for
+   NotebookLM, a warm worker process.
 3. `docs/specs/04-native-macos-app.md` — replace the study site and the Tauri app with one native SwiftUI app. Specs 01 and 02 then
    target the Swift files.
 4. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
