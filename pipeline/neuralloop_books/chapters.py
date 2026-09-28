@@ -6,6 +6,7 @@ import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 from posixpath import dirname, join, normpath
+from typing import ClassVar
 from urllib.parse import unquote, urldefrag
 
 from .config import FRONT_MATTER
@@ -16,6 +17,10 @@ FALLBACK_PAGES = 20
 MAX_EPUB_ENTRY = 50_000_000
 MAX_EPUB_TOTAL = 500_000_000
 MAX_EPUB_ENTRIES = 5000
+IMAGE_TYPES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
+MIN_IMAGE_BYTES = 2048  # smaller is a spacer, bullet, or icon, not a figure
+MAX_IMAGES_PER_CHAPTER = 80
+_IMAGE_REF = re.compile(r"!\[([^\]]*)\]\(zip:([^)\s]+)\)")
 
 
 class UnsafeBookError(ValueError):
@@ -111,6 +116,7 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
                 continue
             number = len(chapters) + 1
             file = out_dir / f"{number:02d}.md"
+            text = _save_images(book, text, out_dir / "img", number)
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
             chapters.append({"n": number, "title": title, "file": file.name, "chars": len(text)})
         return chapters
@@ -196,17 +202,20 @@ def _toc_starts(spine: list[str], toc: list[tuple[str, str]]) -> list[tuple[str,
 
 
 class _MarkdownText(HTMLParser):
-    """Collects readable text, turning <h1>-<h6> into Markdown headings."""
+    """Collects readable text as Markdown: headings, *emphasis*, **bold**, lists, figures and captions.
 
-    BLOCKS = frozenset(
-        {"p", "div", "li", "br", "tr", "section", "article", "blockquote", "pre", "figcaption"}
-    )
+    Images become `![alt](zip:path/in/archive)` placeholders; `_save_images` copies the kept ones out.
+    """
+
+    BLOCKS = frozenset({"p", "div", "br", "tr", "section", "article", "blockquote", "pre"})
+    EMPHASIS: ClassVar[dict[str, str]] = {"em": "*", "i": "*", "strong": "**", "b": "**"}
 
     def __init__(self):
         super().__init__()
         self.parts: list[str] = []
         self.hidden_depth = 0
         self.heading: int | None = None
+        self.document = ""
 
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style", "head"):
@@ -214,6 +223,16 @@ class _MarkdownText(HTMLParser):
         elif re.fullmatch(r"h[1-6]", tag):
             self.heading = int(tag[1])
             self.parts.append("\n\n" + "#" * min(3, self.heading) + " ")
+        elif tag in ("img", "image"):
+            values = dict(attrs)
+            source = values.get("src") or values.get("xlink:href") or values.get("href") or ""
+            self._image(source, values.get("alt") or "")
+        elif tag == "li":
+            self.parts.append("\n- ")
+        elif tag == "figcaption":
+            self.parts.append("\n\n*")
+        elif tag in self.EMPHASIS and not self.heading:
+            self.parts.append(self.EMPHASIS[tag])
         elif tag in self.BLOCKS:
             self.parts.append("\n")
 
@@ -223,6 +242,15 @@ class _MarkdownText(HTMLParser):
         elif re.fullmatch(r"h[1-6]", tag):
             self.parts.append("\n")
             self.heading = None
+        elif tag == "figcaption":
+            self.parts.append("*\n\n")
+        elif tag in self.EMPHASIS and not self.heading:
+            if self.parts and self.parts[-1] == self.EMPHASIS[tag]:
+                self.parts.pop()  # emphasis around nothing
+            else:
+                self.parts.append(self.EMPHASIS[tag])
+        elif tag in ("ul", "ol"):
+            self.parts.append("\n\n")
         elif tag in self.BLOCKS:
             self.parts.append("\n")
 
@@ -230,16 +258,49 @@ class _MarkdownText(HTMLParser):
         if not self.hidden_depth:
             self.parts.append(data.replace("\n", " ") if self.heading else data)
 
+    def _image(self, source: str, alt: str) -> None:
+        if not source or source.startswith(("data:", "http:", "https:")):
+            return
+        path = normpath(join(dirname(self.document), unquote(urldefrag(source)[0])))
+        alt = re.sub(r"[\[\]\n]", " ", alt).strip()
+        self.parts.append(f"\n\n![{alt}](zip:{path})\n\n")
+
     def text(self) -> str:
         joined = re.sub(r"[ \t]+", " ", "".join(self.parts))
+        joined = re.sub(r"\n +", "\n", joined)
         return re.sub(r"\n{3,}", "\n\n", joined).strip()
 
 
 def _html_to_markdown(book: zipfile.ZipFile, documents: list[str]) -> str:
     parser = _MarkdownText()
     for name in documents:
+        parser.document = name
         try:
             parser.feed(_read(book, name))
         except KeyError:  # listed in the spine but missing from the archive
             continue
     return parser.text()
+
+
+def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) -> str:
+    """Copy the chapter's real figures to img/NN-KK.ext and point the Markdown at them; drop the rest."""
+    names = set(book.namelist())
+    saved: dict[str, str] = {}
+
+    def replace(match: re.Match) -> str:
+        alt, path = match.group(1), match.group(2)
+        suffix = Path(path).suffix.lower()
+        if path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
+            return ""
+        if path not in saved:
+            data = book.read(path)
+            if len(data) < MIN_IMAGE_BYTES or len(saved) >= MAX_IMAGES_PER_CHAPTER:
+                return ""
+            folder.mkdir(parents=True, exist_ok=True)
+            name = f"{number:02d}-{len(saved) + 1:02d}{suffix}"
+            (folder / name).write_bytes(data)
+            saved[path] = f"img/{name}"
+        return f"![{alt}]({saved[path]})"
+
+    cleaned = _IMAGE_REF.sub(replace, text)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()

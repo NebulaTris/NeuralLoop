@@ -24,7 +24,9 @@ class HermesModel:
                 "Hermes Agent isn't installed. Install it from Nous Research, then run: hermes setup"
             )
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         await self.check()
         message = f"{system}\n\n<chapter>\n{source}\n</chapter>\n\n{prompt}"
         argv = [self.executable, "-z", message, *(["-m", self.model] if self.model else [])]

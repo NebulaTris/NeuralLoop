@@ -2,7 +2,7 @@
 PY ?= python3
 CARGO_ENV ?=
 
-.PHONY: setup test check lint site app
+.PHONY: setup test check lint site app runtime
 
 setup:            ## install dev tools for every part
 	cd pipeline && $(PY) -m pip install -e ".[dev]" playwright && $(PY) -m playwright install chromium
@@ -28,3 +28,6 @@ check: lint test  ## what CI runs
 
 app:              ## build the desktop app for this computer
 	npm run build
+
+runtime:          ## self-contained runtime for the Mac app (build/runtime): Python, pipeline, Rumik, Ollama
+	scripts/build-runtime.sh

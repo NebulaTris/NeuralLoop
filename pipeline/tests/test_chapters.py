@@ -62,3 +62,38 @@ def test_other_file_types_are_refused(tmp_path):
     (tmp_path / "x.txt").write_text("hi")
     with pytest.raises(ValueError):
         split_book(tmp_path / "x.txt", tmp_path / "out")
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096
+
+
+def test_epub_figures_are_kept_as_images_with_captions(tmp_path):
+    body = (
+        LONG
+        + '</p><figure><img src="images/cache.png" alt="A cache in front of a database"/>'
+        + "<figcaption>Figure 1. Reads hit the cache first.</figcaption></figure><p>"
+        + '<img src="../../../etc/passwd.png"/><img src="images/notes.txt"/><img src="images/dot.png"/>'
+    )
+    files = {"images/cache.png": PNG, "images/notes.txt": b"x" * 5000, "images/dot.png": b"\x89PNG tiny"}
+    book = write_epub(tmp_path / "b.epub", [("Caching", body)], files=files)
+    out = tmp_path / "out"
+    out.mkdir()
+    chapters = split_book(book, out)
+    text = (out / chapters[0]["file"]).read_text()
+    assert "![A cache in front of a database](img/01-01.png)" in text
+    assert "*Figure 1. Reads hit the cache first.*" in text
+    assert (out / "img" / "01-01.png").read_bytes() == PNG
+    assert sorted(p.name for p in (out / "img").iterdir()) == [
+        "01-01.png"
+    ]  # unsafe, non-image, tiny: skipped
+
+
+def test_epub_emphasis_and_lists_survive(tmp_path):
+    body = LONG + "</p><p>This is <em>important</em> and <strong>very</strong> so.</p>"
+    body += "<ul><li>First</li><li>Second</li></ul><p>"
+    out = tmp_path / "out"
+    out.mkdir()
+    chapters = split_book(write_epub(tmp_path / "b.epub", [("Caching", body)]), out)
+    text = (out / chapters[0]["file"]).read_text()
+    assert "*important*" in text and "**very**" in text
+    assert "- First" in text and "- Second" in text

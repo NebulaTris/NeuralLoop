@@ -17,6 +17,7 @@ CONTEXT_TOKENS = 16_384
 # Small models in JSON mode can loop until the context is full; a long podcast script fits well within this.
 MAX_OUTPUT_TOKENS = 8_192
 TIMEOUT = 900.0  # local models on a laptop can be slow
+KEEP_ALIVE = "30m"  # stay loaded between a book's items instead of reloading each time
 
 
 def _get_json(url: str, timeout: float) -> dict:
@@ -62,11 +63,15 @@ class OllamaModel:
         elif self.model not in installed and f"{self.model}:latest" not in installed:
             raise SetupError(f"Ollama doesn't have {self.model} yet. Run: ollama pull {self.model}")
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         body = {
             "model": self.model,
             "stream": False,
-            "format": SCHEMAS.get(kind, "json"),
+            "think": False,  # "thinking" models are slower and don't write better JSON for this
+            "keep_alive": KEEP_ALIVE,
+            "format": schema or SCHEMAS.get(kind, "json"),
             "options": {"num_ctx": CONTEXT_TOKENS, "num_predict": MAX_OUTPUT_TOKENS},
             "messages": [
                 {"role": "system", "content": system},

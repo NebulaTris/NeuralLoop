@@ -26,7 +26,9 @@ class AnthropicModel:
         except anthropic.APIConnectionError as error:
             raise SetupError("Couldn't reach Anthropic. Check your internet connection.") from error
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         content = [
             # The chapter comes first and is cached, so a chapter's other items reuse it.
             {

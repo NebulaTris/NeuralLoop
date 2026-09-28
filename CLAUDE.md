@@ -62,7 +62,7 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 |---|---|
 | `nl_book.py` | Entry point; friendly exit on Python < 3.10; calls `cli.main()` |
 | `neuralloop_books/cli.py` | Argument parsing, engine choice, exit codes (0 ok, 2 invalid input, 3 setup needed: key, model, Ollama, sign-in; 130 interrupted), final summary |
-| `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run(opts, engine)` (prepare the engine, make items with a semaphore, quota handling, rebuild site after every item) |
+| `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run(opts, engine)` (prepare the engine, make items in a text lane and a media lane, quota handling, rebuild site after every item) |
 | `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, safety limits); front-matter filter |
 | `neuralloop_books/engines/local.py` | `LocalEngine`: any text model writes each item (checked, retried once with the reason); podcasts and explainers voiced by a speech engine |
 | `neuralloop_books/engines/notebooklm.py` | `NotebookLMEngine`: adds chapters as sources, then `ChapterMaker` makes each item |
@@ -70,6 +70,8 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`; `anthropic`, `openai_compat` (OpenAI, OpenRouter, any compatible `custom` URL), `hermes` (Hermes Agent one-shot), `ollama` (native API, JSON schemas), `opencode` (subprocess), `fake` |
 | `neuralloop_books/speech/` | Speech: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, 8-bit or 4-bit by memory; CC-BY-NC) is the only voice; `fake` for tests |
 | `neuralloop_books/engines/auto.py` | `AutoEngine`: NotebookLM first, local engine for the whole run or per failed item; results tagged with who made them (`tasks.*.by`) |
+| `neuralloop_books/recall.py` | `grade(model, question, keyPoints, answer)`: one check per key point in parallel, evidence must be in the answer and about the idea; `word_match` fallback |
+| `neuralloop_books/aiconfig.py` | `load(path)` → `AIConfig` (engine, make, per-item `tasks`, recall model, voices) from the person's `ai.json` |
 | `neuralloop_books/setup.py` | First run: `ensure_ollama` (bundled or installed), `ensure_model` (default by memory: `qwen3:8b`/`qwen3:4b`), `ensure_rumik` |
 | `neuralloop_books/account.py` | Google sign-in via `notebooklm login` (Chrome when installed) and `status()` via `notebooklm auth check --json` |
 | `neuralloop_books/audio.py` | `split_for_speech`, `join_wavs` (with pauses, returns durations), `to_m4a` (afconvert) |
@@ -77,7 +79,7 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `neuralloop_books/schemas.py` | JSON schemas per item; Ollama uses them to constrain small models |
 | `neuralloop_books/convert.py` | Model and NotebookLM outputs → our formats: `loose_json`, `quiz`, `flashcards`, `study`, `concept_graph`, `mind_map`, `podcast_script`, `explainer` |
 | `neuralloop_books/book_graph.py` | Chapter graphs → one Understand-Anything knowledge graph; `similar_to` links across chapters |
-| `neuralloop_books/state.py` | `BookState` (state.json): statuses, `apply_selection`, `pending`, `counts` |
+| `neuralloop_books/state.py` | `BookState` (state.json): statuses, `apply_selection`, `pending` (reading order: chapter 1 first), `counts` |
 | `neuralloop_books/site.py` | Writes `book-data.js`, `knowledge-graph.json`, copies `site/{index.html,styles.css,app.js,pip-poses.js}` |
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `ENUMS`) |
 | `neuralloop_books/selection.py` | `parse_selection("1-3,5", n)` |
@@ -129,7 +131,8 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `../tauri.conf.json`, `../capabilities/default.json` | Windows, CSP, bundle resources, permissions |
 
 ### Other
-`design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
+`scripts/build-runtime.sh` (self-contained runtime: relocatable Python + pipeline + every provider + Rumik + NotebookLM +
+Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
 `tests/test_desktop_ui.py` (desktop screens in Chromium with a simulated backend) · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
@@ -141,12 +144,16 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
   per item when NotebookLM fails or hits its limit. Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
   `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup` (start Ollama, download
   the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in in a real browser; the
-  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`). Progress lines on stdout:
+  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--grade-recall` (stdin `{question, keyPoints, answer}`,
+  stdout `{covered:[bool], score, feedback, missing, by}`; one parallel check per key point, word matching as fallback).
+  `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider, model, baseUrl},
+  tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B]}`; flags override it. Progress lines on stdout:
   `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM couldn't (…); making it with X`,
   `  … chapter N task: {Engine} limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`. Exit 3 = setup needed.
 - **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
   `progress.json` (study progress from the site), `book-data.js`, `index.html`, `styles.css`, `app.js`, `pip-poses.js`,
-  `chapters/NN.{pdf,md}`, `media/`, `raw/`, `knowledge-graph.json`.
+  `chapters/NN.{pdf,md}` (EPUB Markdown keeps figures as `![alt](img/NN-KK.ext)` with files in `chapters/img/`, captions as
+  `*…*`, emphasis, lists), `media/`, `raw/`, `knowledge-graph.json`. `state.json` tasks record `by` (which engine made them).
 - **`book-data.js`**: `window.BOOK = {title, source, made, dryRun, options, chapters:[{n, title, pages, read:{kind:"pdf",file}|{kind:"text",text},
   status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall,
   explainer:{slides:[{title,points,narration,pose,audio,duration}]}, transcript}], graph, engine, provider, model}`.
@@ -161,13 +168,15 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 
 0. **Baseline.** `make setup && make check` must pass on this machine before any change. If something fails because of the
    environment (for example a missing Chromium), fix the setup, not the tests. Commit: `Add NeuralLoop Books desktop app`.
-1. `docs/specs/05-own-pipeline-any-model.md` — the local engine: any model (Anthropic, OpenAI, OpenRouter, Ollama, opencode),
-   Rumik or macOS speech; NotebookLM becomes optional.
-2. `docs/specs/04-native-macos-app.md` — replace the study site and the Tauri app with one native SwiftUI app. Specs 01 and 02 then
+1. ~~`docs/specs/05-own-pipeline-any-model.md`~~ — done: `auto` engine (NotebookLM, local fallback), any model, Rumik voices,
+   recall checking, per-person `ai.json`, self-contained runtime.
+2. `docs/specs/06-speed.md` — reading-order queue and media lane done; next: submit-then-poll for NotebookLM, streamed audio,
+   a warm worker process.
+3. `docs/specs/04-native-macos-app.md` — replace the study site and the Tauri app with one native SwiftUI app. Specs 01 and 02 then
    target the Swift files.
-3. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
-4. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
-5. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
+4. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
+5. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
+6. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
 
 `docs/specs/03-pip-design-system.md` is the reference for anything showing Pip.
 

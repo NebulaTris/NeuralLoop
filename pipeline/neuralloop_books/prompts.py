@@ -65,7 +65,8 @@ PODCAST_FORMATS = {
 }
 
 PODCAST = """Write a two-host podcast script about the chapter "{title}": {format}. {instructions}
-Host A leads and asks; host B explains and adds examples. They're curious, kind, and a little playful.
+Host A is {host_a}, who leads and asks; host B is {host_b}, who explains and adds examples. They're curious, kind,
+and a little playful, and they call each other by name (never say "A", "B", "host", or "speaker" aloud).
 JSON shape: {{"title":"episode title","lines":[{{"speaker":"A|B","text":"what they say","delivery":"tone and pace, e.g. excited, steady pace"}}]}}
 Rules: natural spoken language, short turns (1-4 sentences); open with a warm hello and close with a recap;
 you may add <laugh>, <chuckle>, or <sigh> inside text where it fits (sparingly); both hosts speak often."""
@@ -89,3 +90,11 @@ JSON shape: {{"notes":"the notes, max {words} words, as short paragraphs or '-' 
 RETRY = """
 
 Your previous answer wasn't usable ({problem}). Reply again with only the JSON object in the shape above."""
+
+RECALL_SYSTEM = """You check whether a learner's answer expresses one idea, for NeuralLoop, a gentle learning app.
+Judge meaning, not wording: the idea counts if the answer says it in any words. Reply with one JSON object only."""
+
+RECALL_POINT = """Question the learner answered: {question}
+Idea: "{point}"
+Learner's answer: <<<{answer}>>>
+JSON: {{"covered": true or false, "evidence": "a short phrase copied from the answer that expresses the idea, or empty"}}"""

@@ -28,7 +28,11 @@ The Python pipeline stays; it becomes a data producer only.
 | Graphs | A pure Swift force layout in the core module (seeded, deterministic, tested) replaces d3; SwiftUI `Canvas` draws it |
 | Reading | PDF chapters with PDFKit; text chapters as `AttributedString` built from the chapter Markdown with reading-plan labels |
 | Media | AVKit `VideoPlayer` for NotebookLM videos; `AVPlayer` for podcasts with the transcript following along; the local engine's `explainer` (spec 05) plays as an animated slideshow with Pip, one narration clip per slide. No byte-range server needed |
-| AI keys | Settings → "Your AI": pick a provider (Anthropic, OpenAI, OpenRouter, Ollama, opencode, or NotebookLM), model, and speech engine (Rumik or macOS voices, with Rumik's non-commercial license note). Keys are stored in the macOS Keychain and passed to the pipeline as environment variables only |
+| First launch | Welcome screen: **Sign in with Google** (runs `neuralloop --signin`: a real Chrome window; the same session is NotebookLM's, and the account's email shows in the app) or **Not now** (Pip uses Ollama). Then a friendly setup screen shows `neuralloop --setup` progress (`  setup: …` lines) while Ollama starts and the local model, the recall model, and Rumik download once |
+| Runtime | The app bundle carries `Contents/Resources/runtime` from `scripts/build-runtime.sh` (Python, pipeline, every provider, Rumik, NotebookLM, Ollama); every pipeline call goes through `runtime/bin/neuralloop`. Nothing else to install |
+| Recall | The Recall step sends the answer to `neuralloop --grade-recall` (later the warm worker from spec 06) and shows which key points were covered and the kind feedback |
+| Reader | Text chapters read like a textbook: figures from `chapters/img/` with captions, emphasis, lists, reading-plan labels; PDF chapters show the original pages in PDFKit |
+| AI keys | Settings → "Your AI": pick a provider (Anthropic, OpenAI, OpenRouter, Ollama, opencode, or NotebookLM), model, optional per-item models, the recall model (default `gemma2:2b`), and Rumik's two voices, written to the person's `ai.json`; Rumik's non-commercial license note shown. Keys are stored in the macOS Keychain and passed to the pipeline as environment variables only |
 | Tests | Swift Testing. Pure logic in `NeuralLoopCore`; each screen gets an `@Observable` model tested without UI. SwiftUI views stay thin |
 
 ## Layout

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import site
 from .chapters import split_book
-from .config import DEFAULT_INSTRUCTIONS, quota_message
+from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
 from .models import SetupError
 from .notebook import is_quota_error
 from .selection import parse_selection
@@ -27,6 +27,7 @@ class Options:
     language: str = "en"
     instructions: str = DEFAULT_INSTRUCTIONS
     parallel: int = 2
+    media_parallel: int = 1  # podcasts and explainers, in their own lane so text items never wait behind them
     engine: str = "auto"
     provider: str = "auto"
     model: str | None = None
@@ -34,6 +35,9 @@ class Options:
     speech: str = "auto"
     voices: str | None = None
     base_url: str | None = None
+    task_choices: dict = field(
+        default_factory=dict
+    )  # item -> aiconfig.ModelChoice, from the person's ai.json
     title: str | None = None
     retry: bool = False
     dry_run: bool = False
@@ -87,9 +91,15 @@ async def run(opts: Options, engine) -> BookState:
     async with engine:
         await engine.prepare(state)
         pending = state.pending()
-        opts.log(f"Making {len(pending)} items with {engine.name}, {opts.parallel} at a time.")
-        limiter, quota_hit = asyncio.Semaphore(opts.parallel), set()
-        await asyncio.gather(*(_make(opts, state, engine, limiter, quota_hit, c, t) for c, t in pending))
+        opts.log(f"Making {len(pending)} items with {engine.name}, chapter by chapter.")
+        lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
+        quota_hit: set[str] = set()
+        await asyncio.gather(
+            *(
+                _make(opts, state, engine, lanes["media" if t in MEDIA_TASKS else "text"], quota_hit, c, t)
+                for c, t in pending
+            )
+        )
     site.build(opts.out, state, site_options(opts))
     return state
 

@@ -24,16 +24,41 @@ export function withoutRepeatedTitle(text, title) {
   );
 }
 
-/** Markdown paragraphs and headings to HTML; headings that match the reading plan get a label and a note. */
+// Only images the pipeline copied next to the chapter (chapters/img/NN-KK.ext) are shown.
+const FIGURE = /^!\[([^\]]*)\]\((img\/[\w.-]+\.(?:png|jpe?g|gif|svg|webp))\)$/i;
+const ANY_IMAGE = /^!\[[^\]]*\]\([^)]*\)$/;
+const CAPTION = /^\*([^*].*[^*])\*$/;
+
+/** Escaped text with *emphasis* and **bold**. */
+function inline(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/\n/g, " ");
+}
+
+/** Markdown to textbook-style HTML: headings (reading-plan labels and notes), figures with captions, lists. */
 export function markdownToHtml(text, guide = []) {
   const plan = guide.map((entry) => ({ ...entry, key: entry.section.toLowerCase().trim() }));
-  return text
-    .split(/\n{2,}/)
-    .map((block) => {
-      const trimmed = block.trim();
+  const blocks = text.split(/\n{2,}/).map((block) => block.trim());
+  return blocks
+    .map((trimmed, i) => {
       if (!trimmed) return "";
+      const figure = trimmed.match(FIGURE);
+      if (figure) {
+        const caption = (blocks[i + 1] || "").match(CAPTION);
+        const img = `<img src="chapters/${figure[2]}" alt="${escapeHtml(figure[1])}" loading="lazy">`;
+        return `<figure>${img}${caption ? `<figcaption>${inline(caption[1])}</figcaption>` : ""}</figure>`;
+      }
+      if (ANY_IMAGE.test(trimmed)) return "";
+      const previous = (blocks[i - 1] || "").match(FIGURE);
+      if (previous && CAPTION.test(trimmed)) return ""; // already shown as the figure's caption
+      if (/^- /.test(trimmed)) {
+        const items = trimmed.split(/\n- /).map((item) => `<li>${inline(item.replace(/^- /, ""))}</li>`);
+        return `<ul>${items.join("")}</ul>`;
+      }
       const heading = trimmed.match(/^(#{1,3})\s+(.*)/);
-      if (!heading) return `<p>${escapeHtml(trimmed).replace(/\n/g, " ")}</p>`;
+      if (!heading) return `<p>${inline(trimmed)}</p>`;
       const title = heading[2].trim();
       const lower = title.toLowerCase();
       const match = plan.find((p) => p.key && (lower.includes(p.key) || p.key.includes(lower)));

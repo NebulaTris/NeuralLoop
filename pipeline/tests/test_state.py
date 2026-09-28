@@ -40,11 +40,12 @@ def test_retry_only_revives_failed_and_waiting(tmp_path):
     assert statuses(state, "quiz") == [TODO, TODO]
 
 
-def test_pending_orders_light_items_before_media(tmp_path):
+def test_pending_finishes_chapters_in_reading_order(tmp_path):
     state = make_state(tmp_path, 2)
     state.apply_selection({1, 2}, {1, 2}, audio=True, video=True, retry=False)
-    tasks = [t for _, t in state.pending()]
-    assert tasks.index("video") > tasks.index("mindmap") and tasks[:2] == ["study", "study"]
+    order = [(c["n"], t) for c, t in state.pending()]
+    assert order[:5] == [(1, "study"), (1, "graph"), (1, "quiz"), (1, "cards"), (1, "mindmap")]
+    assert order.index((1, "audio")) < order.index((2, "study"))
 
 
 def test_old_states_gain_new_tasks_and_survive_reload(tmp_path):

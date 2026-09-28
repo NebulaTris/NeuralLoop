@@ -6,7 +6,10 @@ from pathlib import Path
 LONG = "Systems change and engineers adapt with care. " * 50
 
 
-def write_epub(path: Path, chapters: list[tuple[str, str]], nav: bool = True) -> Path:
+def write_epub(
+    path: Path, chapters: list[tuple[str, str]], nav: bool = True, files: dict[str, bytes] | None = None
+) -> Path:
+    """chapters: (title, body HTML). files: extra entries under OEBPS/, e.g. {"images/a.png": b"..."}."""
     docs = [(f"doc{i}.xhtml", title, body) for i, (title, body) in enumerate(chapters)]
     manifest = "".join(
         f'<item id="d{i}" href="{f}" media-type="application/xhtml+xml"/>' for i, (f, _, _) in enumerate(docs)
@@ -42,6 +45,8 @@ def write_epub(path: Path, chapters: list[tuple[str, str]], nav: bool = True) ->
                 f"<html><head><style>x{{}}</style></head>"
                 f"<body><h1>{t}</h1><h2>Part one</h2><p>{body}</p></body></html>",
             )
+        for name, data in (files or {}).items():
+            z.writestr(f"OEBPS/{name}", data)
     return path
 
 

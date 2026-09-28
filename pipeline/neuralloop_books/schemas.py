@@ -115,4 +115,5 @@ SCHEMAS = {
         }
     ),
     "condense": _obj({"notes": _STR}),
+    "recall": _obj({"covered": {"type": "boolean"}, "evidence": _STR}),
 }

@@ -69,8 +69,8 @@ class BookState:
                     entry["status"] = TODO
 
     def pending(self) -> list[tuple[dict, str]]:
-        """(chapter, task) pairs still to make: light tasks for every chapter first, media last."""
-        return [(c, t) for t in TASKS for c in self.chapters if c["tasks"][t]["status"] == TODO]
+        """(chapter, task) pairs still to make, in reading order: chapter 1 is finished first, then 2, …"""
+        return [(c, t) for c in self.chapters for t in TASKS if c["tasks"][t]["status"] == TODO]
 
     def counts(self) -> dict[str, int]:
         totals: dict[str, int] = {}

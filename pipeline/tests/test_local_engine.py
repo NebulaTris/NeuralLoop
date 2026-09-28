@@ -185,3 +185,10 @@ def test_strings_that_swallowed_json_structure_are_rejected(tmp_path, chapter):
     result = make(engine_for(tmp_path, model), "mindmap", chapter)
     assert "Drift”" not in json.dumps(result, ensure_ascii=False)
     assert "straight double quotes" in model.calls[1][1]
+
+
+def test_podcast_hosts_are_named_after_their_voices(tmp_path, chapter):
+    model = FakeModel()
+    make(engine_for(tmp_path, model), "audio", chapter)
+    prompt = next(p for kind, p in model.calls if kind == "audio")
+    assert "Tone A" in prompt and "Tone B" in prompt and "never say" in prompt

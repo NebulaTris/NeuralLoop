@@ -1,0 +1,71 @@
+import asyncio
+import json
+
+from neuralloop_books import aiconfig
+from neuralloop_books.engines.local import LocalEngine
+from neuralloop_books.models.fake import FakeModel
+from neuralloop_books.speech.fake import FakeSpeech
+from neuralloop_books.testing import LONG
+
+
+def test_defaults_work_out_of_the_box(tmp_path):
+    config = aiconfig.load(tmp_path / "missing.json")
+    assert config.engine == "auto" and config.make.provider == "auto"
+    assert config.recall.provider == "ollama" and config.recall.model == "gemma2:2b"
+    assert config.voices == ("Ira", "Zoya")
+
+
+def test_a_person_can_choose_models_per_item(tmp_path):
+    path = tmp_path / "ai.json"
+    path.write_text(
+        json.dumps(
+            {
+                "engine": "local",
+                "make": {"provider": "ollama", "model": "qwen3:8b"},
+                "tasks": {"quiz": {"provider": "anthropic", "model": "claude-opus-5"}},
+                "recall": {
+                    "provider": "custom",
+                    "model": "Hermes-4-70B",
+                    "baseUrl": "https://api.example.ai/v1",
+                },
+                "voices": ["Aisha", "Siya"],
+            }
+        )
+    )
+    config = aiconfig.load(path)
+    assert config.engine == "local" and config.make.model == "qwen3:8b"
+    assert config.task("quiz").provider == "anthropic" and config.task("cards").model == "qwen3:8b"
+    assert config.recall.base_url == "https://api.example.ai/v1" and config.voices == ("Aisha", "Siya")
+
+
+def test_a_broken_file_falls_back_to_defaults(tmp_path):
+    path = tmp_path / "ai.json"
+    path.write_text("{not json")
+    assert aiconfig.load(path).engine == "auto"
+
+
+class Named(FakeModel):
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+
+
+def test_the_local_engine_uses_each_items_own_model(tmp_path):
+    (tmp_path / "chapters").mkdir()
+    (tmp_path / "chapters" / "01.md").write_text(LONG)
+    default, quiz_model = Named("Ollama"), Named("Claude")
+    engine = LocalEngine(
+        default,
+        FakeSpeech(),
+        tmp_path,
+        budget=400_000,
+        audio="deep-dive",
+        video="explainer",
+        language="en",
+        instructions="",
+        task_models={"quiz": quiz_model},
+    )
+    chapter = {"n": 1, "title": "Caching", "file": "01.md"}
+    asyncio.run(engine.make("quiz", chapter))
+    asyncio.run(engine.make("cards", chapter))
+    assert [k for k, _ in quiz_model.calls] == ["quiz"] and [k for k, _ in default.calls] == ["cards"]

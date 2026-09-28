@@ -54,17 +54,19 @@ class LocalEngine:
         video: str,
         language: str,
         instructions: str,
+        task_models: dict | None = None,
     ):
         self.model, self.speech, self.out_dir, self.budget = model, speech, out_dir, budget
         self.audio_format, self.video_format, self.instructions = audio, video, instructions
         self.system = prompts.SYSTEM.format(language=LANGUAGES.get(language, language))
         self.name = model.name
+        self.task_models = task_models or {}  # a different model for some items, e.g. {"quiz": claude}
         self._sources: dict[int, str] = {}
         self._source_locks: dict[int, asyncio.Lock] = {}
         self._speaking = asyncio.Lock()  # speech models are big: one clip at a time
 
     @classmethod
-    def from_options(cls, opts, model, speech) -> "LocalEngine":
+    def from_options(cls, opts, model, speech, task_models: dict | None = None) -> "LocalEngine":
         budget = opts.context or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
         return cls(
             model,
@@ -75,6 +77,7 @@ class LocalEngine:
             video=opts.video,
             language=opts.language,
             instructions=opts.instructions,
+            task_models=task_models,
         )
 
     async def __aenter__(self):
@@ -84,7 +87,8 @@ class LocalEngine:
         return False
 
     async def prepare(self, state: BookState) -> None:
-        await self.model.check()
+        for model in {id(m): m for m in (self.model, *self.task_models.values())}.values():
+            await model.check()
         voiced = ("audio", "video")
         if any(
             c["tasks"][t]["status"] == "todo"
@@ -115,19 +119,20 @@ class LocalEngine:
     async def _ask(self, kind: str, chapter: dict, prompt: str, check, label: str):
         """Ask for one JSON item; if it's unusable or skimpy, ask once more saying exactly what was wrong."""
         source = await self._source(chapter)
-        answer = await self.model.complete(kind, self.system, source, prompt)
+        model = self.task_models.get(kind, self.model)
+        answer = await model.complete(kind, self.system, source, prompt)
         result, problem = self._judge(kind, answer, check)
         if problem:
             self._keep_rejected(chapter, kind, answer)
             retry = prompt + prompts.RETRY.format(problem=problem)
-            second = await self.model.complete(kind, self.system, source, retry)
+            second = await model.complete(kind, self.system, source, retry)
             again, second_problem = self._judge(kind, second, check)
             if second_problem:
                 self._keep_rejected(chapter, kind, second)
             # A short but valid answer beats nothing; keep whichever of the two has more.
             result = max((r for r in (result, again) if r), key=lambda r: MINIMUMS[kind][1](r), default=None)
         if not result:
-            raise UnusableAnswer(f"{self.name}'s {label} wasn't usable, even on a second try")
+            raise UnusableAnswer(f"{model.name}'s {label} wasn't usable, even on a second try")
         raw = self.out_dir / "raw" / f"{chapter['n']:02d}-{kind}.json"
         raw.parent.mkdir(parents=True, exist_ok=True)
         raw.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -197,7 +202,13 @@ class LocalEngine:
         script = await self._ask(
             "audio",
             chapter,
-            self._fill(prompts.PODCAST, chapter, format=style),
+            self._fill(
+                prompts.PODCAST,
+                chapter,
+                format=style,
+                host_a=self.speech.voices[0],
+                host_b=self.speech.voices[1],
+            ),
             convert.podcast_script,
             "podcast script",
         )
@@ -284,10 +295,16 @@ def _strings(value) -> list[str]:
     return []
 
 
+_FIGURE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+
+
 def _chapter_text(file: Path) -> str:
     if file.suffix == ".pdf":
         return "\n\n".join((page.extract_text() or "").strip() for page in PdfReader(str(file)).pages)
-    return file.read_text(encoding="utf-8")
+    # Models read the figure's description, not its file path.
+    return _FIGURE.sub(
+        lambda m: f"[Figure: {m.group(1)}]" if m.group(1) else "", file.read_text(encoding="utf-8")
+    )
 
 
 def _remove(paths: list[Path]) -> None:

@@ -7,6 +7,16 @@ import re
 from .. import fake_client
 
 _TITLE = re.compile(r'chapter "([^"]+)"')
+_IDEA = re.compile(r'Idea: "(.*)"\n')
+_ANSWER = re.compile(r"<<<(.*)>>>", re.DOTALL)
+
+
+def _recall(prompt: str) -> dict:
+    from ..recall import word_match
+
+    idea, answer = _IDEA.search(prompt).group(1), _ANSWER.search(prompt).group(1)
+    covered = word_match([idea], answer)[0]
+    return {"covered": covered, "evidence": idea if covered else ""}
 
 
 def _podcast(title: str) -> dict:
@@ -81,7 +91,9 @@ class FakeModel:
     async def check(self) -> None:
         return None
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         self.calls.append((kind, prompt))
         await asyncio.sleep(self.delay)
         match = _TITLE.search(prompt)
@@ -95,5 +107,6 @@ class FakeModel:
             "audio": lambda: _podcast(title),
             "video": lambda: _explainer(title),
             "condense": lambda: {"notes": f"- Key idea from this part ({len(source)} characters)."},
+            "recall": lambda: _recall(prompt),
         }
         return json.dumps(answers[kind]())

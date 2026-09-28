@@ -152,7 +152,7 @@ input[type=search],select{width:100%;border:1.5px solid var(--line);background:v
 .stepper button.done .n{background:var(--mint);color:#fff}.stepper button[aria-current="step"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
 .stepper small{font-family:var(--body);font-size:.72rem;color:var(--ink-3);font-weight:400}
 .foot{margin-top:18px;display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
-.reader{font-size:1.06rem;line-height:1.8;max-width:72ch}.reader h2{font-size:1.25rem;margin:26px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.reader h3{font-size:1.08rem;margin:20px 0 6px}.reader p{margin:0 0 14px}
+.reader{font-size:1.06rem;line-height:1.8;max-width:72ch}.reader h2{font-size:1.25rem;margin:26px 0 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.reader h3{font-size:1.08rem;margin:20px 0 6px}.reader p{margin:0 0 14px}.reader figure{margin:24px 0;text-align:center}.reader figure img{max-width:100%;height:auto;border-radius:12px;background:var(--surface);border:1px solid var(--line)}.reader figcaption{font-size:.92rem;color:var(--ink-2);font-style:italic;margin-top:8px;line-height:1.5}.reader ul{margin:0 0 14px;padding-left:1.4em}.reader li{margin:4px 0}.reader strong{color:var(--ink)}
 .gnote{font-size:.88rem;color:var(--ink-2);border-left:3px solid var(--line);padding-left:10px;margin:-2px 0 12px}
 .plan{display:flex;flex-direction:column;gap:8px}.plan div{display:flex;gap:10px;align-items:flex-start}
 .pdf{width:100%;height:78vh;border:0;border-radius:18px;background:var(--sunk)}

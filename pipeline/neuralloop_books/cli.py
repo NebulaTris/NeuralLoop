@@ -9,6 +9,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from . import aiconfig
 from .config import (
     AUDIO_FORMATS,
     DEFAULT_INSTRUCTIONS,
@@ -47,13 +48,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--engine",
         choices=["auto", "local", "notebooklm"],
-        default="auto",
         help="who makes the items (auto: NotebookLM, and your local AI whenever it can't)",
     )
     parser.add_argument(
         "--provider",
         choices=PROVIDERS,
-        default="auto",
         help="text model for the local engine (auto: first key set)",
     )
     parser.add_argument("--model", help="model name for the provider (each has a sensible default)")
@@ -68,6 +67,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--signin", action="store_true", help="sign in with Google (used for NotebookLM)")
     parser.add_argument("--account", action="store_true", help="print the signed-in Google account as JSON")
+    parser.add_argument(
+        "--grade-recall",
+        action="store_true",
+        help="check a recall answer: JSON {question, keyPoints, answer} on stdin",
+    )
+    parser.add_argument("--ai-config", help="this person's AI choices (ai.json from Settings)")
     parser.add_argument("--title")
     parser.add_argument("--out")
     parser.add_argument("--retry", action="store_true", help="retry failed and quota-limited items")
@@ -76,6 +81,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="run everything offline with a practice model and voices"
     )
     args = parser.parse_args(argv)
+    args.config = aiconfig.load(Path(args.ai_config) if args.ai_config else None)
+    if args.grade_recall:
+        return args
+    # Flags win over the person's ai.json, which wins over built-in defaults.
+    args.engine = args.engine or args.config.engine
+    if args.provider is None:
+        args.provider, args.model = args.config.make.provider, args.model or args.config.make.model
+        args.base_url = args.base_url or args.config.make.base_url
+    args.voices = args.voices or ",".join(args.config.voices)
     if args.setup or args.signin or args.account:
         return args
     if args.dry_run and not args.book:
@@ -121,7 +135,47 @@ def _local_engine(opts: Options):
 
         asyncio.run(setup.ensure_ollama(setup.ollama_host(), opts.log))
     model = make_model(opts.provider, opts.model, env)
-    return LocalEngine.from_options(opts, model, make_speech(opts.speech, opts.voices))
+    task_models = {task: _model_for(choice) for task, choice in opts.task_choices.items()}
+    return LocalEngine.from_options(opts, model, make_speech(opts.speech, opts.voices), task_models)
+
+
+def _model_for(choice: aiconfig.ModelChoice):
+    from .models import make_model
+
+    env = {**os.environ, **({"NEURALLOOP_BASE_URL": choice.base_url} if choice.base_url else {})}
+    return make_model(choice.provider, choice.model, env)
+
+
+def _grade_recall(args: argparse.Namespace) -> int:
+    from . import recall
+
+    request = json.loads(sys.stdin.read() or "{}")
+    choice = args.config.recall
+    if args.provider:
+        choice = aiconfig.ModelChoice(args.provider, args.model, args.base_url)
+    try:
+        model = _model_for(choice)
+    except SetupError:
+        model = None  # no grader available: word matching still answers
+    if model is None:
+        model = _Unavailable()
+    result = asyncio.run(
+        recall.grade(
+            model,
+            str(request.get("question", "")),
+            list(request.get("keyPoints", [])),
+            str(request.get("answer", "")),
+        )
+    )
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+class _Unavailable:
+    name = "word match"
+
+    async def complete(self, *args):
+        raise OSError("no grader configured")
 
 
 def _engine(opts: Options):
@@ -159,6 +213,8 @@ def _default_parallel(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.grade_recall:
+        return _grade_recall(args)
     if args.signin:
         return _signin()
     if args.account:
@@ -171,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import setup
 
         try:
-            asyncio.run(setup.run_setup(print, args.model))
+            asyncio.run(setup.run_setup(print, args.model, recall_model=args.config.recall))
         except SetupError as error:
             print(error)
             return 3
@@ -194,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         speech=args.speech,
         voices=args.voices,
         base_url=args.base_url,
+        task_choices=dict(args.config.tasks),
         title=args.title,
         retry=args.retry,
         dry_run=args.dry_run,

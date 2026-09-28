@@ -30,7 +30,9 @@ class OpenAICompatModel:
         except openai.APIConnectionError as error:
             raise SetupError(f"Couldn't reach {self.name}. Check your internet connection.") from error
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": f"<chapter>\n{source}\n</chapter>\n\n{prompt}"},

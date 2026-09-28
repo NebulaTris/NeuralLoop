@@ -113,3 +113,18 @@ test("escapeHtml and the reader", () => {
   assert.match(html, /<p>Text &lt;b&gt;here&lt;\/b&gt;.<\/p>/);
   assert.equal(withoutRepeatedTitle("# Caching\n\n## Part", "Caching"), "## Part");
 });
+
+test("reader shows figures, emphasis, and lists like a textbook", () => {
+  const html = markdownToHtml(
+    "![A cache](img/01-01.png)\n\n*Figure 1. Reads hit the cache.*\n\nThis is *key* and **vital**.\n\n- One\n- Two",
+  );
+  assert.match(html, /<figure><img src="chapters\/img\/01-01.png" alt="A cache" loading="lazy">/);
+  assert.match(html, /<figcaption>Figure 1. Reads hit the cache.<\/figcaption><\/figure>/);
+  assert.match(html, /<p>This is <em>key<\/em> and <strong>vital<\/strong>.<\/p>/);
+  assert.match(html, /<ul><li>One<\/li><li>Two<\/li><\/ul>/);
+});
+
+test("reader refuses image paths outside the chapter's images", () => {
+  const html = markdownToHtml('![x](javascript:alert(1))\n\n![y](../../secret.png)\n\n![z](img/a" onerror="x.png)');
+  assert.doesNotMatch(html, /<img/);
+});

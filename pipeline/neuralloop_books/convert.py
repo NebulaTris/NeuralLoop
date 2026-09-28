@@ -172,6 +172,13 @@ def explainer(data: Any) -> dict | None:
     return {"slides": slides[:_MAX_SLIDES]} if slides else None
 
 
+def recall_verdict(data: Any) -> tuple[bool, str] | None:
+    """Grader answer for one key point -> (covered, evidence), or None when it isn't a verdict."""
+    if not isinstance(data, dict) or not isinstance(data.get("covered"), bool):
+        return None
+    return data["covered"], str(data.get("evidence", "")).strip()
+
+
 def _list(data: Any, key: str) -> list[dict]:
     """The list of dicts at ``data[key]``, or [] when the shape is wrong."""
     value = data.get(key) if isinstance(data, dict) else None

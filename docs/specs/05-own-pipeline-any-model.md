@@ -1,6 +1,6 @@
 # Spec 05 — Our own pipeline, with any model you plug in
 
-Status: next (before 04's app screens; the app only needs the book folder contract) · Read first: `CLAUDE.md` ·
+Status: done (see CLAUDE.md for the current contract; macOS `say` voices were later removed: Rumik is the only voice) · Read first: `CLAUDE.md` ·
 Touches: `pipeline/`
 
 ## Why

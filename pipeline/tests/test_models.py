@@ -121,6 +121,7 @@ def test_ollama_sends_a_json_chat_with_a_big_context(monkeypatch):
     assert answer == '{"a": 1}' and sent["url"].endswith("/api/chat")
     assert "questions" in sent["body"]["format"]["properties"] and sent["body"]["options"]["num_ctx"] >= 16384
     assert 0 < sent["body"]["options"]["num_predict"] <= 16384  # a looping answer can't run forever
+    assert sent["body"]["think"] is False and sent["body"]["keep_alive"]
     assert sent["body"]["messages"][0] == {"role": "system", "content": "SYS"}
 
 
@@ -180,7 +181,17 @@ def test_ollama_constrains_known_items_with_a_schema(monkeypatch):
 def test_every_item_kind_has_a_schema():
     from neuralloop_books.schemas import SCHEMAS
 
-    assert set(SCHEMAS) == {"study", "graph", "quiz", "cards", "mindmap", "audio", "video", "condense"}
+    assert set(SCHEMAS) == {
+        "study",
+        "graph",
+        "quiz",
+        "cards",
+        "mindmap",
+        "audio",
+        "video",
+        "condense",
+        "recall",
+    }
     assert all(schema["type"] == "object" and schema["required"] for schema in SCHEMAS.values())
 
 

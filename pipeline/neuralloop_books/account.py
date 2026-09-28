@@ -5,6 +5,7 @@ NotebookLM has no public API that accepts OAuth tokens, so the session comes fro
 real browser window (Chrome when installed, which Google always accepts), saved by the NotebookLM library.
 """
 
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -16,10 +17,13 @@ CHROME = Path("/Applications/Google Chrome.app")
 SIGN_IN_TIMEOUT = 600  # seconds for a person to finish signing in
 
 
-def _cli() -> str | None:
-    """The NotebookLM command next to this Python (the app's bundled runtime), or on PATH."""
-    local = Path(sys.executable).with_name("notebooklm")
-    return str(local) if local.exists() else shutil.which("notebooklm")
+def _cli() -> list[str] | None:
+    """The NotebookLM command. Run as a module of this Python, so the app's runtime works wherever it's moved
+    (pip's launcher scripts hard-code the path they were installed at)."""
+    if importlib.util.find_spec("notebooklm") is not None:
+        return [sys.executable, "-m", "notebooklm"]
+    found = shutil.which("notebooklm")
+    return [found] if found else None
 
 
 def _chrome_installed() -> bool:
@@ -31,7 +35,10 @@ def status() -> dict:
     cli = _cli()
     if not cli:
         return {"signedIn": False, "email": ""}
-    result = subprocess.run([cli, "auth", "check", "--json"], capture_output=True, text=True, timeout=30)
+    try:
+        result = subprocess.run([*cli, "auth", "check", "--json"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"signedIn": False, "email": ""}
     try:
         report = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
@@ -49,7 +56,7 @@ def sign_in(log: Callable[[str], None]) -> int:
     browser = "chrome" if _chrome_installed() else "chromium"
     log("  setup: A browser window is opening. Sign in to Google there, then come back.")
     subprocess.run(
-        [cli, "login", "--browser", browser, "--browser-timeout", str(SIGN_IN_TIMEOUT)],
+        [*cli, "login", "--browser", browser, "--browser-timeout", str(SIGN_IN_TIMEOUT)],
         capture_output=True,
         text=True,
     )

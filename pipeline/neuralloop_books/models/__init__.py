@@ -3,6 +3,7 @@
 `complete(kind, system, source, prompt)` sends the chapter (`source`) before the task prompt, so providers
 that cache prompt prefixes reuse it across a chapter's items. `kind` ("quiz", "audio", …) is only for logs
 and the fake model.
+`schema` optionally pins the exact JSON shape for this one request (only Ollama uses it).
 """
 
 import os
@@ -26,7 +27,9 @@ class TextModel(Protocol):
 
     async def check(self) -> None: ...
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str: ...
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str: ...
 
 
 def resolve_provider(provider: str, env: Mapping[str, str]) -> str:

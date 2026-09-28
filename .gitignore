@@ -19,3 +19,6 @@ neuralloop_media/
 
 # editor settings
 .idea/
+
+# built runtimes and packaging leftovers
+build/

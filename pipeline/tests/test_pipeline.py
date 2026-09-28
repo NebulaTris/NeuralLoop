@@ -110,3 +110,38 @@ def test_auto_engine_opens_notebooklm_inside_the_running_loop(options):
     assert {entry["by"] for entry in state.chapters[0]["tasks"].values() if entry["status"] == DONE} == {
         "NotebookLM"
     }
+
+
+class TimingEngine:
+    """Records when each item starts; media items take longer."""
+
+    name = "Timer"
+
+    def __init__(self):
+        self.started = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def prepare(self, state):
+        pass
+
+    async def make(self, task, chapter):
+        self.started.append((chapter["n"], task))
+        await asyncio.sleep(1.0 if task in ("audio", "video") else 0)
+        return {}
+
+
+def test_slow_media_have_their_own_lane_so_text_items_keep_flowing(options):
+    options.parallel, options.media = 1, "1-2"
+    engine = TimingEngine()
+    asyncio.run(run(options, engine))
+    started = engine.started
+    # Chapter 2's text items start while chapter 1's podcast is still being made.
+    assert started.index((2, "study")) < started.index((1, "video"))
+    assert started[:2] == [(1, "study"), (1, "audio")]  # the slow podcast starts right away, in its own lane
+    text = [item for item in started if item[1] not in ("audio", "video")]
+    assert text[:6] == [(1, "study"), (1, "graph"), (1, "quiz"), (1, "cards"), (1, "mindmap"), (2, "study")]

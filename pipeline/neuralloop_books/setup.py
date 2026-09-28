@@ -111,9 +111,11 @@ async def ensure_rumik(log: Callable[[str], None]) -> None:
     log("  setup: Rumik ready")
 
 
-async def run_setup(log: Callable[[str], None], model: str | None = None) -> None:
+async def run_setup(log: Callable[[str], None], model: str | None = None, recall_model=None) -> None:
     host = ollama_host()
     await ensure_ollama(host, log)
     await ensure_model(host, model or local_model_for_memory(total_memory()), log)
+    if recall_model is not None and recall_model.provider == "ollama" and recall_model.model:
+        await ensure_model(host, recall_model.model, log)
     await ensure_rumik(log)
     log("Setup: ready")

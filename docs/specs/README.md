@@ -2,7 +2,8 @@
 
 | Spec | Status |
 |---|---|
-| [05 — Our own pipeline, with any model you plug in](05-own-pipeline-any-model.md) | Next |
+| [05 — Our own pipeline, with any model you plug in](05-own-pipeline-any-model.md) | Done |
+| [06 — Fast enough to feel instant](06-speed.md) | In progress |
 | [04 — One native Mac app (no study site, no web UI)](04-native-macos-app.md) | After 05 |
 | [02 — Upload a PDF or EPUB, preview the chapters, parse it correctly](02-book-import-and-parsing.md) | After 04 |
 | [01 — Pip on your desktop](01-pip-desktop-companion.md) | After 02 |

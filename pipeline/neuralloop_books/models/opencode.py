@@ -24,7 +24,9 @@ class OpencodeModel:
         if not self.executable:
             raise SetupError("opencode isn't installed. Install it from https://opencode.ai, then run again.")
 
-    async def complete(self, kind: str, system: str, source: str, prompt: str) -> str:
+    async def complete(
+        self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
+    ) -> str:
         await self.check()
         message = f"{system}\n\n<chapter>\n{source}\n</chapter>\n\n{prompt}"
         argv = [self.executable, "run", *(["-m", self.model] if self.model else []), message]
