@@ -145,3 +145,11 @@ def test_slow_media_have_their_own_lane_so_text_items_keep_flowing(options):
     assert started[:2] == [(1, "study"), (1, "audio")]  # the slow podcast starts right away, in its own lane
     text = [item for item in started if item[1] not in ("audio", "video")]
     assert text[:6] == [(1, "study"), (1, "graph"), (1, "quiz"), (1, "cards"), (1, "mindmap"), (2, "study")]
+
+
+def test_every_engine_builds_the_book_map(options):
+    run_local(options)
+    data = book_data(options.out)
+    graph = data["graph"]
+    assert graph["nodes"] and graph["edges"] and graph["tour"]
+    assert all(chapter["graph"]["concepts"] for chapter in data["chapters"])

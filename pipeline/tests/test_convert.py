@@ -157,3 +157,22 @@ def test_mind_map_drops_repeated_branches_and_echoes_of_the_parent():
     )
     assert [c["name"] for c in tree["children"]] == ["Systems Fail"]
     assert [c["name"] for c in tree["children"][0]["children"]] == ["Drift"]
+
+
+def test_a_concept_graph_can_be_grown_from_the_mind_map():
+    tree = {
+        "name": "Why Systems Fail",
+        "children": [
+            {
+                "name": "World keeps moving",
+                "children": [{"name": "Reality drifts"}, {"name": "Snapshots age"}],
+            },
+            {"name": "Monitoring", "children": [{"name": "Catch drift early"}]},
+        ],
+    }
+    graph = convert.graph_from_mind_map(tree)
+    assert convert.concept_graph(graph) is not None  # the same check a model's graph must pass
+    names = {c["name"] for c in graph["concepts"]}
+    assert {"World keeps moving", "Reality drifts", "Catch drift early"} <= names
+    assert {e["type"] for e in graph["edges"]} == {"categorized_under"}
+    assert len(graph["layers"]) == 2 and graph["tour"][0]["nodeIds"]

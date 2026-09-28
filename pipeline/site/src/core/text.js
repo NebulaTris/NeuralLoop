@@ -17,6 +17,15 @@ export function levelLabel(level) {
   return LEVEL[level] || LEVEL.normal;
 }
 
+/** Who made the book's study material, for the header. */
+export function madeWith(book) {
+  const engine = book.engine || "notebooklm";
+  if (book.provider === "fake" || book.dryRun) return "a practice run";
+  if (engine === "notebooklm") return "made with NotebookLM";
+  const model = book.model || book.provider || "your AI";
+  return engine === "auto" ? `made with NotebookLM and ${model}` : `made with ${model}`;
+}
+
 /** Drop the chapter's own title if the text repeats it as its first heading(s). */
 export function withoutRepeatedTitle(text, title) {
   return text.replace(/^(\s*#{1,3}\s+[^\n]*\n+){1,2}/, (headings) =>

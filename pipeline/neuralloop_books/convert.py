@@ -150,6 +150,57 @@ def mind_map(data: Any) -> dict | None:
     return node(data, 0)
 
 
+def graph_from_mind_map(tree: dict) -> dict | None:
+    """A concept graph grown from a mind map, so a chapter's map exists even when a model can't draw one.
+
+    Branches become the "Main ideas" layer, their children "Details"; each child points to its branch.
+    """
+    branches = [b for b in (tree or {}).get("children") or [] if b.get("name")][:6]
+    if not branches:
+        return None
+    concepts, edges, used = [], [], set()
+
+    def add(name: str, layer: str, parent: str | None, depth: int) -> None:
+        cid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or f"idea-{len(concepts)}"
+        if cid in used or len(concepts) >= _MAX_CONCEPTS:
+            return
+        used.add(cid)
+        complexity = ("complex", "moderate", "simple")[min(depth, 2)]
+        concepts.append(
+            {
+                "id": cid,
+                "name": name[:60],
+                "type": "topic" if depth == 0 else "concept",
+                "summary": "",
+                "detail": "",
+                "complexity": complexity,
+                "layer": layer,
+            }
+        )
+        if parent:
+            edges.append(
+                {"source": cid, "target": parent, "type": "categorized_under", "description": "part of"}
+            )
+
+    for branch in branches:
+        add(branch["name"], "main", None, 0)
+    for branch in branches:
+        parent = re.sub(r"[^a-z0-9]+", "-", branch["name"].lower()).strip("-")[:40]
+        for child in (branch.get("children") or [])[:4]:
+            if child.get("name"):
+                add(child["name"], "details", parent, 1)
+    tour = [
+        {
+            "title": b["name"][:40],
+            "description": f"What the chapter says about {b['name'].lower()}.",
+            "nodeIds": [re.sub(r"[^a-z0-9]+", "-", b["name"].lower()).strip("-")[:40]],
+        }
+        for b in branches[:5]
+    ]
+    layers = [{"id": "main", "name": "Main ideas"}, {"id": "details", "name": "Details"}]
+    return concept_graph({"concepts": concepts, "layers": layers, "edges": edges, "tour": tour})
+
+
 def podcast_script(data: Any) -> dict | None:
     """Model answer -> {title, lines:[{speaker: "A"|"B", text, delivery}]}; needs both hosts."""
     lines = []

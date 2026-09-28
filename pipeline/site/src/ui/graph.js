@@ -166,7 +166,8 @@ export function mountGraph(el, graph, options) {
     .force("charge", d3.forceManyBody().strength(-340))
     .force(
       "collide",
-      d3.forceCollide((d) => radiusOf(d) + 26),
+      // Room for the label too, so names never sit on top of each other.
+      d3.forceCollide((d) => Math.max(radiusOf(d) + 26, (d.name || "").length * 4.2 + 12)),
     )
     .force("x", d3.forceX((d) => anchorOf(d)[0]).strength(growing ? 0.1 : 0.05))
     .force("y", d3.forceY((d) => anchorOf(d)[1]).strength(growing ? 0.1 : 0.07));

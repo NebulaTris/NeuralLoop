@@ -226,3 +226,22 @@ def test_the_podcast_streams_line_by_line_so_playback_can_start_early(tmp_path, 
     assert (tmp_path / partial["lines"][0]["clip"]).exists()
     final = json.loads((tmp_path / result["transcript"]).read_text())
     assert final["complete"] is True and all("clip" in line for line in final["lines"])
+
+
+class NoGraphModel(FakeModel):
+    """Never manages a usable concept graph."""
+
+    async def complete(self, kind, system, source, prompt, schema=None):
+        self.calls.append((kind, prompt))
+        if kind == "graph":
+            return "I can't draw graphs."
+        return await FakeModel().complete(kind, system, source, prompt)
+
+
+def test_the_concept_graph_is_never_missing(tmp_path, chapter):
+    engine = engine_for(tmp_path, NoGraphModel())
+    graph = make(engine, "graph", chapter)["graph"]
+    assert convert.concept_graph(graph) and len(graph["concepts"]) >= 4
+    mind_map = make(engine, "mindmap", chapter)["mindmap"]
+    assert mind_map["name"] == "Caching"
+    assert [k for k, _ in engine.model.calls].count("mindmap") == 1  # made once, reused

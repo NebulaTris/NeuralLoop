@@ -6,7 +6,7 @@ import { DAY_MS, formatWait, grade } from "../src/core/fsrs.js";
 import { sproutPoint } from "../src/core/growth.js";
 import { STAGES, completeStage, isMapped, isUnlocked, nextStage } from "../src/core/loop.js";
 import { compareRemake, namesMatch, recallScore } from "../src/core/recall.js";
-import { escapeHtml, markdownToHtml, withoutRepeatedTitle } from "../src/core/text.js";
+import { escapeHtml, madeWith, markdownToHtml, withoutRepeatedTitle } from "../src/core/text.js";
 
 const emptyStore = () => ({ loop: {}, cards: {} });
 const book = [
@@ -127,4 +127,12 @@ test("reader shows figures, emphasis, and lists like a textbook", () => {
 test("reader refuses image paths outside the chapter's images", () => {
   const html = markdownToHtml('![x](javascript:alert(1))\n\n![y](../../secret.png)\n\n![z](img/a" onerror="x.png)');
   assert.doesNotMatch(html, /<img/);
+});
+
+test("the header credits whoever really made the book", () => {
+  assert.equal(madeWith({ engine: "notebooklm" }), "made with NotebookLM");
+  assert.equal(madeWith({ engine: "local", model: "qwen3:8b" }), "made with qwen3:8b");
+  assert.equal(madeWith({ engine: "auto", model: "qwen3:8b" }), "made with NotebookLM and qwen3:8b");
+  assert.equal(madeWith({}), "made with NotebookLM");
+  assert.equal(madeWith({ engine: "local", model: "", provider: "fake" }), "a practice run");
 });

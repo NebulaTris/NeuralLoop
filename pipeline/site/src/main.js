@@ -1,6 +1,7 @@
 // Study site entry point: routing, header navigation, and live refresh while the pipeline runs.
 
 import { book, go, route, setRenderer } from "./ui/context.js";
+import { madeWith } from "./core/text.js";
 import { $, $$, toast } from "./ui/dom.js";
 import { viewBookMap } from "./ui/bookmap.js";
 import { viewChapter } from "./ui/chapter.js";
@@ -12,6 +13,7 @@ const REFRESH_MS = 10_000;
 
 function render() {
   $("#booktitle").textContent = book.title;
+  $("#madewith").textContent = madeWith(book);
   document.title = `${book.title} · NeuralLoop`;
   $$("[data-go]").forEach((button) => {
     const current = route.view === button.dataset.go || (route.view === "chapter" && button.dataset.go === "home");

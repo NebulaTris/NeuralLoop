@@ -51,6 +51,13 @@
   function levelLabel(level) {
     return LEVEL[level] || LEVEL.normal;
   }
+  function madeWith(book2) {
+    const engine = book2.engine || "notebooklm";
+    if (book2.provider === "fake" || book2.dryRun) return "a practice run";
+    if (engine === "notebooklm") return "made with NotebookLM";
+    const model = book2.model || book2.provider || "your AI";
+    return engine === "auto" ? `made with NotebookLM and ${model}` : `made with ${model}`;
+  }
   function withoutRepeatedTitle(text, title) {
     return text.replace(
       /^(\s*#{1,3}\s+[^\n]*\n+){1,2}/,
@@ -307,7 +314,8 @@
       d3.forceLink(links).id((d) => d.id).distance((d) => d.type === "similar_to" ? 150 : 95).strength((d) => d.type === "similar_to" ? 0.15 : 0.6)
     ).force("charge", d3.forceManyBody().strength(-340)).force(
       "collide",
-      d3.forceCollide((d) => radiusOf(d) + 26)
+      // Room for the label too, so names never sit on top of each other.
+      d3.forceCollide((d) => Math.max(radiusOf(d) + 26, (d.name || "").length * 4.2 + 12))
     ).force("x", d3.forceX((d) => anchorOf(d)[0]).strength(growing ? 0.1 : 0.05)).force("y", d3.forceY((d) => anchorOf(d)[1]).strength(growing ? 0.1 : 0.07));
     if (growing && nodes.every((n) => store.mapPos[n.id])) simulation.alpha(0.15);
     simulation.on("tick", () => {
@@ -1342,6 +1350,7 @@
   var REFRESH_MS = 1e4;
   function render() {
     $("#booktitle").textContent = book.title;
+    $("#madewith").textContent = madeWith(book);
     document.title = `${book.title} \xB7 NeuralLoop`;
     $$("[data-go]").forEach((button) => {
       const current = route.view === button.dataset.go || route.view === "chapter" && button.dataset.go === "home";

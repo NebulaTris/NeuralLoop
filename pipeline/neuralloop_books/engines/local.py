@@ -63,6 +63,7 @@ class LocalEngine:
         self.name = model.name
         self.task_models = task_models or {}  # a different model for some items, e.g. {"quiz": claude}
         self._sources: dict[int, str] = {}
+        self._mind_maps: dict[int, dict] = {}
         self._source_locks: dict[int, asyncio.Lock] = {}
         self._speaking = asyncio.Lock()  # speech models are big: one clip at a time
 
@@ -174,9 +175,19 @@ class LocalEngine:
         )
 
     async def _graph(self, chapter):
-        graph = await self._ask(
-            "graph", chapter, self._fill(prompts.LOCAL_GRAPH, chapter), convert.concept_graph, "concept graph"
-        )
+        try:
+            graph = await self._ask(
+                "graph",
+                chapter,
+                self._fill(prompts.LOCAL_GRAPH, chapter),
+                convert.concept_graph,
+                "concept graph",
+            )
+        except UnusableAnswer:
+            # The map must always be there: grow it from the chapter's mind map instead.
+            graph = convert.graph_from_mind_map((await self._mindmap(chapter))["mindmap"])
+            if not graph:
+                raise
         return {"graph": graph}
 
     async def _quiz(self, chapter):
@@ -192,11 +203,12 @@ class LocalEngine:
         }
 
     async def _mindmap(self, chapter):
-        return {
-            "mindmap": await self._ask(
+        n = chapter["n"]
+        if n not in self._mind_maps:  # the graph fallback may already have made it
+            self._mind_maps[n] = await self._ask(
                 "mindmap", chapter, self._fill(prompts.MINDMAP, chapter), convert.mind_map, "mind map"
             )
-        }
+        return {"mindmap": self._mind_maps[n]}
 
     async def _audio(self, chapter):
         style = prompts.PODCAST_FORMATS.get(self.audio_format, prompts.PODCAST_FORMATS["deep-dive"])
