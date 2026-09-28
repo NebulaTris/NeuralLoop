@@ -12,7 +12,7 @@ function loadStore() {
   } catch {
     saved = {};
   }
-  return { cards: {}, quiz: {}, loop: {}, recall: {}, remake: {}, mapPos: {}, mapSeen: [], ...saved };
+  return { cards: {}, quiz: {}, loop: {}, recall: {}, remake: {}, mapPos: {}, mapSeen: [], log: {}, ...saved };
 }
 
 export const store = loadStore();

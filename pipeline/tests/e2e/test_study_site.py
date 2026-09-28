@@ -132,3 +132,23 @@ def test_review_only_includes_unlocked_chapters(page):
 def test_book_data_contains_reading_text(site_dir):
     data = json.loads((site_dir / "book-data.js").read_text()[len("window.BOOK = ") :].rstrip(";\n"))
     assert data["chapters"][0]["read"]["kind"] == "text"
+
+
+def test_your_year_shows_study_time_by_day_with_a_table_view(page):
+    pad = "n => String(n).padStart(2, '0')"
+    today = (
+        f"(d => `${{d.getFullYear()}}-${{({pad})(d.getMonth() + 1)}}-${{({pad})(d.getDate())}}`)(new Date())"
+    )
+    page.evaluate(
+        f"localStorage.setItem('nlbook:' + window.BOOK.title, JSON.stringify({{log: {{[{today}]: 1500}}}}))"
+    )
+    page.reload()
+    page.wait_for_selector(".yearlog")
+    assert 360 <= page.locator("#heatmap rect.heat").count() <= 371
+    assert "25 min" in page.locator(".yearstats").inner_text()
+    page.focus("#heatmap")
+    assert "25 min" in page.locator("#heattip").inner_text()  # today's cell, read by keyboard
+    page.keyboard.press("ArrowLeft")
+    assert "no study" in page.locator("#heattip").inner_text()
+    page.click("#yeartable")
+    assert page.locator("#heattablebox table").is_visible() and not page.locator("#heatwrap").is_visible()

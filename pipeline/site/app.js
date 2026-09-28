@@ -1,4 +1,80 @@
 (() => {
+  // src/core/activity.js
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var LEVEL_STARTS = [0, 10 * 60, 20 * 60, 45 * 60];
+  function dayKey(ms) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function logActivity(store2, now2, seconds) {
+    store2.log || (store2.log = {});
+    const day = dayKey(now2);
+    store2.log[day] = (store2.log[day] || 0) + seconds;
+  }
+  function studyLevel(seconds) {
+    if (!seconds) return 0;
+    return LEVEL_STARTS.filter((start) => seconds >= start).length;
+  }
+  var midnight = (ms) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime();
+  var addDays = (ms, n) => {
+    const d = new Date(ms);
+    d.setDate(d.getDate() + n);
+    return d.getTime();
+  };
+  function yearGrid(log = {}, today = Date.now()) {
+    const end = midnight(today);
+    const start = addDays(end, -(52 * 7 + new Date(end).getDay()));
+    const weeks = [];
+    const months = [];
+    for (let w = 0; w < 53; w++) {
+      const week = [];
+      for (let d = 0; d < 7; d++) {
+        const ms = addDays(start, w * 7 + d);
+        const date = dayKey(ms);
+        const seconds = log[date] || 0;
+        week.push({ date, seconds, level: studyLevel(seconds), future: ms > end });
+      }
+      const first = new Date(addDays(start, w * 7));
+      const previous = new Date(addDays(start, (w - 1) * 7));
+      if (w === 0 || first.getMonth() !== previous.getMonth()) months.push({ week: w, label: MONTHS[first.getMonth()] });
+      weeks.push(week);
+    }
+    return { weeks, months: months[1] && months[1].week - months[0].week < 3 ? months.slice(1) : months };
+  }
+  function yearStats(log = {}, today = Date.now()) {
+    const end = midnight(today);
+    let total = 0;
+    let days = 0;
+    let run = 0;
+    let longestRun = 0;
+    let best = null;
+    for (let i = 364; i >= 0; i--) {
+      const date = dayKey(addDays(end, -i));
+      const seconds = log[date] || 0;
+      total += seconds;
+      if (seconds > 0) {
+        days++;
+        run++;
+        longestRun = Math.max(longestRun, run);
+        if (!best || seconds > best.seconds) best = { date, seconds };
+      } else {
+        run = 0;
+      }
+    }
+    return { total, days, longestRun, best };
+  }
+  function formatDuration(seconds) {
+    const minutes = seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+  }
+  function formatDay(date) {
+    const [y, m, d] = date.split("-").map(Number);
+    const weekday = new Date(y, m - 1, d).toLocaleDateString("en", { weekday: "short" });
+    return `${weekday}, ${d} ${MONTHS[m - 1]}`;
+  }
+
   // src/ui/context.js
   var EMPTY_BOOK = { title: "No book yet", chapters: [], graph: { nodes: [], edges: [], layers: [], tour: [] } };
   var book = window.BOOK || EMPTY_BOOK;
@@ -10,7 +86,7 @@
     } catch {
       saved = {};
     }
-    return { cards: {}, quiz: {}, loop: {}, recall: {}, remake: {}, mapPos: {}, mapSeen: [], ...saved };
+    return { cards: {}, quiz: {}, loop: {}, recall: {}, remake: {}, mapPos: {}, mapSeen: [], log: {}, ...saved };
   }
   var store = loadStore();
   function persist() {
@@ -1278,6 +1354,121 @@
     ($("#mnext", modal) || $("#mok", modal)).focus();
   }
 
+  // src/ui/yearlog.js
+  var CELL = 12;
+  var GAP = 3;
+  var LEFT = 30;
+  var TOP = 18;
+  var DAYS = ["", "Mon", "", "Wed", "", "Fri", ""];
+  var LEVELS = ["No study", "A little", "A solid session", "A deep session", "A big day"];
+  function yearLogCard() {
+    const grid = yearGrid(store.log);
+    const stats = yearStats(store.log);
+    const width = LEFT + grid.weeks.length * (CELL + GAP);
+    const height = TOP + 7 * (CELL + GAP);
+    const cells = grid.weeks.map(
+      (week, w) => week.filter((day) => !day.future).map(
+        (day) => `<rect class="heat h${day.level}" x="${LEFT + w * (CELL + GAP)}" y="${TOP + (/* @__PURE__ */ new Date(day.date + "T12:00")).getDay() * (CELL + GAP)}"
+              width="${CELL}" height="${CELL}" rx="3" data-date="${day.date}" data-seconds="${day.seconds}"></rect>`
+      ).join("")
+    ).join("");
+    const months = grid.months.map((m) => `<text class="axis" x="${LEFT + m.week * (CELL + GAP)}" y="11">${m.label}</text>`).join("");
+    const days = DAYS.map(
+      (d, i) => d ? `<text class="axis" x="0" y="${TOP + i * (CELL + GAP) + CELL - 2}">${d}</text>` : ""
+    ).join("");
+    const best = stats.best ? `${formatDuration(stats.best.seconds)} on ${formatDay(stats.best.date)}` : "Still to come";
+    return `
+    <section class="card yearlog" aria-labelledby="yeartitle">
+      <div class="yearhead">
+        <h3 id="yeartitle">Your year with Pip</h3>
+        <button class="btn ghost sm" id="yeartable" aria-pressed="false">Show as table</button>
+      </div>
+      <div class="yearstats">
+        ${yearStat(formatDuration(stats.total), "studied this year")}
+        ${yearStat(stats.days, stats.days === 1 ? "day with study" : "days with study")}
+        ${yearStat(stats.longestRun, "longest run of days")}
+        ${yearStat(best, "your best day")}
+      </div>
+      <div class="heatwrap" id="heatwrap">
+        <svg class="heatmap" id="heatmap" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" tabindex="0"
+          role="img" aria-label="Time studied each day this year. ${esc(formatDuration(stats.total))} in total. Use the arrow keys to read days.">
+          ${months}${days}${cells}<rect id="heatfocus" class="heatfocus" width="${CELL + 4}" height="${CELL + 4}" rx="4" hidden></rect>
+        </svg>
+        <div class="heattip" id="heattip" role="status" hidden></div>
+      </div>
+      <div class="heatkey" aria-hidden="true"><span>Less</span>${[0, 1, 2, 3, 4].map((l) => `<i class="h${l}" title="${LEVELS[l]}"></i>`).join("")}<span>More</span></div>
+      <div class="heattable" id="heattablebox" hidden>${monthTable(store.log)}</div>
+    </section>`;
+  }
+  var yearStat = (value, label) => `<div><b>${esc(String(value))}</b><span class="tiny">${label}</span></div>`;
+  function monthTable(log = {}) {
+    const rows = {};
+    for (const [date, seconds] of Object.entries(log)) {
+      const key = date.slice(0, 7);
+      rows[key] || (rows[key] = { days: 0, seconds: 0 });
+      rows[key].days += seconds > 0 ? 1 : 0;
+      rows[key].seconds += seconds;
+    }
+    const body = Object.keys(rows).sort().reverse().slice(0, 12).map((key) => {
+      const [y, m] = key.split("-").map(Number);
+      const name = new Date(y, m - 1, 1).toLocaleDateString("en", { month: "long", year: "numeric" });
+      return `<tr><td>${name}</td><td class="num">${rows[key].days}</td><td class="num">${formatDuration(rows[key].seconds)}</td></tr>`;
+    }).join("");
+    return body ? `<table><thead><tr><th>Month</th><th>Days</th><th>Time</th></tr></thead><tbody>${body}</tbody></table>` : `<p class="muted">Your study time shows up here as you go.</p>`;
+  }
+  function wireYearLog(root) {
+    const svg = $("#heatmap", root);
+    if (!svg) return;
+    const tip = $("#heattip", root);
+    const focus = $("#heatfocus", root);
+    const cells = [...svg.querySelectorAll("rect.heat")];
+    let active = cells.length - 1;
+    const show = (cell) => {
+      const seconds = Number(cell.dataset.seconds);
+      tip.textContent = `${formatDay(cell.dataset.date)} \xB7 ${seconds ? formatDuration(seconds) : "no study"}`;
+      tip.hidden = false;
+      const box = svg.getBoundingClientRect();
+      const scale = box.width / svg.viewBox.baseVal.width;
+      const x = Number(cell.getAttribute("x")) * scale;
+      const y = Number(cell.getAttribute("y")) * scale;
+      tip.style.left = `${Math.min(Math.max(x - 60, 0), box.width - 170)}px`;
+      tip.style.top = `${y - 34}px`;
+      focus.setAttribute("x", Number(cell.getAttribute("x")) - 2);
+      focus.setAttribute("y", Number(cell.getAttribute("y")) - 2);
+      focus.hidden = false;
+    };
+    const hide = () => {
+      tip.hidden = true;
+      focus.hidden = true;
+    };
+    svg.addEventListener("pointermove", (event) => {
+      const cell = event.target.closest?.("rect.heat");
+      if (cell) {
+        active = cells.indexOf(cell);
+        show(cell);
+      }
+    });
+    svg.addEventListener("pointerleave", hide);
+    svg.addEventListener("focus", () => show(cells[active]));
+    svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", (event) => {
+      const step = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      active = Math.min(Math.max(active + step, 0), cells.length - 1);
+      show(cells[active]);
+    });
+    const toggle = $("#yeartable", root);
+    toggle.onclick = () => {
+      const table = $("#heattablebox", root);
+      const on = table.hidden;
+      table.hidden = !on;
+      $("#heatwrap", root).hidden = on;
+      toggle.setAttribute("aria-pressed", String(on));
+      toggle.textContent = on ? "Show as chart" : "Show as table";
+    };
+  }
+
   // src/ui/home.js
   var MATERIALS = [
     ["video", "Video"],
@@ -1315,7 +1506,9 @@
         <button class="btn ghost" id="gomap">Explore the book map</button>
       </div>
     </div>${pip(pose, "pipbig")}</section>
-    <div class="grid">${chapters.map((chapter, i) => chapterCard(chapter, chapters[i - 1])).join("")}</div>`;
+    <div class="grid">${chapters.map((chapter, i) => chapterCard(chapter, chapters[i - 1])).join("")}</div>
+    ${yearLogCard()}`;
+    wireYearLog(el);
     $$("[data-ch]", el).forEach((card) => {
       card.onclick = () => card.dataset.locked ? toast(`Close chapter ${card.dataset.locked}'s loop first. Pip is saving this one for you.`) : go("chapter", { n: Number(card.dataset.ch) });
     });
@@ -1384,7 +1577,22 @@
   $$("[data-go]").forEach((button) => {
     button.onclick = () => go(button.dataset.go);
   });
+  function startStudyClock() {
+    const TICK = 15e3;
+    let lastActive = Date.now();
+    let ticks = 0;
+    ["pointerdown", "keydown", "scroll", "pointermove"].forEach(
+      (kind) => window.addEventListener(kind, () => lastActive = Date.now(), { passive: true })
+    );
+    setInterval(() => {
+      const media = [...document.querySelectorAll("audio,video")].some((m) => !m.paused);
+      if (document.visibilityState !== "visible" || Date.now() - lastActive > 6e4 && !media) return;
+      logActivity(store, Date.now(), TICK / 1e3);
+      if (++ticks % 4 === 0) persist();
+    }, TICK);
+  }
   setRenderer(render);
   render();
+  startStudyClock();
   refreshWhileWorking();
 })();

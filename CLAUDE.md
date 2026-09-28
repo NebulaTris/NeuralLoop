@@ -70,6 +70,7 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`; `anthropic`, `openai_compat` (OpenAI, OpenRouter, any compatible `custom` URL), `hermes` (Hermes Agent one-shot), `ollama` (native API, JSON schemas), `opencode` (subprocess), `fake` |
 | `neuralloop_books/speech/` | Speech: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, 8-bit or 4-bit by memory; CC-BY-NC) is the only voice; `fake` for tests |
 | `neuralloop_books/engines/auto.py` | `AutoEngine`: NotebookLM first, local engine for the whole run or per failed item; results tagged with who made them (`tasks.*.by`) |
+| `neuralloop_books/video.py` | Explainer → MP4: deterministic HTML/JS scene (`renderAt(t)`), frames from headless Chromium, PyAV x264 + narration; fills `chapter.video` (`NEURALLOOP_VIDEO=0` turns it off) |
 | `neuralloop_books/recall.py` | `grade(model, question, keyPoints, answer)`: one check per key point in parallel, evidence must be in the answer and about the idea; `word_match` fallback |
 | `neuralloop_books/aiconfig.py` | `load(path)` → `AIConfig` (engine, make, per-item `tasks`, recall model, voices) from the person's `ai.json` |
 | `neuralloop_books/setup.py` | First run: `ensure_ollama` (bundled or installed), `ensure_model` (default by memory: `qwen3:8b`/`qwen3:4b`), `ensure_rumik` |
@@ -99,8 +100,10 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `src/core/cards.js` | `unlockedCards`, `dueCards` |
 | `src/core/recall.js` | `recallScore`, `namesMatch`, `compareRemake` (remake the mind map from memory) |
 | `src/core/growth.js` | `sproutPoint` (golden-angle spiral for the growing book map) |
-| `src/core/text.js` | `escapeHtml`, `markdownToHtml` with reading-plan labels, `withoutRepeatedTitle` |
+| `src/core/text.js` | `escapeHtml`, `markdownToHtml` (figures, captions, emphasis, lists, reading-plan labels), `withoutRepeatedTitle`, `madeWith` |
+| `src/core/activity.js` | `logActivity`, `yearGrid` (53 weeks, Sunday first), `yearStats` (only encouraging totals), `studyLevel`, `formatDuration` |
 | `src/ui/context.js` | `book`, `store` (localStorage + `postMessage` to the desktop app), `route`, `go` |
+| `src/ui/yearlog.js` | "Your year with Pip": study-time heatmap with hover, keyboard reading, and a table view |
 | `src/ui/home.js`, `chapter.js`, `stages.js`, `quiz.js`, `flashcards.js`, `mindmap.js`, `graph.js`, `bookmap.js` | Screens |
 | `src/ui/dom.js` | `$`, `pip(pose)`, `toast`, `confetti`, `notReady`, icons, status labels |
 | `test/core.test.mjs` | Unit tests for `src/core` (`npm test`) |
@@ -147,7 +150,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
   session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--grade-recall` (stdin `{question, keyPoints, answer}`,
   stdout `{covered:[bool], score, feedback, missing, by}`; one parallel check per key point, word matching as fallback).
   `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider, model, baseUrl},
-  tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B]}`; flags override it. Progress lines on stdout:
+  tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B], voiceQuality:"fast"|"best"}` (Rumik 4-bit, about twice as fast, or 8-bit);
+  flags override it. Progress lines on stdout:
   `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM couldn't (…); making it with X`,
   `  … chapter N task: {Engine} limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`. Exit 3 = setup needed.
 - **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
@@ -160,7 +164,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
   `transcript` points at `media/NN-podcast.json`: `{title, complete, lines:[{speaker,voice,text,start,clip}]}`, rewritten
   after every voiced line (`complete: false`, each line's `clip` in `media/NN-podcast-lines/`), so playback can start early.
 - **Study progress** (`store`, saved as localStorage `nlbook:<title>` and `progress.json`): `{cards:{"n:i":{s,d,reps,last,due}},
-  quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage}}`.
+  quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage},
+  log:{"YYYY-MM-DD": seconds}}` (`log`: study time per local day, counted in 15 s ticks while the page is visible and in use).
 - **Tauri commands**: `get_settings`, `set_settings`, `check_setup`, `start_pipeline(opts)`, `cancel_pipeline(bookId)`,
   `list_books`, `delete_book(bookId)`, `save_progress(bookId, data)`, `nudge_engaged`, `pause_nudges_today`.
   **Events**: `pipeline {bookId, line} | {bookId, done, code, stderr}`, `menu-add-book`, `toast`, `nudge {title, body}`.

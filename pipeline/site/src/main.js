@@ -1,6 +1,7 @@
 // Study site entry point: routing, header navigation, and live refresh while the pipeline runs.
 
-import { book, go, route, setRenderer } from "./ui/context.js";
+import { logActivity } from "./core/activity.js";
+import { book, go, persist, route, setRenderer, store } from "./ui/context.js";
 import { madeWith } from "./core/text.js";
 import { $, $$, toast } from "./ui/dom.js";
 import { viewBookMap } from "./ui/bookmap.js";
@@ -51,6 +52,23 @@ $("#pipicon").innerHTML = window.PIP?.icon || "";
 $$("[data-go]").forEach((button) => {
   button.onclick = () => go(button.dataset.go);
 });
+/** Count study time: 15 s at a time while the page is visible and you've done something in the last minute. */
+function startStudyClock() {
+  const TICK = 15_000;
+  let lastActive = Date.now();
+  let ticks = 0;
+  ["pointerdown", "keydown", "scroll", "pointermove"].forEach((kind) =>
+    window.addEventListener(kind, () => (lastActive = Date.now()), { passive: true }),
+  );
+  setInterval(() => {
+    const media = [...document.querySelectorAll("audio,video")].some((m) => !m.paused);
+    if (document.visibilityState !== "visible" || (Date.now() - lastActive > 60_000 && !media)) return;
+    logActivity(store, Date.now(), TICK / 1000);
+    if (++ticks % 4 === 0) persist(); // save about once a minute
+  }, TICK);
+}
+
 setRenderer(render);
 render();
+startStudyClock();
 refreshWhileWorking();

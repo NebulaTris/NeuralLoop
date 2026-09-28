@@ -1,12 +1,13 @@
 :root{--paper:#FFF7F2;--surface:#FFFFFF;--sunk:#FCEDE6;--ink:#35251F;--ink-2:#6E5A52;--ink-3:#A08E86;--line:#F1DDD3;
 --accent:#E0683F;--accent-soft:#FDE3D7;--accent-ink:#fff;--mint:#3FA88A;--mint-soft:#DDF3EA;--sky:#5C86E0;--sky-soft:#E3ECFF;
 --butter:#E0A52A;--butter-soft:#FCEFCF;--lilac:#8A6FE0;--lilac-soft:#EEE8FF;--rose:#E2577E;--rose-soft:#FDE2EA;
+--heat-0:#F7E4DC;--heat-1:#CDEEDF;--heat-2:#8FD4B8;--heat-3:#4FB592;--heat-4:#2B7F66;
 --display:"Fredoka","Trebuchet MS",system-ui,sans-serif;--body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#1D1716;--surface:#2A2220;--sunk:#241D1B;--ink:#FBEFEA;--ink-2:#CDB9B1;--ink-3:#9A867E;--line:#3E3230;
 --accent:#F2875F;--accent-soft:#4A2B20;--accent-ink:#1D1716;--mint:#5CCBA9;--mint-soft:#1F3A33;--sky:#86A8F2;--sky-soft:#23304D;--butter:#F2C055;--butter-soft:#3E331A;
---lilac:#A994F5;--lilac-soft:#2F2850;--rose:#F07E9E;--rose-soft:#462330;color-scheme:dark}}
-:root[data-theme="dark"]{--paper:#1D1716;--surface:#2A2220;--sunk:#241D1B;--ink:#FBEFEA;--ink-2:#CDB9B1;--ink-3:#9A867E;--line:#3E3230;--accent:#F2875F;--accent-soft:#4A2B20;--accent-ink:#1D1716;--mint:#5CCBA9;--mint-soft:#1F3A33;--sky:#86A8F2;--sky-soft:#23304D;--butter:#F2C055;--butter-soft:#3E331A;--lilac:#A994F5;--lilac-soft:#2F2850;--rose:#F07E9E;--rose-soft:#462330;color-scheme:dark}
+--lilac:#A994F5;--lilac-soft:#2F2850;--rose:#F07E9E;--rose-soft:#462330;--heat-0:#332A28;--heat-1:#1E4A3E;--heat-2:#2A7A62;--heat-3:#45AE8C;--heat-4:#9BE3CB;color-scheme:dark}}
+:root[data-theme="dark"]{--paper:#1D1716;--surface:#2A2220;--sunk:#241D1B;--ink:#FBEFEA;--ink-2:#CDB9B1;--ink-3:#9A867E;--line:#3E3230;--accent:#F2875F;--accent-soft:#4A2B20;--accent-ink:#1D1716;--mint:#5CCBA9;--mint-soft:#1F3A33;--sky:#86A8F2;--sky-soft:#23304D;--butter:#F2C055;--butter-soft:#3E331A;--lilac:#A994F5;--lilac-soft:#2F2850;--rose:#F07E9E;--rose-soft:#462330;--heat-0:#332A28;--heat-1:#1E4A3E;--heat-2:#2A7A62;--heat-3:#45AE8C;--heat-4:#9BE3CB;color-scheme:dark}
 *,*::before,*::after{box-sizing:inherit}
 html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;min-height:100%;background:var(--paper);color:var(--ink);font:16px/1.6 var(--body);-webkit-font-smoothing:antialiased}
@@ -166,3 +167,21 @@ textarea{width:100%;min-height:130px;border:1.5px solid var(--line);background:v
 .modal .card{max-width:420px;text-align:center}
 .chapter-head h2{font-size:clamp(1.4rem,3vw,2rem)}
 .bignum{font-family:var(--display);font-weight:600;width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-size:1.2rem}
+
+/* Your year with Pip */
+.yearlog{margin-top:22px;display:grid;gap:14px}
+.yearhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.yearstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.yearstats div{display:grid;gap:2px}.yearstats b{font:600 1.25rem var(--display);font-variant-numeric:tabular-nums}
+.heatwrap{position:relative;overflow-x:auto;padding-top:4px}
+.heatmap{display:block;max-width:none}.heatmap:focus-visible{outline:3px solid var(--sky);outline-offset:4px;border-radius:6px}
+.heatmap .axis{font:11px var(--body);fill:var(--ink-3)}
+.heat{cursor:default}.h0{fill:var(--heat-0);background:var(--heat-0)}.h1{fill:var(--heat-1);background:var(--heat-1)}
+.h2{fill:var(--heat-2);background:var(--heat-2)}.h3{fill:var(--heat-3);background:var(--heat-3)}.h4{fill:var(--heat-4);background:var(--heat-4)}
+.heatfocus{fill:none;stroke:var(--ink);stroke-width:2;pointer-events:none}
+.heattip{position:absolute;pointer-events:none;background:var(--ink);color:var(--paper);font-size:.82rem;padding:5px 10px;border-radius:8px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.heatkey{display:flex;align-items:center;gap:4px;font-size:.78rem;color:var(--ink-3);justify-content:flex-end}
+.heatkey i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.heattable table{border-collapse:collapse;width:100%;font-size:.92rem}.heattable th,.heattable td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line)}
+.heattable th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}.heattable .num{font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.heattip{transition:none}}

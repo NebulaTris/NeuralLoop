@@ -5,6 +5,7 @@ import { unlockedCards, dueCards } from "../src/core/cards.js";
 import { DAY_MS, formatWait, grade } from "../src/core/fsrs.js";
 import { sproutPoint } from "../src/core/growth.js";
 import { STAGES, completeStage, isMapped, isUnlocked, nextStage } from "../src/core/loop.js";
+import { formatDuration, logActivity, studyLevel, yearGrid, yearStats } from "../src/core/activity.js";
 import { compareRemake, namesMatch, recallScore } from "../src/core/recall.js";
 import { escapeHtml, madeWith, markdownToHtml, withoutRepeatedTitle } from "../src/core/text.js";
 
@@ -135,4 +136,43 @@ test("the header credits whoever really made the book", () => {
   assert.equal(madeWith({ engine: "auto", model: "qwen3:8b" }), "made with NotebookLM and qwen3:8b");
   assert.equal(madeWith({}), "made with NotebookLM");
   assert.equal(madeWith({ engine: "local", model: "", provider: "fake" }), "a practice run");
+});
+
+test("study time is logged per local day", () => {
+  const store = {};
+  const noon = new Date(2026, 8, 28, 12, 0).getTime();
+  logActivity(store, noon, 15);
+  logActivity(store, noon + 60_000, 15);
+  assert.deepEqual(store.log, { "2026-09-28": 30 });
+});
+
+test("the year grid covers 53 weeks ending with today's week, Sunday first", () => {
+  const today = new Date(2026, 8, 28).getTime(); // a Monday
+  const grid = yearGrid({ "2026-09-28": 1500, "2026-09-27": 300 }, today);
+  assert.equal(grid.weeks.length, 53);
+  assert.ok(grid.weeks.every((w) => w.length === 7));
+  const last = grid.weeks.at(-1);
+  assert.equal(last[0].date, "2026-09-27");
+  assert.equal(last[1].date, "2026-09-28");
+  assert.equal(last[1].level, 3);
+  assert.equal(last[0].level, 1);
+  assert.equal(last[2].future, true);
+  assert.ok(grid.months.length >= 12 && grid.months[0].label);
+});
+
+test("levels grow with minutes studied", () => {
+  assert.deepEqual([0, 60, 9 * 60, 15 * 60, 30 * 60, 90 * 60].map(studyLevel), [0, 1, 1, 2, 3, 4]);
+});
+
+test("year stats are only ever encouraging", () => {
+  const today = new Date(2026, 8, 28).getTime();
+  const log = { "2026-09-24": 600, "2026-09-25": 1200, "2026-09-26": 3000, "2026-09-28": 60, "2024-01-01": 9999 };
+  const s = yearStats(log, today);
+  assert.equal(s.total, 4860);
+  assert.equal(s.days, 4);
+  assert.equal(s.longestRun, 3);
+  assert.deepEqual(s.best, { date: "2026-09-26", seconds: 3000 });
+  assert.equal(formatDuration(4860), "1 h 21 min");
+  assert.equal(formatDuration(45), "1 min");
+  assert.equal(formatDuration(0), "0 min");
 });

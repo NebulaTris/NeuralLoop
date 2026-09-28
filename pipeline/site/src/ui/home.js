@@ -1,5 +1,6 @@
 // The chapter shelf: progress, resume card, and one card per chapter (locked until earned).
 
+import { wireYearLog, yearLogCard } from "./yearlog.js";
 import { dueCards, unlockedCards } from "../core/cards.js";
 import { STAGES, isMapped, isUnlocked, loopOf, nextStage } from "../core/loop.js";
 import { book, go, now, store } from "./context.js";
@@ -43,7 +44,9 @@ export function viewHome(el) {
         <button class="btn ghost" id="gomap">Explore the book map</button>
       </div>
     </div>${pip(pose, "pipbig")}</section>
-    <div class="grid">${chapters.map((chapter, i) => chapterCard(chapter, chapters[i - 1])).join("")}</div>`;
+    <div class="grid">${chapters.map((chapter, i) => chapterCard(chapter, chapters[i - 1])).join("")}</div>
+    ${yearLogCard()}`;
+  wireYearLog(el);
 
   $$("[data-ch]", el).forEach((card) => {
     card.onclick = () =>
