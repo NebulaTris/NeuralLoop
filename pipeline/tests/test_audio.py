@@ -52,3 +52,48 @@ def test_to_m4a_keeps_the_wav_without_afconvert(tmp_path, monkeypatch):
     monkeypatch.setattr(audio.shutil, "which", lambda name: None)
     wav = write_tone(tmp_path / "x.wav", 0.1)
     assert audio.to_m4a(wav) == wav
+
+
+def write_level(path, level, seconds=0.5, rate=24000):
+    import math
+    import struct
+
+    frames = int(seconds * rate)
+    samples = (int(level * 32767 * math.sin(2 * math.pi * 220 * i / rate)) for i in range(frames))
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(b"".join(struct.pack("<h", s) for s in samples))
+    return path
+
+
+def rms(path):
+    import array
+    import math
+
+    with wave.open(str(path)) as clip:
+        samples = array.array("h", clip.readframes(clip.getnframes()))
+    return math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768
+
+
+def test_join_evens_out_loudness_between_voices(tmp_path):
+    loud, quiet = write_level(tmp_path / "loud.wav", 0.6), write_level(tmp_path / "quiet.wav", 0.05)
+    audio.join_wavs([loud, quiet], tmp_path / "all.wav", pause=0)
+    with wave.open(str(tmp_path / "all.wav")) as joined:
+        half = joined.getnframes() // 2
+        first, second = joined.readframes(half), joined.readframes(half)
+    for name, frames in (("a", first), ("b", second)):
+        with wave.open(str(tmp_path / f"{name}.wav"), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(24000)
+            out.writeframes(frames)
+    ratio = rms(tmp_path / "a.wav") / rms(tmp_path / "b.wav")
+    assert 0.8 < ratio < 1.25
+
+
+def test_silence_stays_silent(tmp_path):
+    silent = write_level(tmp_path / "s.wav", 0.0)
+    audio.join_wavs([silent], tmp_path / "all.wav", pause=0)
+    assert rms(tmp_path / "all.wav") == 0

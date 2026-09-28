@@ -96,3 +96,17 @@ def test_widening_media_on_a_later_run_adds_only_the_new_media(options):
     options.media = "1-2"
     state = run_with(options, FakeClient(delay=0))
     assert state.chapters[1]["tasks"]["audio"]["status"] == DONE
+
+
+def test_auto_engine_opens_notebooklm_inside_the_running_loop(options):
+    from neuralloop_books.engines.auto import AutoEngine
+
+    async def open_fake():
+        return FakeClient(delay=0)
+
+    notebooklm = lambda: NotebookLMEngine(None, ENUMS, options, open_client=open_fake)  # noqa: E731
+    local = lambda: LocalEngine.from_options(options, FakeModel(), FakeSpeech())  # noqa: E731
+    state = asyncio.run(run(options, AutoEngine(notebooklm, local, options.log)))
+    assert {entry["by"] for entry in state.chapters[0]["tasks"].values() if entry["status"] == DONE} == {
+        "NotebookLM"
+    }

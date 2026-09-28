@@ -85,7 +85,14 @@ class LocalEngine:
 
     async def prepare(self, state: BookState) -> None:
         await self.model.check()
-        self.speech.check()
+        voiced = ("audio", "video")
+        if any(
+            c["tasks"][t]["status"] == "todo"
+            for c in state.chapters
+            for t in voiced
+            if t in c.get("tasks", {})
+        ):
+            self.speech.check()
         state.data.update(
             engine="local", provider=getattr(self.model, "provider", ""), model=self.model.model or ""
         )

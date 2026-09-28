@@ -1,5 +1,7 @@
 """Speech helpers: split text for a speech model, join WAV clips with pauses, convert to AAC."""
 
+import array
+import math
 import re
 import shutil
 import subprocess
@@ -9,6 +11,9 @@ from pathlib import Path
 # Rumik OSS-1 is trained on 30-second utterances; ~400 characters stays under that.
 SPEECH_LIMIT = 400
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+# Every clip is brought to the same loudness so the two hosts sound equally close.
+TARGET_RMS = 0.1
+MAX_PEAK = 0.95
 
 
 def split_for_speech(text: str, limit: int = SPEECH_LIMIT) -> list[str]:
@@ -60,9 +65,22 @@ def join_wavs(parts: list[Path], out: Path, pause: float = 0.35) -> list[float]:
                     )
                 else:
                     joined.writeframes(silence)
-                joined.writeframes(clip.readframes(clip.getnframes()))
+                joined.writeframes(_level(clip.readframes(clip.getnframes()), clip.getsampwidth()))
                 durations.append(round(clip.getnframes() / clip.getframerate(), 3))
     return durations
+
+
+def _level(frames: bytes, width: int) -> bytes:
+    """Scale 16-bit audio to TARGET_RMS without clipping; other formats and silence pass through."""
+    if width != 2 or not frames:
+        return frames
+    samples = array.array("h", frames)
+    power = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768
+    peak = max(abs(s) for s in samples) / 32768
+    if power == 0:
+        return frames
+    gain = min(TARGET_RMS / power, MAX_PEAK / peak)
+    return array.array("h", (max(-32768, min(32767, round(s * gain))) for s in samples)).tobytes()
 
 
 def to_m4a(wav: Path) -> Path:

@@ -67,8 +67,11 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 | `neuralloop_books/engines/local.py` | `LocalEngine`: any text model writes each item (checked, retried once with the reason); podcasts and explainers voiced by a speech engine |
 | `neuralloop_books/engines/notebooklm.py` | `NotebookLMEngine`: adds chapters as sources, then `ChapterMaker` makes each item |
 | `neuralloop_books/notebook.py` | `ChapterMaker.make(task, chapter)`: one item via notebooklm-py; `is_quota_error`; `open_client` |
-| `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`; `anthropic`, `openai_compat` (OpenAI, OpenRouter), `ollama` (native API, JSON schemas), `opencode` (subprocess), `fake` |
-| `neuralloop_books/speech/` | Speech engines: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, CC-BY-NC), `say` (macOS voices), `fake` |
+| `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`; `anthropic`, `openai_compat` (OpenAI, OpenRouter, any compatible `custom` URL), `hermes` (Hermes Agent one-shot), `ollama` (native API, JSON schemas), `opencode` (subprocess), `fake` |
+| `neuralloop_books/speech/` | Speech: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, 8-bit or 4-bit by memory; CC-BY-NC) is the only voice; `fake` for tests |
+| `neuralloop_books/engines/auto.py` | `AutoEngine`: NotebookLM first, local engine for the whole run or per failed item; results tagged with who made them (`tasks.*.by`) |
+| `neuralloop_books/setup.py` | First run: `ensure_ollama` (bundled or installed), `ensure_model` (default by memory: `qwen3:8b`/`qwen3:4b`), `ensure_rumik` |
+| `neuralloop_books/account.py` | Google sign-in via `notebooklm login` (Chrome when installed) and `status()` via `notebooklm auth check --json` |
 | `neuralloop_books/audio.py` | `split_for_speech`, `join_wavs` (with pauses, returns durations), `to_m4a` (afconvert) |
 | `neuralloop_books/context.py` | `chunks`, `source_for`: long chapters are condensed into notes that fit the model's budget |
 | `neuralloop_books/schemas.py` | JSON schemas per item; Ollama uses them to constrain small models |
@@ -132,11 +135,15 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 ## Contracts
 
 - **Pipeline CLI** (used by `src-tauri/src/pipeline.rs`): `nl_book.py BOOK --out DIR --no-open --media SPEC --style S --audio A
-  --video V --language L [--engine local|notebooklm] [--provider auto|anthropic|openai|openrouter|ollama|opencode|fake]
-  [--model M] [--context CHARS] [--speech auto|rumik|say|fake] [--voices A,B] [--dry-run] [--retry]`. Keys only from
-  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` (never argv or files). Progress lines on stdout:
-  `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  … chapter N task: {Engine} limit reached…`,
-  `  ✗ chapter N task: …`, final `Study site: PATH`.
+  --video V --language L [--engine auto|local|notebooklm] [--provider auto|anthropic|openai|openrouter|custom|ollama|opencode|hermes|fake]
+  [--model M] [--base-url URL] [--context CHARS] [--speech auto|rumik|fake] [--voices A,B] [--dry-run] [--retry]`.
+  `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless a key is set) for the whole run when not, and
+  per item when NotebookLM fails or hits its limit. Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+  `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup` (start Ollama, download
+  the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in in a real browser; the
+  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`). Progress lines on stdout:
+  `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM couldn't (…); making it with X`,
+  `  … chapter N task: {Engine} limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`. Exit 3 = setup needed.
 - **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
   `progress.json` (study progress from the site), `book-data.js`, `index.html`, `styles.css`, `app.js`, `pip-poses.js`,
   `chapters/NN.{pdf,md}`, `media/`, `raw/`, `knowledge-graph.json`.

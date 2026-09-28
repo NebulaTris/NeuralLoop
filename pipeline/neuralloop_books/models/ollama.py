@@ -10,9 +10,9 @@ import urllib.error
 import urllib.request
 
 from ..schemas import SCHEMAS
+from ..setup import local_model_for_memory, ollama_host, total_memory
 from . import QuotaError, SetupError
 
-DEFAULT_HOST = "http://localhost:11434"
 CONTEXT_TOKENS = 16_384
 # Small models in JSON mode can loop until the context is full; a long podcast script fits well within this.
 MAX_OUTPUT_TOKENS = 8_192
@@ -32,13 +32,19 @@ def _post_json(url: str, body: dict, timeout: float) -> dict:
         return json.load(response)
 
 
+def default_local_model() -> str:
+    return local_model_for_memory(total_memory())
+
+
 class OllamaModel:
     name = "Ollama"
     provider = "ollama"
 
     def __init__(self, model: str | None, host: str = ""):
         self.model = model
-        self.base_url = (host or DEFAULT_HOST).rstrip("/")
+        if host and not host.startswith("http"):
+            host = f"http://{host}"
+        self.base_url = (host or ollama_host()).rstrip("/")
 
     async def check(self) -> None:
         try:
@@ -51,7 +57,8 @@ class OllamaModel:
                 "Ollama has no models yet. Download one first, for example: ollama pull gpt-oss:20b"
             )
         if not self.model:
-            self.model = installed[0]
+            preferred = default_local_model()
+            self.model = preferred if preferred in installed else installed[0]
         elif self.model not in installed and f"{self.model}:latest" not in installed:
             raise SetupError(f"Ollama doesn't have {self.model} yet. Run: ollama pull {self.model}")
 

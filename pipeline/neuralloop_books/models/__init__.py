@@ -54,6 +54,19 @@ def make_model(provider: str, model: str | None, env: Mapping[str, str] | None =
         from .openai_compat import OpenAICompatModel
 
         return OpenAICompatModel(provider, model, api_key=key)
+    if provider == "custom":
+        base_url = env.get("NEURALLOOP_BASE_URL", "")
+        if not base_url:
+            raise SetupError("Add the address of your AI service in Settings, or set NEURALLOOP_BASE_URL.")
+        from .openai_compat import OpenAICompatModel
+
+        return OpenAICompatModel(
+            "custom", model, api_key=env.get("NEURALLOOP_API_KEY") or "none", base_url=base_url
+        )
+    if provider == "hermes":
+        from .hermes import HermesModel
+
+        return HermesModel(model)
     if provider == "ollama":
         from .ollama import OllamaModel
 

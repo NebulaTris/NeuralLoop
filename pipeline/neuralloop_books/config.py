@@ -41,7 +41,7 @@ def quota_message(engine_name: str) -> str:
 
 
 # The local engine's text models. Keys are read from these environment variables only.
-PROVIDERS = ("auto", "anthropic", "openai", "openrouter", "ollama", "opencode", "fake")
+PROVIDERS = ("auto", "anthropic", "openai", "openrouter", "custom", "ollama", "opencode", "hermes", "fake")
 PROVIDER_KEYS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -52,18 +52,21 @@ DEFAULT_MODELS = {
     "openai": "gpt-6-sol",
     "openrouter": "deepseek/deepseek-v4.1-flash",
     "opencode": "deepseek/deepseek-v4-pro",
+    # hermes: whatever Hermes Agent is set up to use; custom: you name it
     # ollama: the first model already installed
 }
 # How much chapter text (characters) goes to a model at once; longer chapters are condensed into notes first.
 CONTEXT_CHARS = {
+    "custom": 100_000,
+    "hermes": 100_000,
     "anthropic": 400_000,
     "openai": 400_000,
     "openrouter": 400_000,
     "ollama": 24_000,
     "opencode": 24_000,
 }
-LOCAL_PROVIDERS = frozenset({"ollama", "opencode"})  # one item at a time by default
-SPEECH_ENGINES = ("auto", "rumik", "say", "fake")
+LOCAL_PROVIDERS = frozenset({"ollama", "opencode", "hermes"})  # one item at a time by default
+SPEECH_ENGINES = ("auto", "rumik", "fake")
 DEFAULT_INSTRUCTIONS = (
     "A friendly deep-dive for software engineers: section by section, "
     "concrete analogies and real engineering examples."

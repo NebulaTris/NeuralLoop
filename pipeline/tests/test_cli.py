@@ -26,13 +26,13 @@ def test_dry_run_end_to_end(epub, tmp_path, capsys):
 
 def test_new_flags_parse(epub):
     args = parse_args(
-        [str(epub), "--provider", "ollama", "--model", "qwen", "--speech", "say", "--voices", "Ira,Zoya"]
+        [str(epub), "--provider", "ollama", "--model", "qwen", "--speech", "rumik", "--voices", "Ira,Zoya"]
     )
     assert (args.engine, args.provider, args.model, args.speech, args.voices) == (
-        "local",
+        "auto",
         "ollama",
         "qwen",
-        "say",
+        "rumik",
         "Ira,Zoya",
     )
 

@@ -30,7 +30,11 @@ def test_models_get_defaults_and_overrides():
     assert models.make_model("openai", "my-model", env={"OPENAI_API_KEY": "k"}).model == "my-model"
     router = models.make_model("openrouter", None, env={"OPENROUTER_API_KEY": "k"})
     assert router.base_url == "https://openrouter.ai/api/v1"
-    assert models.make_model("ollama", None, env={}).base_url == "http://localhost:11434"
+    assert models.make_model("ollama", None, env={}).base_url.endswith(":11434")
+    assert (
+        models.make_model("ollama", None, env={"OLLAMA_HOST": "127.0.0.1:9999"}).base_url
+        == "http://127.0.0.1:9999"
+    )
     assert models.make_model("fake", None, env={}).name == "Pip's practice brain"
 
 
@@ -178,3 +182,50 @@ def test_every_item_kind_has_a_schema():
 
     assert set(SCHEMAS) == {"study", "graph", "quiz", "cards", "mindmap", "audio", "video", "condense"}
     assert all(schema["type"] == "object" and schema["required"] for schema in SCHEMAS.values())
+
+
+def test_any_openai_compatible_endpoint_can_be_used():
+    model = models.make_model(
+        "custom",
+        "Hermes-4-70B",
+        env={"NEURALLOOP_BASE_URL": "https://api.example.ai/v1", "NEURALLOOP_API_KEY": "k"},
+    )
+    assert model.base_url == "https://api.example.ai/v1" and model.model == "Hermes-4-70B"
+    with pytest.raises(SetupError, match="NEURALLOOP_BASE_URL"):
+        models.make_model("custom", "m", env={})
+
+
+def test_hermes_agent_runs_one_shot(monkeypatch):
+    from neuralloop_books.models.hermes import HermesModel
+
+    seen = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"ok": 1}\n', b""
+
+    async def fake_exec(*argv, **kwargs):
+        seen["argv"] = argv
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    answer = asyncio.run(
+        HermesModel("nousresearch/hermes-4-405b", executable="/bin/hermes").complete("quiz", "S", "C", "P")
+    )
+    assert answer == '{"ok": 1}'
+    assert seen["argv"][:2] == ("/bin/hermes", "-z") and "-m" in seen["argv"]
+    assert models.make_model("hermes", None, env={}).name == "Hermes Agent"
+
+
+def test_ollama_prefers_the_default_model_and_can_be_started(monkeypatch):
+    from neuralloop_books.models import ollama
+
+    monkeypatch.setattr(
+        ollama, "_get_json", lambda url, timeout: {"models": [{"name": "gemma3:4b"}, {"name": "qwen3:8b"}]}
+    )
+    monkeypatch.setattr(ollama, "default_local_model", lambda: "qwen3:8b")
+    model = ollama.OllamaModel(None)
+    asyncio.run(model.check())
+    assert model.model == "qwen3:8b"

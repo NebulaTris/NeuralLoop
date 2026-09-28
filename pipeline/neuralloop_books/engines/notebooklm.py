@@ -10,11 +10,14 @@ from ..state import SKIPPED, BookState
 class NotebookLMEngine:
     name = "NotebookLM"
 
-    def __init__(self, client, enums: ModuleType, opts):
-        self.client, self.enums, self.opts = client, enums, opts
+    def __init__(self, client, enums: ModuleType, opts, open_client=None):
+        """Pass a ready `client`, or `open_client`: a coroutine function that opens one in the run loop."""
+        self.client, self.enums, self.opts, self._open_client = client, enums, opts, open_client
         self.maker: ChapterMaker | None = None
 
     async def __aenter__(self):
+        if self.client is None:
+            self.client = await self._open_client()
         await self.client.__aenter__()
         return self
 

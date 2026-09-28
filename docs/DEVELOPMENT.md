@@ -17,10 +17,13 @@ Then pick one way to make study material:
 | OpenRouter | `export OPENROUTER_API_KEY=…` | `--provider openrouter --model deepseek/deepseek-v4.1-flash` |
 | Ollama (free, on your Mac) | install Ollama, `ollama pull <model>` | `--provider ollama` (uses the first installed model) |
 | opencode (e.g. DeepSeek) | install opencode and sign in to your provider there | `--provider opencode --model deepseek/deepseek-v4-pro` |
-| NotebookLM | `pip install "pipeline[notebooklm]"`, then `notebooklm login` | `--engine notebooklm` |
+| Hermes Agent | install Hermes Agent, run `hermes setup` | `--provider hermes` |
+| Any OpenAI-compatible service (Nous, Together, Groq, LM Studio, vLLM…) | `export NEURALLOOP_API_KEY=…` if it needs one | `--provider custom --base-url https://…/v1 --model NAME` |
+| NotebookLM | `pip install "pipeline[notebooklm]"`, then `python pipeline/nl_book.py --signin` | on by default when signed in (`--engine auto`) |
 
-With no flags, `--provider auto` uses the first key it finds, then Ollama. Voices: `--speech rumik` (Rumik OSS-1, expressive,
-needs `pip install "pipeline[rumik]"` and ~4 GB of memory; CC-BY-NC, non-commercial use) or `--speech say` (macOS voices).
+With no flags, NotebookLM is used when you're signed in; otherwise (and for any item NotebookLM can't make) the local engine
+runs, with the first key it finds or Ollama. Run `python pipeline/nl_book.py --setup` once to start Ollama and download the
+default model and Rumik. Voices are always Rumik OSS-1 (Apple silicon; CC-BY-NC, non-commercial use).
 Bigger models write better material: small local models (around 4B) work, but take longer and need more retries.
 
 ## 2. Build and run the app on your Mac

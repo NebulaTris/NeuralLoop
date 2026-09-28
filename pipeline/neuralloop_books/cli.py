@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import os
 import re
 import sys
@@ -45,9 +46,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--engine",
-        choices=["local", "notebooklm"],
-        default="local",
-        help="who makes the items (default local)",
+        choices=["auto", "local", "notebooklm"],
+        default="auto",
+        help="who makes the items (auto: NotebookLM, and your local AI whenever it can't)",
     )
     parser.add_argument(
         "--provider",
@@ -61,6 +62,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--speech", choices=SPEECH_ENGINES, default="auto", help="voices for podcasts and explainers"
     )
     parser.add_argument("--voices", help='two voices, host A then host B, e.g. "Ira,Zoya"')
+    parser.add_argument("--base-url", help="address of an OpenAI-compatible service (with --provider custom)")
+    parser.add_argument(
+        "--setup", action="store_true", help="first run: start Ollama, download the local model and Rumik"
+    )
+    parser.add_argument("--signin", action="store_true", help="sign in with Google (used for NotebookLM)")
+    parser.add_argument("--account", action="store_true", help="print the signed-in Google account as JSON")
     parser.add_argument("--title")
     parser.add_argument("--out")
     parser.add_argument("--retry", action="store_true", help="retry failed and quota-limited items")
@@ -69,6 +76,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="run everything offline with a practice model and voices"
     )
     args = parser.parse_args(argv)
+    if args.setup or args.signin or args.account:
+        return args
     if args.dry_run and not args.book:
         args.book = str(SAMPLE_BOOK)
     if not args.book:
@@ -88,39 +97,85 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "book"
 
 
-def _engine(opts: Options):
-    if opts.engine == "notebooklm":
-        try:
-            import notebooklm
-        except ImportError:
-            sys.exit(
-                'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
-                "Then sign in once: notebooklm login"
-            )
-        from .engines.notebooklm import NotebookLMEngine
-        from .notebook import open_client
+def _notebooklm_engine(opts: Options):
+    try:
+        import notebooklm
+    except ImportError as error:
+        raise SetupError("NotebookLM isn't installed") from error
+    from .engines.notebooklm import NotebookLMEngine
+    from .notebook import open_client
 
-        return NotebookLMEngine(asyncio.run(open_client(notebooklm.NotebookLMClient)), notebooklm, opts)
+    return NotebookLMEngine(
+        None, notebooklm, opts, open_client=lambda: open_client(notebooklm.NotebookLMClient)
+    )
+
+
+def _local_engine(opts: Options):
     from .engines.local import LocalEngine
     from .models import make_model
     from .speech import make_speech
 
-    return LocalEngine.from_options(
-        opts, make_model(opts.provider, opts.model), make_speech(opts.speech, opts.voices)
-    )
+    env = {**os.environ, **({"NEURALLOOP_BASE_URL": opts.base_url} if opts.base_url else {})}
+    if resolve_provider(opts.provider, env) == "ollama":
+        from . import setup
+
+        asyncio.run(setup.ensure_ollama(setup.ollama_host(), opts.log))
+    model = make_model(opts.provider, opts.model, env)
+    return LocalEngine.from_options(opts, model, make_speech(opts.speech, opts.voices))
+
+
+def _engine(opts: Options):
+    if opts.engine == "notebooklm":
+        try:
+            import notebooklm  # noqa: F401
+        except ImportError:
+            sys.exit(
+                'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
+                "Then sign in once: python nl_book.py --signin"
+            )
+        return _notebooklm_engine(opts)
+    if opts.engine == "local":
+        return _local_engine(opts)
+    from .engines.auto import AutoEngine
+
+    return AutoEngine(lambda: _notebooklm_engine(opts), lambda: _local_engine(opts), opts.log)
+
+
+def _signin() -> int:
+    """Sign in with Google in a real browser window; the same session is what NotebookLM uses."""
+    from . import account
+
+    return account.sign_in(print)
 
 
 def _default_parallel(args: argparse.Namespace) -> int:
     if args.parallel:
         return max(1, args.parallel)
-    local = args.engine == "local" and (
-        resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS or args.speech == "rumik"
+    local = args.engine in ("auto", "local") and (
+        resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS
     )
     return 1 if local else 2
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.signin:
+        return _signin()
+    if args.account:
+        from . import account
+
+        now = account.status()
+        print("Account: " + json.dumps(now))
+        return 0 if now["signedIn"] else 3
+    if args.setup:
+        from . import setup
+
+        try:
+            asyncio.run(setup.run_setup(print, args.model))
+        except SetupError as error:
+            print(error)
+            return 3
+        return 0
     opts = Options(
         book=Path(args.book),
         out=Path(args.out),
@@ -138,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         context=args.context,
         speech=args.speech,
         voices=args.voices,
+        base_url=args.base_url,
         title=args.title,
         retry=args.retry,
         dry_run=args.dry_run,

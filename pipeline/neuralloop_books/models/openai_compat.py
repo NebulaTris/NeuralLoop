@@ -1,4 +1,7 @@
-"""OpenAI and OpenRouter through the OpenAI Chat Completions API (official `openai` SDK)."""
+"""OpenAI, OpenRouter, and any OpenAI-compatible service (Nous, Together, Groq, LM Studio, vLLM, …)
+through the OpenAI Chat Completions API (official `openai` SDK)."""
+
+from urllib.parse import urlparse
 
 import openai
 
@@ -9,9 +12,10 @@ NAMES = {"openai": "OpenAI", "openrouter": "OpenRouter"}
 
 
 class OpenAICompatModel:
-    def __init__(self, provider: str, model: str | None, api_key: str):
-        self.provider, self.model, self.name = provider, model, NAMES[provider]
-        self.base_url = BASE_URLS[provider]
+    def __init__(self, provider: str, model: str | None, api_key: str, base_url: str | None = None):
+        self.provider, self.model = provider, model
+        self.base_url = base_url or BASE_URLS.get(provider)
+        self.name = NAMES.get(provider) or urlparse(self.base_url or "").hostname or "your AI service"
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=self.base_url)
 
     async def check(self) -> None:

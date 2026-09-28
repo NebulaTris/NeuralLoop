@@ -27,12 +27,13 @@ class Options:
     language: str = "en"
     instructions: str = DEFAULT_INSTRUCTIONS
     parallel: int = 2
-    engine: str = "local"
+    engine: str = "auto"
     provider: str = "auto"
     model: str | None = None
     context: int | None = None
     speech: str = "auto"
     voices: str | None = None
+    base_url: str | None = None
     title: str | None = None
     retry: bool = False
     dry_run: bool = False
@@ -110,7 +111,9 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
         site.build(opts.out, state, site_options(opts))
         started = time.monotonic()
         try:
-            chapter.update(await engine.make(task, chapter))
+            result = await engine.make(task, chapter)
+            entry["by"] = result.pop("_by", engine.name)  # which engine made it (auto can mix)
+            chapter.update(result)
             entry.update(status=DONE, error="")
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
         except SetupError:
