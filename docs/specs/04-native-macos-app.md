@@ -1,4 +1,4 @@
-# Spec 04 — One native Mac app (no study site, no web UI)
+# Spec 04 — One native app for Mac and iPad (no study site, no web UI)
 
 Status: next · Read first: `CLAUDE.md`, `docs/specs/03-pip-design-system.md` · Replaces: `src/`, `src-tauri/`, `pipeline/site/`
 
@@ -16,9 +16,9 @@ The Python pipeline stays; it becomes a data producer only.
 
 | Topic | Decision |
 |---|---|
-| UI toolkit | SwiftUI (macOS 14+), with AppKit where SwiftUI has gaps (window close → hide, drag and drop, status item) |
-| Platforms | macOS only. Windows and Linux support is dropped |
-| Build | Swift Package Manager (works with Xcode or just the Command Line Tools); `scripts/bundle-app.sh` assembles the `.app` |
+| UI toolkit | SwiftUI multiplatform: macOS 14+ and iPadOS 17+ from one codebase (owner's decision), with AppKit/UIKit where SwiftUI has gaps. Mac-only: pipeline, menu bar, desktop Pip. The library follows the Google account across devices (spec 07) |
+| Platforms | Mac and iPad first (personal use). Windows and Linux later with their own app on the same account, library, and book format |
+| Build | Swift Package Manager for `NeuralLoopCore` and its tests (works with just the Command Line Tools); the app targets need Xcode (required by Apple for iPad builds) |
 | Pipeline output | `book.json` (same payload as today's `window.BOOK`) instead of `book-data.js` + site files |
 | Progress | `progress.json` only, same schema as today; the localStorage copy goes away |
 | Data location | Unchanged: `~/Library/Application Support/app.neuralloop.books/` (`books/`, `settings.json`, `nudges.json`), same bundle id `app.neuralloop.books`, so existing books and progress carry over |
@@ -30,7 +30,7 @@ The Python pipeline stays; it becomes a data producer only.
 | Media | AVKit `VideoPlayer` for NotebookLM videos; `AVPlayer` for podcasts with the transcript following along; the local engine's `explainer` (spec 05) plays as an animated slideshow with Pip, one narration clip per slide. No byte-range server needed |
 | First launch | Welcome screen: **Sign in with Google** (runs `neuralloop --signin`: a real Chrome window; the same session is NotebookLM's, and the account's email shows in the app) or **Not now** (Pip uses Ollama). Then a friendly setup screen shows `neuralloop --setup` progress (`  setup: …` lines) while Ollama starts and the local model, the recall model, and Rumik download once |
 | Runtime | The app bundle carries `Contents/Resources/runtime` from `scripts/build-runtime.sh` (Python, pipeline, every provider, Rumik, NotebookLM, Ollama); every pipeline call goes through `runtime/bin/neuralloop`. Nothing else to install |
-| Recall | The Recall step sends the answer to `neuralloop --grade-recall` (later the warm worker from spec 06) and shows which key points were covered and the kind feedback |
+| Recall | Checked on the device by a small open-source model through MLX Swift (same per-key-point, evidence-grounded rules as `pipeline/neuralloop_books/recall.py`, ported to `NeuralLoopCore`), so it's instant and works offline on the iPad; word matching as the fallback |
 | Reader | Text chapters read like a textbook: figures from `chapters/img/` with captions, emphasis, lists, reading-plan labels; PDF chapters show the original pages in PDFKit |
 | AI keys | Settings → "Your AI": pick a provider (Anthropic, OpenAI, OpenRouter, Ollama, opencode, or NotebookLM), model, optional per-item models, the recall model (default `gemma2:2b`), and Rumik's two voices, written to the person's `ai.json`; Rumik's non-commercial license note shown. Keys are stored in the macOS Keychain and passed to the pipeline as environment variables only |
 | Tests | Swift Testing. Pure logic in `NeuralLoopCore`; each screen gets an `@Observable` model tested without UI. SwiftUI views stay thin |
@@ -38,8 +38,8 @@ The Python pipeline stays; it becomes a data producer only.
 ## Layout
 
 ```
-macos/
-  Package.swift
+apple/
+  Package.swift                  NeuralLoopCore (+ tests); the Xcode project adds the Mac and iPad app targets
   Sources/NeuralLoopCore/        pure, no SwiftUI or AppKit, fully unit tested
     Book.swift                   Codable model of book.json (chapters, status, quiz, cards, mindmap, graph, guide, recall)
     Progress.swift               Codable model of progress.json (cards, quiz, loop, recall, remake, mapPos, mapSeen, last)

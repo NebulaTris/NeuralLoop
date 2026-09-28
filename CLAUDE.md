@@ -5,7 +5,8 @@ Read this first, every session. Specs for new work live in `docs/specs`. The lon
 
 ## What this repo is
 
-NeuralLoop turns a book the user owns (PDF or EPUB) into five-step learning loops per chapter, made with any AI model the user
+NeuralLoop is an out-of-the-box learning tool for developers. It turns a book the user owns (PDF or EPUB) into five-step
+learning loops per chapter, made with any AI model the user
 plugs in (Anthropic, OpenAI, OpenRouter, local Ollama, opencode) or, optionally, Google NotebookLM:
 **Listen & watch → Read → Recall → Map → Remember**. Chapters unlock one at a time; the book map grows as chapters are mapped.
 Pip, a cute red panda, lives in the menu bar and nudges gently (never guilt).
@@ -178,8 +179,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
    recall checking, per-person `ai.json`, self-contained runtime.
 2. `docs/specs/06-speed.md` — reading-order queue, media lane, and streamed podcast lines done; next: submit-then-poll for
    NotebookLM, a warm worker process.
-3. `docs/specs/04-native-macos-app.md` — replace the study site and the Tauri app with one native SwiftUI app. Specs 01 and 02 then
-   target the Swift files.
+3. `docs/specs/04-native-macos-app.md` + `docs/specs/07-every-device.md` — one SwiftUI app for Mac and iPad; sign in with Google,
+   the library lives in the person's Drive app folder, the Mac prepares books. Specs 01 and 02 then target the Swift files.
 4. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
 5. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
 6. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
