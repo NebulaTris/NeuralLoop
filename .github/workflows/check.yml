@@ -20,3 +20,9 @@ jobs:
         with: { workspaces: "./src-tauri -> target" }
       - run: make setup
       - run: make check
+
+  swift:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd apple && swift test

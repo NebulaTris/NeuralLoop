@@ -22,3 +22,5 @@ neuralloop_media/
 
 # built runtimes and packaging leftovers
 build/
+apple/.build/
+apple/Config/Google.xcconfig
