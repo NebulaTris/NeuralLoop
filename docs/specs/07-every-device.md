@@ -15,7 +15,7 @@ Status: next (with spec 04) · Read first: `CLAUDE.md`, specs 04 and 05 · Touch
 
 | Topic | Decision |
 |---|---|
-| First platforms | macOS and iPadOS, for personal use. Windows and Linux later, with their own app on the same library and account |
+| First platforms | Laptops are primary (the owner's and the audience's). Order: Mac app first; Windows and Linux laptops next; iPad as a personal extra (installed from Xcode) until there's traction |
 | App | One SwiftUI codebase, multiplatform target (macOS 14+, iPadOS 17+). Mac-only parts: the pipeline, menu bar, desktop Pip |
 | Sign-in | Google, on every device. It's the identity, the key to the library, and (on the Mac) NotebookLM's session |
 | Where the library lives | A private app folder in the person's own Google Drive (`drive.appdata` scope): invisible in Drive's UI, free, and it works on Windows and Linux later (iCloud wouldn't) |
@@ -88,7 +88,7 @@ Keychain. On the Mac, the first sign-in continues into NotebookLM's browser sign
 |---|---|---|
 | Mac | `NeuralLoop.dmg` from our website. First open: System Settings → Privacy & Security → **Open Anyway**, once (people are fine with this) | Nothing paid. The app is ad-hoc signed (`codesign -s -`), which Apple silicon requires to run |
 | Your own iPad | Installed from Xcode on your Mac | Free Apple ID: re-install every 7 days. The paid developer account ($99/year) makes it last a year |
-| Other people's iPads | Ad Hoc install link on our website (up to 100 registered iPads), or the App Store (can be unlisted) | The paid developer account. iPadOS has no "Open Anyway"; web downloads are only allowed in the EU, Brazil, and Japan, for eligible developers |
+| Other people's iPads | Only once there's traction: the paid developer account, then the Ad Hoc install link on our website (up to 100 registered iPads), or the App Store (can be unlisted) | The paid developer account (Ad Hoc is part of it). iPadOS has no "Open Anyway"; web downloads are only allowed in the EU, Brazil, and Japan, for eligible developers |
 | Windows, Linux (later) | Downloads from our website | — |
 
 Mac packaging (`scripts/package-mac.sh`):

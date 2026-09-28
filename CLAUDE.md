@@ -179,8 +179,9 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
    recall checking, per-person `ai.json`, self-contained runtime.
 2. `docs/specs/06-speed.md` — reading-order queue, media lane, and streamed podcast lines done; next: submit-then-poll for
    NotebookLM, a warm worker process.
-3. `docs/specs/04-native-macos-app.md` + `docs/specs/07-every-device.md` — one SwiftUI app for Mac and iPad; sign in with Google,
-   the library lives in the person's Drive app folder, the Mac prepares books. Specs 01 and 02 then target the Swift files.
+3. `docs/specs/04-native-macos-app.md` + `docs/specs/07-every-device.md` — laptops first: the SwiftUI Mac app (unsigned download,
+   "Open Anyway" once), then Windows and Linux laptops; iPad is a personal extra for now. Sign in with Google, the library lives
+   in the person's Drive app folder, the Mac prepares books. Specs 01 and 02 then target the Swift files.
 4. `docs/specs/02-book-import-and-parsing.md` — upload by picker or drag-and-drop, parse preview, correct parsing, tests on real-world shapes.
 5. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
 6. Add a CI step that runs `python design/pip/generate_pip.py` and fails on `git diff --exit-code` (stale Pip files).
