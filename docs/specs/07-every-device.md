@@ -82,6 +82,24 @@ is opened, and the next chapter's media download in the background, so studying 
 Sign-in uses `ASWebAuthenticationSession` with PKCE (the system browser sheet Google accepts), and tokens live in the
 Keychain. On the Mac, the first sign-in continues into NotebookLM's browser sign-in (`neuralloop --signin`) in the same flow.
 
+## Getting the app (no App Store)
+
+| Device | How | Needs |
+|---|---|---|
+| Mac | `NeuralLoop.dmg` from our website. First open: System Settings → Privacy & Security → **Open Anyway**, once (people are fine with this) | Nothing paid. The app is ad-hoc signed (`codesign -s -`), which Apple silicon requires to run |
+| Your own iPad | Installed from Xcode on your Mac | Free Apple ID: re-install every 7 days. The paid developer account ($99/year) makes it last a year |
+| Other people's iPads | Ad Hoc install link on our website (up to 100 registered iPads), or the App Store (can be unlisted) | The paid developer account. iPadOS has no "Open Anyway"; web downloads are only allowed in the EU, Brazil, and Japan, for eligible developers |
+| Windows, Linux (later) | Downloads from our website | — |
+
+Mac packaging (`scripts/package-mac.sh`):
+
+- The `.dmg` holds only the app (about 20 MB). On first launch the app downloads its runtime (the folder from
+  `scripts/build-runtime.sh`: Python, pipeline, providers, Rumik, NotebookLM, video, Ollama) and then the models, with
+  Pip showing progress. Files an app downloads itself aren't quarantined, so macOS doesn't ask again for each tool inside.
+- Updates come from our website through Sparkle (appcast signed with our own EdDSA key; no Apple account needed).
+  Updates installed by Sparkle don't trigger "Open Anyway" again.
+- The website's download page shows the one-time "Open Anyway" step with a screenshot.
+
 ## Tests (write first)
 
 - `NeuralLoopCore`: progress merge (every rule above, including two devices reviewing the same card), library diffing
