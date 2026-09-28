@@ -26,6 +26,7 @@ class AIConfig:
     tasks: dict = field(default_factory=dict)  # task -> ModelChoice, e.g. {"quiz": ModelChoice("anthropic")}
     recall: ModelChoice = field(default_factory=lambda: ModelChoice("ollama", DEFAULT_RECALL_MODEL))
     voices: tuple[str, str] = ("Ira", "Zoya")
+    voice_quality: str = "fast"  # "fast" (Rumik 4-bit, ~2x quicker) or "best" (8-bit)
 
     def task(self, name: str) -> ModelChoice:
         return self.tasks.get(name, self.make)
@@ -64,4 +65,5 @@ def load(path: Path | None = None) -> AIConfig:
         tasks=tasks,
         recall=_choice(data.get("recall"), defaults.recall),
         voices=tuple(voices) if isinstance(voices, list) and len(voices) == 2 else defaults.voices,
+        voice_quality="best" if data.get("voiceQuality") == "best" else "fast",
     )

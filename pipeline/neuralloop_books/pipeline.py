@@ -35,9 +35,9 @@ class Options:
     speech: str = "auto"
     voices: str | None = None
     base_url: str | None = None
-    task_choices: dict = field(
-        default_factory=dict
-    )  # item -> aiconfig.ModelChoice, from the person's ai.json
+    voice_quality: str = "fast"  # Rumik 4-bit ("fast", about twice as quick) or 8-bit ("best")
+    # item -> aiconfig.ModelChoice, from the person's ai.json
+    task_choices: dict = field(default_factory=dict)
     title: str | None = None
     retry: bool = False
     dry_run: bool = False

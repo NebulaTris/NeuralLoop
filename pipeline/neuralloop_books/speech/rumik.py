@@ -12,8 +12,8 @@ from ..models import SetupError
 
 RATE = 24_000
 VOICES = ("Ira", "Aisha", "Siya", "Zoya")
-MODEL_8BIT = "rumik-ai/rumik-oss-1-mlx-8bit"  # ~3.8 GB of memory while speaking
-MODEL_4BIT = "rumik-ai/rumik-oss-1-mlx-4bit"  # for Macs with less than 16 GB
+MODEL_8BIT = "rumik-ai/rumik-oss-1-mlx-8bit"  # "best": ~3.8 GB of memory, ~3x slower than real time
+MODEL_4BIT = "rumik-ai/rumik-oss-1-mlx-4bit"  # "fast" (default): ~1.5x slower than real time
 _GB = 1024**3
 
 
@@ -21,16 +21,18 @@ def total_memory() -> int:
     return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
 
 
-def model_for_memory(memory: int) -> str:
-    return MODEL_8BIT if memory >= 16 * _GB else MODEL_4BIT
+def model_for(memory: int, quality: str = "fast") -> str:
+    """4-bit is about twice as fast (1.5x real time vs 3x on an M5); 8-bit is the richest and needs 16 GB."""
+    return MODEL_8BIT if quality == "best" and memory >= 16 * _GB else MODEL_4BIT
 
 
 class RumikSpeech:
     name = "Rumik OSS-1"
 
-    def __init__(self, voices: tuple[str, str] | None, model: str | None = None):
+    def __init__(self, voices: tuple[str, str] | None, model: str | None = None, quality: str = "fast"):
         self.voices = voices or ("Ira", "Zoya")
-        self.model = model or os.environ.get("NEURALLOOP_RUMIK_MODEL") or model_for_memory(total_memory())
+        self.quality = quality
+        self.model = model or os.environ.get("NEURALLOOP_RUMIK_MODEL") or model_for(total_memory(), quality)
         self._model = None
 
     def check(self) -> None:

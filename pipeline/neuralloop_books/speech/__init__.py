@@ -17,14 +17,14 @@ class SpeechEngine(Protocol):
     def synth(self, text: str, voice: str, delivery: str, path) -> None: ...
 
 
-def make_speech(name: str, voices: str | None = None) -> SpeechEngine:
+def make_speech(name: str, voices: str | None = None, quality: str = "fast") -> SpeechEngine:
     chosen = tuple(v.strip() for v in voices.split(",")) if voices else None
     if chosen is not None and len(chosen) != 2:
         raise SetupError("Give two voices, one per host, for example: --voices Ira,Zoya")
     if name in ("auto", "rumik"):
         from .rumik import RumikSpeech
 
-        return RumikSpeech(chosen)
+        return RumikSpeech(chosen, quality=quality)
     if name == "fake":
         from .fake import FakeSpeech
 

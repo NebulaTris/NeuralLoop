@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -274,6 +275,7 @@ class LocalEngine:
             "explainer",
         )
         n = chapter["n"]
+        narration: list[Path] = []
         for k, slide in enumerate(explainer["slides"], 1):
             clips = []
             for j, piece in enumerate(audio.split_for_speech(slide["narration"])):
@@ -282,12 +284,34 @@ class LocalEngine:
                 clips.append(clip)
             wav = self._media(f"{n:02d}-explainer-{k:02d}.wav")
             durations = await asyncio.to_thread(audio.join_wavs, clips, wav, 0.2)
+            narration.append(_copy(wav, self._clip_path(f"{n:02d}-explainer-slide-{k:02d}")))
             final = await asyncio.to_thread(audio.to_m4a, wav)
             slide.update(
                 audio=f"media/{final.name}", duration=round(sum(durations) + 0.2 * (len(durations) - 1), 3)
             )
             _remove(clips)
-        return {"explainer": explainer}
+        result = {"explainer": explainer}
+        film = await self._film(chapter, explainer["slides"], narration)
+        if film:
+            result["video"] = film
+        _remove(narration)
+        return result
+
+    async def _film(self, chapter: dict, slides: list[dict], narration: list[Path]) -> str | None:
+        """The explainer as a real MP4 (animated scene + narration); None when rendering isn't available."""
+        if os.environ.get("NEURALLOOP_VIDEO") == "0":
+            return None
+        from .. import video
+
+        out = self._media(f"{chapter['n']:02d}-explainer.mp4")
+        try:
+            await asyncio.to_thread(
+                video.render, out, chapter["title"], slides, narration, video.FPS, video.SIZE
+            )
+        except Exception:  # no browser or encoder here: the narrated slideshow still plays in the app
+            out.unlink(missing_ok=True)
+            return None
+        return f"media/{out.name}"
 
     # ---- speech ----
 

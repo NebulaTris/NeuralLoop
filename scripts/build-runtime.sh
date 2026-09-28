@@ -36,7 +36,7 @@ find "$OUT/python/lib" -name EXTERNALLY-MANAGED -delete  # this Python is ours a
 
 echo "• Pipeline dependencies (every provider, Rumik, NotebookLM)"
 "$PY" -m pip install --quiet --no-cache-dir --disable-pip-version-check \
-  "$ROOT/pipeline[anthropic,openai,rumik,notebooklm]"
+  "$ROOT/pipeline[anthropic,openai,rumik,notebooklm,video]"
 "$PY" -m pip uninstall --quiet --yes neuralloop-books-pipeline  # the source is copied below instead
 
 echo "• Pipeline source"
@@ -44,6 +44,9 @@ cp "$ROOT/pipeline/nl_book.py" "$OUT/pipeline/"
 rsync -a --exclude __pycache__ "$ROOT/pipeline/neuralloop_books" "$ROOT/pipeline/sample" "$OUT/pipeline/"
 mkdir -p "$OUT/pipeline/site"
 cp "$ROOT"/pipeline/site/{index.html,styles.css,app.js,pip-poses.js} "$OUT/pipeline/site/"
+
+echo "• Chromium for rendering explainer videos"
+PLAYWRIGHT_BROWSERS_PATH="$OUT/browsers" "$PY" -m playwright install chromium --only-shell >/dev/null
 
 echo "• Ollama $OLLAMA_VERSION"
 curl -fsSL "https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION/ollama-darwin.tgz" \
@@ -55,6 +58,7 @@ cat > "$OUT/bin/neuralloop" <<'LAUNCHER'
 # NeuralLoop's pipeline with the bundled Python and Ollama. Everything the app runs goes through here.
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export NEURALLOOP_OLLAMA="${NEURALLOOP_OLLAMA:-$HERE/ollama/ollama}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HERE/browsers}"
 export PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
 exec "$HERE/python/bin/python3" "$HERE/pipeline/nl_book.py" "$@"
 LAUNCHER
@@ -64,6 +68,6 @@ echo "• Smoke test"
 "$OUT/bin/neuralloop" --dry-run --no-open --out "$OUT/.smoke" >/dev/null
 test -f "$OUT/.smoke/book-data.js"
 rm -rf "$OUT/.smoke"
-"$PY" -c "import anthropic, openai, notebooklm, mlx_audio" 2>/dev/null
+"$PY" -c "import anthropic, openai, notebooklm, mlx_audio, av, playwright" 2>/dev/null
 
 echo "Runtime ready: $OUT ($(du -sh "$OUT" | cut -f1))"

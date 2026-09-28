@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 
 import pytest
@@ -245,3 +246,21 @@ def test_the_concept_graph_is_never_missing(tmp_path, chapter):
     mind_map = make(engine, "mindmap", chapter)["mindmap"]
     assert mind_map["name"] == "Caching"
     assert [k for k, _ in engine.model.calls].count("mindmap") == 1  # made once, reused
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("av") is None or importlib.util.find_spec("playwright") is None,
+    reason="video rendering needs PyAV and Playwright",
+)
+def test_the_explainer_also_becomes_a_real_video(tmp_path, chapter, monkeypatch):
+    monkeypatch.setenv("NEURALLOOP_VIDEO", "1")
+    monkeypatch.setattr("neuralloop_books.video.SIZE", (320, 180))
+    monkeypatch.setattr("neuralloop_books.video.FPS", 6)
+    result = make(engine_for(tmp_path), "video", chapter)
+    assert result["video"] == "media/01-explainer.mp4" and (tmp_path / result["video"]).stat().st_size > 1000
+    assert all((tmp_path / slide["audio"]).exists() for slide in result["explainer"]["slides"])
+
+
+def test_without_rendering_the_slideshow_still_arrives(tmp_path, chapter):
+    result = make(engine_for(tmp_path), "video", chapter)
+    assert "video" not in result and result["explainer"]["slides"]

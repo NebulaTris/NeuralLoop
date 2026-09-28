@@ -136,7 +136,9 @@ def _local_engine(opts: Options):
         asyncio.run(setup.ensure_ollama(setup.ollama_host(), opts.log))
     model = make_model(opts.provider, opts.model, env)
     task_models = {task: _model_for(choice) for task, choice in opts.task_choices.items()}
-    return LocalEngine.from_options(opts, model, make_speech(opts.speech, opts.voices), task_models)
+    return LocalEngine.from_options(
+        opts, model, make_speech(opts.speech, opts.voices, opts.voice_quality), task_models
+    )
 
 
 def _model_for(choice: aiconfig.ModelChoice):
@@ -227,7 +229,14 @@ def main(argv: list[str] | None = None) -> int:
         from . import setup
 
         try:
-            asyncio.run(setup.run_setup(print, args.model, recall_model=args.config.recall))
+            asyncio.run(
+                setup.run_setup(
+                    print,
+                    args.model,
+                    recall_model=args.config.recall,
+                    voice_quality=args.config.voice_quality,
+                )
+            )
         except SetupError as error:
             print(error)
             return 3
@@ -251,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
         voices=args.voices,
         base_url=args.base_url,
         task_choices=dict(args.config.tasks),
+        voice_quality=args.config.voice_quality,
         title=args.title,
         retry=args.retry,
         dry_run=args.dry_run,
