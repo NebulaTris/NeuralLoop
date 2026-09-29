@@ -28,4 +28,8 @@ dist/
 
 # never commit secrets or generated audio
 .env
+.env.*
+*.p12
+*.key
+*.mobileprovision
 *.wav

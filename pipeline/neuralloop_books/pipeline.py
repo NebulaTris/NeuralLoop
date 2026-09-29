@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import bookdata
-from .chapters import split_book
+from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
 from .engines.auto import made_by
-from .models import SetupError
+from .models import SetupError, safe_message
 from .notebook import is_quota_error
 from .selection import parse_selection
 from .state import DONE, FAILED, WAITING, WORKING, BookState
@@ -55,11 +55,11 @@ def prepare_state(opts: Options) -> BookState:
         (opts.out / sub).mkdir(parents=True, exist_ok=True)
     state = BookState.load(opts.out / "state.json")
     if state is None:
-        opts.log(f"Splitting {opts.book.name} into chapters…")
+        opts.log(f"Splitting {safe_message(opts.book.name)} into chapters…")
         chapters = split_book(opts.book, opts.out / "chapters")
         if not chapters:
             raise ValueError("Couldn't find any chapters in this book.")
-        title = opts.title or opts.book.stem.replace("_", " ").replace("-", " ")
+        title = clean_title(opts.title or opts.book.stem.replace("_", " ").replace("-", " ")) or "Book"
         state = BookState.create(
             opts.out / "state.json",
             title=title,
@@ -190,7 +190,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
                 entry.update(status=WAITING, error=quota_message(who))
                 opts.log(f"  … chapter {chapter['n']} {task}: {who} limit reached; will continue next run")
             else:
-                entry.update(status=FAILED, error=f"{type(error).__name__}: {str(error)[:200]}")
+                entry.update(status=FAILED, error=f"{type(error).__name__}: {safe_message(error)}")
                 opts.log(f"  ✗ chapter {chapter['n']} {task}: {entry['error']}")
         state.save()
         bookdata.write(opts.out, state, book_options(opts))

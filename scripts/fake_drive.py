@@ -5,12 +5,14 @@
 
 Then launch development builds with `-NLFakeDrive http://127.0.0.1:8765`. Implements: list (appDataFolder), download
 (?alt=media), resumable upload (POST/PATCH to start a session, PUT the bytes), and delete. Files are kept in --store.
-Development only: no authentication, localhost only.
+Development only: no authentication, localhost only. Requests must name this machine as their Host, so a web page
+can't reach the store through DNS rebinding, and file ids are checked, so none can point outside --store.
 """
 
 import argparse
 import hashlib
 import json
+import re
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,6 +21,18 @@ from urllib.parse import parse_qs, urlparse
 FILES: dict[str, dict] = {}  # id -> {name, md5, size}
 SESSIONS: dict[str, dict] = {}  # upload session -> {id or None, name}
 STORE = Path("/tmp/fake-drive")
+_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+
+
+def valid_id(file_id: str) -> bool:
+    return bool(_ID.fullmatch(file_id))
+
+
+def load_index() -> None:
+    """Files from an earlier session; an id that isn't one this server would make (say "../x") is ignored."""
+    if (STORE / "index.json").exists():
+        FILES.update({k: v for k, v in json.loads((STORE / "index.json").read_text()).items() if valid_id(k)})
 
 
 def save_index() -> None:
@@ -26,6 +40,15 @@ def save_index() -> None:
 
 
 class Drive(BaseHTTPRequestHandler):
+    def parse_request(self) -> bool:
+        if not super().parse_request():
+            return False
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
+        if host not in _LOCAL_HOSTS:
+            self.send_error(403, "Fake Drive only answers requests for 127.0.0.1")
+            return False
+        return True
+
     def reply(self, status: int, body: dict | bytes = b"", headers: dict | None = None) -> None:
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(status)
@@ -98,8 +121,7 @@ def main() -> None:
     args = parser.parse_args()
     STORE = Path(args.store)
     STORE.mkdir(parents=True, exist_ok=True)
-    if (STORE / "index.json").exists():
-        FILES.update(json.loads((STORE / "index.json").read_text()))
+    load_index()
     print(f"Fake Drive on http://127.0.0.1:{args.port} (files in {STORE})", flush=True)
     ThreadingHTTPServer(("127.0.0.1", args.port), Drive).serve_forever()
 

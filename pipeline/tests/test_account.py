@@ -113,3 +113,21 @@ def test_usage_when_signed_out_or_unknown(monkeypatch):
     monkeypatch.setattr(account.subprocess, "run", fake_run([(1, "")], []))
     monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
     assert account.usage() == {"known": False}
+
+
+def test_a_sign_in_browser_that_hangs_is_given_up_on(monkeypatch):
+    import subprocess
+
+    lines, seen = [], {}
+
+    def run(argv, **kwargs):
+        if "login" in argv:
+            seen["timeout"] = kwargs.get("timeout")
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        return SimpleNamespace(returncode=1, stdout="{}", stderr="")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    monkeypatch.setattr(account, "_chrome_installed", lambda: False)
+    assert account.sign_in(lines.append) == 3
+    assert seen["timeout"] and seen["timeout"] > account.SIGN_IN_TIMEOUT

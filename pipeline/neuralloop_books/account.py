@@ -5,6 +5,7 @@ NotebookLM has no public API that accepts OAuth tokens, so the session comes fro
 real browser window (Chrome when installed, which Google always accepts), saved by the NotebookLM library.
 """
 
+import contextlib
 import importlib.util
 import json
 import shutil
@@ -55,11 +56,14 @@ def sign_in(log: Callable[[str], None]) -> int:
         return 3
     browser = "chrome" if _chrome_installed() else "chromium"
     log("  setup: A browser window is opening. Sign in to Google there, then come back.")
-    subprocess.run(
-        [*cli, "login", "--browser", browser, "--browser-timeout", str(SIGN_IN_TIMEOUT)],
-        capture_output=True,
-        text=True,
-    )
+    with contextlib.suppress(subprocess.TimeoutExpired):  # the status check below says it didn't finish
+        subprocess.run(
+            [*cli, "login", "--browser", browser, "--browser-timeout", str(SIGN_IN_TIMEOUT)],
+            capture_output=True,
+            text=True,
+            timeout=SIGN_IN_TIMEOUT + 60,  # never wait forever on a browser that hangs
+        )
+
     now = status()
     if not now["signedIn"]:
         log("Sign-in didn't finish. Click Sign in with Google to try again, or continue without it.")

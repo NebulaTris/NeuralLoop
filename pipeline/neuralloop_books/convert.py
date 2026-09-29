@@ -48,17 +48,17 @@ def quiz(data: Any) -> list[dict]:
     """NotebookLM quiz export -> [{q, options, a, hint, why}]."""
     questions = []
     for item in _list(data, "questions"):
-        options = item.get("answerOptions") or []
-        texts = [str(o.get("text", "")) for o in options]
-        correct = next((i for i, o in enumerate(options) if o.get("isCorrect")), None)
-        if item.get("question") and len(texts) >= 2 and correct is not None:
+        options = _list(item, "answerOptions")
+        texts = [_text(o.get("text")) for o in options]
+        correct = next((i for i, o in enumerate(options) if o.get("isCorrect") in (True, "true")), None)
+        if _text(item.get("question")) and len(texts) >= 2 and correct is not None:
             questions.append(
                 {
-                    "q": item["question"],
+                    "q": _text(item["question"]),
                     "options": texts,
                     "a": correct,
-                    "hint": item.get("hint", ""),
-                    "why": [str(o.get("rationale", "")) for o in options],
+                    "hint": _text(item.get("hint")),
+                    "why": [_text(o.get("rationale")) for o in options],
                 }
             )
     return questions
@@ -67,9 +67,9 @@ def quiz(data: Any) -> list[dict]:
 def flashcards(data: Any) -> list[dict]:
     """NotebookLM flashcard export -> [{front, back}]."""
     return [
-        {"front": c["front"], "back": c["back"]}
+        {"front": _text(c["front"]), "back": _text(c["back"])}
         for c in _list(data, "cards")
-        if c.get("front") and c.get("back")
+        if _text(c.get("front")) and _text(c.get("back"))
     ]
 
 
@@ -97,36 +97,66 @@ def study(data: Any) -> dict | None:
 def concept_graph(data: Any) -> dict | None:
     """Chat answer for the graph prompt -> {concepts, layers, edges, tour}.
 
-    Edges and tour steps that point at unknown concepts are removed.
+    Every field becomes the plain string the app and the book map expect (a model can answer with anything,
+    and one odd value must not break book.json); edges and tour steps pointing at unknown concepts go.
     """
     if not isinstance(data, dict):
         return None
-    concepts = [c for c in _list(data, "concepts") if c.get("id") and c.get("name")][:_MAX_CONCEPTS]
+    concepts = [
+        {
+            "id": _text(c["id"]),
+            "name": _text(c["name"]),
+            "type": _text(c.get("type")) or "concept",
+            "summary": _text(c.get("summary")),
+            "detail": _text(c.get("detail")),
+            "complexity": _text(c.get("complexity")) or "moderate",
+            "layer": _text(c.get("layer")),
+        }
+        for c in _list(data, "concepts")
+        if _text(c.get("id")) and _text(c.get("name"))
+    ][:_MAX_CONCEPTS]
     if not concepts:
         return None
-    layers = [layer for layer in _list(data, "layers") if layer.get("id")] or [
-        {"id": "core", "name": "Core ideas"}
-    ]
+    layers = [
+        {"id": _text(layer["id"]), "name": _text(layer.get("name")) or _text(layer["id"])}
+        for layer in _list(data, "layers")
+        if _text(layer.get("id"))
+    ] or [{"id": "core", "name": "Core ideas"}]
     layer_ids = {layer["id"] for layer in layers}
     for concept in concepts:
-        concept.setdefault("type", "concept")
-        concept.setdefault("complexity", "moderate")
-        concept.setdefault("summary", "")
-        concept.setdefault("detail", "")
-        if concept.get("layer") not in layer_ids:
+        if concept["layer"] not in layer_ids:
             concept["layer"] = layers[0]["id"]
     ids = {c["id"] for c in concepts}
     edges = [
-        e
+        {
+            "source": _text(e["source"]),
+            "target": _text(e["target"]),
+            "type": _text(e.get("type")) or "related",
+            "description": _text(e.get("description")),
+        }
         for e in _list(data, "edges")
-        if e.get("source") in ids and e.get("target") in ids and e["source"] != e["target"]
+        if _text(e.get("source")) in ids
+        and _text(e.get("target")) in ids
+        and _text(e["source"]) != _text(e["target"])
     ]
     tour = []
     for step in _list(data, "tour"):
-        node_ids = [i for i in step.get("nodeIds", []) if i in ids]
+        steps = step.get("nodeIds")
+        node_ids = [_text(i) for i in steps if _text(i) in ids] if isinstance(steps, list) else []
         if node_ids:
-            tour.append({**step, "nodeIds": node_ids})
+            tour.append(
+                {
+                    "title": _text(step.get("title")),
+                    "description": _text(step.get("description")),
+                    "nodeIds": node_ids,
+                }
+            )
     return {"concepts": concepts, "layers": layers, "edges": edges, "tour": tour}
+
+
+def _text(value: Any) -> str:
+    """A model's string value; numbers become text, anything else (lists, objects, null) is empty."""
+    return str(value).strip() if isinstance(value, (str, int, float)) and not isinstance(value, bool) else ""
 
 
 def mind_map(data: Any) -> dict | None:

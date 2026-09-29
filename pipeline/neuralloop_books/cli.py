@@ -19,7 +19,7 @@ from .config import (
     VIDEO_FORMATS,
     VIDEO_STYLES,
 )
-from .models import SetupError, resolve_provider
+from .models import SetupError, resolve_provider, safe_message
 from .pipeline import Options, run
 from .state import FAILED, WAITING
 
@@ -187,7 +187,8 @@ async def _check_ai(config: aiconfig.AIConfig) -> dict:
             return {
                 "ok": False,
                 "provider": choice.provider,
-                "message": str(error).splitlines()[0][:200] or type(error).__name__,
+                "message": safe_message(str(error).strip().splitlines()[0] if str(error).strip() else "")
+                or type(error).__name__,
             }
         return {
             "ok": True,
@@ -321,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         except SetupError as error:
-            print(error)
+            print(safe_message(error, 1000))
             return 3
         return 0
     opts = Options(
@@ -356,10 +357,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\nPaused. Run the same command again to continue.")
         return 130
     except SetupError as error:
-        print(error)
+        print(safe_message(error, 1000))
         return 3
     except ValueError as error:
-        print(error)
+        print(safe_message(error, 1000))
         return 2
     except Exception as error:
         if _is_signed_out(error):

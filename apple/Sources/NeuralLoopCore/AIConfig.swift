@@ -91,7 +91,7 @@ public struct ProviderPreset: Identifiable, Equatable, Sendable {
         .init(id: "opencode", title: "opencode", detail: "Uses the model you've chosen in opencode. Type one to override it, for example deepseek/deepseek-v4-pro.",
               provider: "opencode", keyVariable: nil, keyOptional: false, defaultModel: "", baseUrl: nil,
               suggestions: ["deepseek/deepseek-v4-pro", "anthropic/claude-sonnet-5"]),
-        .init(id: "hermes", title: "Hermes Agent", detail: "Nous Research's Hermes Agent, as you've set it up (hermes setup).",
+        .init(id: "hermes", title: "Hermes Agent", detail: "Nous Research's Hermes Agent, as you've set it up (hermes setup). It's an agent: if its tools are on, text in a book could steer it, so turn its tools off in Hermes first.",
               provider: "hermes", keyVariable: nil, keyOptional: false, defaultModel: "", baseUrl: nil, suggestions: []),
         .init(id: "custom", title: "Any OpenAI-compatible service", detail: "Together, Groq, vLLM, a server of your own: its address, model, and key if it needs one.",
               provider: "custom", keyVariable: "NEURALLOOP_API_KEY", keyOptional: true, defaultModel: "", baseUrl: nil, suggestions: []),

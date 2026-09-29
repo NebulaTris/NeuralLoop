@@ -6,7 +6,7 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 
 import asyncio
 
-from ..models import SetupError
+from ..models import SetupError, safe_message
 
 
 class AutoEngine:
@@ -113,4 +113,4 @@ def _tagged(error: BaseException, name: str) -> BaseException:
 
 def _short(error: BaseException) -> str:
     text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return text[:120]
+    return safe_message(text, 120)

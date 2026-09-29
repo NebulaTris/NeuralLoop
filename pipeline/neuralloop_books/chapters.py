@@ -20,7 +20,10 @@ MAX_EPUB_ENTRIES = 5000
 IMAGE_TYPES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 MIN_IMAGE_BYTES = 2048  # smaller is a spacer, bullet, or icon, not a figure
 MAX_IMAGES_PER_CHAPTER = 80
-_IMAGE_REF = re.compile(r"!\[([^\]]*)\]\(zip:([^)\s]+)\)")
+MAX_TITLE = 200
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# Our own placeholders: alt text and paths never hold brackets, parentheses, or spaces (matching stops early).
+_IMAGE_REF = re.compile(r"!\[([^\[\]\n]*)\]\(zip:([^()\[\]\s]+)\)")
 
 
 class UnsafeBookError(ValueError):
@@ -64,6 +67,12 @@ def is_front_matter(title: str) -> bool:
     return bool(FRONT_MATTER.match(title))
 
 
+def clean_title(title: str) -> str:
+    """A title on one line, of a sensible length. Titles come from the book and end up in progress lines
+    (which the app reads line by line), prompts, and files: a newline or a megabyte of text must not pass."""
+    return " ".join(_CONTROL.sub(" ", title).split())[:MAX_TITLE].strip()
+
+
 # ---------------------------------------------------------------- PDF
 
 
@@ -74,6 +83,7 @@ def split_pdf(path: Path, out_dir: Path) -> list[dict]:
     ranges = _pdf_chapter_ranges(reader)
     chapters = []
     for title, first, end in ranges:
+        title = clean_title(title) or f"Pages {first + 1}-{end}"
         if is_front_matter(title) or end - first < MIN_PDF_PAGES:
             continue
         number = len(chapters) + 1
@@ -138,6 +148,7 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
         starts = _toc_starts(spine, toc, documents) or [(f"Part {i + 1}", i, 0) for i in range(len(spine))]
         chapters = []
         for i, (title, _, _) in enumerate(starts):
+            title = clean_title(title) or f"Part {i + 1}"
             pieces = _pieces(spine, starts, i)
             text = _html_to_markdown(documents, pieces)
             if is_front_matter(title) or len(text) < MIN_EPUB_CHARS:
@@ -223,7 +234,7 @@ def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[st
                 normpath(join(base, unquote(href.group(1)))),
                 props.group(1) if props else "",
             )
-    spine = [manifest[i][0] for i in re.findall(r'<itemref\b[^>]*idref="([^"]+)"', opf) if i in manifest]
+    spine = [manifest[i][0] for i in re.findall(r'<itemref\b[^<>]*idref="([^"]+)"', opf) if i in manifest]
     nav = next((href for href, props in manifest.values() if "nav" in props.split()), None)
     ncx = next((href for href, _ in manifest.values() if href.endswith(".ncx")), None)
     toc = _nav_toc(book, nav) if nav else []
@@ -233,23 +244,31 @@ def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[st
 
 
 def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str, str]]:
-    block = re.search(r"<nav[^>]*toc[^>]*>(.*?)</nav>", _read(book, nav), re.DOTALL)
-    if not block:
+    # Every pattern here stops at the next tag it can't belong to, so a hostile file can't make matching take
+    # quadratic time (a "<nav" or "<a" that never closes would otherwise be rescanned to the end each time).
+    text = _read(book, nav)
+    start = next((tag for tag in re.finditer(r"<nav\b[^<>]*>", text) if "toc" in tag.group()), None)
+    end = text.find("</nav>", start.end()) if start else -1
+    if end < 0:
         return []
+    block = text[start.end() : end]
     top_level = (
-        re.sub(r"<ol\b[^>]*>(?:(?!<ol\b).)*?</ol>", "", block.group(1), flags=re.DOTALL)
-        if block.group(1).count("<ol") > 2
-        else block.group(1)
+        re.sub(r"<ol\b[^<>]*>(?:(?!<ol\b).)*?</ol>", "", block, flags=re.DOTALL)
+        if block.count("<ol") > 2
+        else block
     )
-    return [
-        (re.sub(r"<[^>]+>", "", html.unescape(label)).strip(), *_target(nav, href))
-        for href, label in re.findall(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', top_level, re.DOTALL)
-    ]
+    links = []
+    for attributes, label in re.findall(r"<a\b([^<>]*)>((?:(?!<a\b).)*?)</a>", top_level, re.DOTALL):
+        href = re.search(r'\bhref="([^"]+)"', attributes)
+        if href:
+            links.append((re.sub(r"<[^>]+>", "", html.unescape(label)).strip(), *_target(nav, href.group(1))))
+    return links
 
 
 def _ncx_toc(book: zipfile.ZipFile, ncx: str) -> list[tuple[str, str, str]]:
     points = re.findall(
-        r"<navPoint[^>]*>\s*<navLabel>\s*<text>(.*?)</text>.*?<content[^>]*src=\"([^\"]+)\"",
+        r"<navPoint\b[^<>]*>\s*<navLabel>\s*<text>([^<]*)</text>"
+        r"(?:(?!<navPoint\b).)*?<content\b[^<>]*?src=\"([^\"]+)\"",
         _read(book, ncx),
         re.DOTALL,
     )
@@ -291,7 +310,7 @@ def _toc_starts(
 
 def _anchor_offset(text: str, fragment: str) -> int | None:
     """Where the element with id (or name) `fragment` begins in the file's text."""
-    found = re.search(rf"""<[A-Za-z][^>]*?\s(?:id|name)\s*=\s*["']{re.escape(fragment)}["']""", text)
+    found = re.search(rf"""<[A-Za-z][^<>]*?\s(?:id|name)\s*=\s*["']{re.escape(fragment)}["']""", text)
     return found.start() if found else None
 
 
@@ -356,6 +375,8 @@ class _MarkdownText(HTMLParser):
         if not source or source.startswith(("data:", "http:", "https:")):
             return
         path = normpath(join(dirname(self.document), unquote(urldefrag(source)[0])))
+        if re.search(r"[()\[\]\s]", path):
+            return  # can't be written as a Markdown image; such file names are vanishingly rare
         alt = re.sub(r"[\[\]\n]", " ", alt).strip()
         self.parts.append(f"\n\n![{alt}](zip:{path})\n\n")
 

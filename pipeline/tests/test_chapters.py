@@ -1,3 +1,4 @@
+import contextlib
 import zipfile
 
 import pytest
@@ -146,3 +147,70 @@ def _epub_with(tmp_path, entries: dict[str, str]):
 def test_malformed_books_say_they_could_not_be_read(tmp_path, make_book):
     with pytest.raises(ValueError, match="couldn't be read"):
         split_book(make_book(tmp_path), tmp_path / "out")
+
+
+def test_titles_from_the_book_stay_on_one_line_and_short(tmp_path):
+    """Titles reach the app's line-by-line progress output: a newline could fake a "Study site:" line."""
+    fake_line = "Caching\nStudy site: /Users/someone/.ssh\x1b[2J"
+    book = write_epub(tmp_path / "b.epub", [(fake_line, LONG), ("Queues " + "q" * 5000, LONG)], nav=False)
+    titles = [c["title"] for c in split_book(book, tmp_path / "out")]
+    assert titles[0] == "Caching Study site: /Users/someone/.ssh [2J"
+    assert len(titles[1]) == 200 and all("\n" not in t for t in titles)
+    pdf = write_pdf(tmp_path / "b.pdf", 8, [("One\r\nStudy site: x", 0, []), ("Two", 4, [])])
+    assert split_book(pdf, tmp_path / "pdf")[0]["title"] == "One Study site: x"
+
+
+def _hostile_epub(path, nav_body: str | None = None, ncx: str | None = None, doc: str | None = None):
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("META-INF/container.xml", '<container><rootfile full-path="c.opf"/></container>')
+        manifest = '<item id="d" href="d.xhtml"/>'
+        manifest += '<item id="nav" href="nav.xhtml" properties="nav"/>' if nav_body is not None else ""
+        manifest += '<item id="ncx" href="toc.ncx"/>' if ncx is not None else ""
+        z.writestr(
+            "c.opf", f'<package><manifest>{manifest}</manifest><spine><itemref idref="d"/></spine></package>'
+        )
+        z.writestr("d.xhtml", doc or f"<html><body><p>{LONG}</p></body></html>")
+        if nav_body is not None:
+            z.writestr("nav.xhtml", nav_body)
+        if ncx is not None:
+            z.writestr("toc.ncx", ncx)
+    return path
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        {"nav_body": '<nav epub:type="toc">' + "<a href='x'>" * 150_000 + "</nav>"},
+        {"nav_body": "<nav " * 200_000},
+        {"nav_body": '<nav epub:type="toc"><ol>' + '<a href="d.xhtml" ' * 100_000 + "</ol></nav>"},
+        {"ncx": "<ncx>" + "<navPoint><navLabel><text>t</text></navLabel>" * 100_000 + "</ncx>"},
+        {"ncx": "<ncx>" + "<navPoint><navLabel><text>" * 100_000 + "</ncx>"},
+        {
+            "nav_body": '<nav epub:type="toc"><ol><a href="d.xhtml">A</a>'
+            '<a href="d.xhtml#zz">B</a></ol></nav>',
+            "doc": "<p " * 300_000,
+        },
+    ],
+)
+def test_hostile_tables_of_contents_are_read_in_linear_time(tmp_path, shape):
+    """A crafted EPUB must not hang the import: every pattern stops at the next tag it can't belong to."""
+    import time
+
+    book = _hostile_epub(tmp_path / "b.epub", **shape)
+    started = time.monotonic()
+    with contextlib.suppress(ValueError):  # too little text for a chapter is fine: it must answer quickly
+        split_book(book, tmp_path / "out")
+    assert time.monotonic() - started < 10
+
+
+def test_hostile_markdown_like_text_does_not_slow_down_figures(tmp_path):
+    import time
+
+    from neuralloop_books.engines.local import _chapter_text
+
+    text = "![" * 200_000 + "](zip:" * 100_000
+    book = write_epub(tmp_path / "b.epub", [("One", LONG + text)])
+    started = time.monotonic()
+    split_book(book, tmp_path / "out")
+    _chapter_text(tmp_path / "out" / "01.md")
+    assert time.monotonic() - started < 10

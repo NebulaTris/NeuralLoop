@@ -77,8 +77,8 @@ def test_concept_graph_removes_dangling_references_and_fills_defaults():
     g = convert.concept_graph(data)
     assert [c["id"] for c in g["concepts"]] == ["a", "b"]
     assert g["concepts"][0]["layer"] == "l1" and g["concepts"][0]["complexity"] == "moderate"
-    assert g["edges"] == [{"source": "a", "target": "b"}]
-    assert g["tour"] == [{"title": "T", "nodeIds": ["a"]}]
+    assert g["edges"] == [{"source": "a", "target": "b", "type": "related", "description": ""}]
+    assert g["tour"] == [{"title": "T", "description": "", "nodeIds": ["a"]}]
 
 
 def test_concept_graph_without_concepts_is_none():
@@ -176,3 +176,47 @@ def test_a_concept_graph_can_be_grown_from_the_mind_map():
     assert {"World keeps moving", "Reality drifts", "Catch drift early"} <= names
     assert {e["type"] for e in graph["edges"]} == {"categorized_under"}
     assert len(graph["layers"]) == 2 and graph["tour"][0]["nodeIds"]
+
+
+def test_odd_model_values_become_plain_text_and_never_break_the_book_map():
+    """A model (or a book talking to it) can answer with any JSON; book.json and the book map still build."""
+    from neuralloop_books import book_graph
+
+    data = {
+        "concepts": [
+            {"id": ["a"], "name": "Unhashable id"},
+            {"id": "b", "name": {"x": 1}},
+            {"id": 7, "name": "Seven", "summary": ["not", "text"], "layer": None, "__proto__": {"x": 1}},
+            {"id": "c", "name": "C"},
+        ],
+        "layers": [{"id": {"no": 1}}, {"id": "l1"}],
+        "edges": [{"source": "7", "target": "c"}, {"source": ["7"], "target": "c"}],
+        "tour": [{"nodeIds": "c"}, {"title": 3, "nodeIds": [7, None]}],
+    }
+    g = convert.concept_graph(data)
+    assert [c["id"] for c in g["concepts"]] == ["7", "c"]
+    assert set(g["concepts"][0]) == {"id", "name", "type", "summary", "detail", "complexity", "layer"}
+    assert g["concepts"][0]["summary"] == "" and g["layers"] == [{"id": "l1", "name": "l1"}]
+    assert g["edges"] == [{"source": "7", "target": "c", "type": "related", "description": ""}]
+    assert g["tour"] == [{"title": "3", "description": "", "nodeIds": ["7"]}]
+    book_graph.build([{"n": 1, "title": "One", "graph": g}])  # no KeyError or TypeError
+
+
+def test_quiz_and_cards_keep_only_text():
+    quiz = convert.quiz(
+        {
+            "questions": [
+                {"question": {"x": 1}, "answerOptions": [{"text": "a", "isCorrect": True}, {"text": "b"}]},
+                {"question": "Q", "answerOptions": [{"text": "a", "isCorrect": "false"}, {"text": "b"}]},
+                {
+                    "question": "Q",
+                    "hint": ["h"],
+                    "answerOptions": [{"text": 1, "isCorrect": True}, {"text": "b"}],
+                },
+            ]
+        }
+    )
+    assert quiz == [{"q": "Q", "options": ["1", "b"], "a": 0, "hint": "", "why": ["", ""]}]
+    assert convert.flashcards({"cards": [{"front": ["x"], "back": "y"}, {"front": "f", "back": "b"}]}) == [
+        {"front": "f", "back": "b"}
+    ]

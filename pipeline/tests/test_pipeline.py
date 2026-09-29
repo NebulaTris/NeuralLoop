@@ -339,3 +339,18 @@ def test_a_stale_notebooklm_session_is_refreshed_and_the_item_made_by_notebooklm
     first = state.chapters[0]["tasks"]
     assert first["audio"]["status"] == DONE and first["video"]["status"] == DONE
     assert client.refreshes >= 1
+
+
+def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):
+    """SDK and command-line errors can quote the request; state.json and book.json sync to Drive."""
+    key = "sk-ant-api03-" + "k" * 40
+    monkeypatch.setenv("ANTHROPIC_API_KEY", key)
+    lines = []
+    options.log = lines.append
+    error = RuntimeError(f"401 for key {key}\nStudy site: /somewhere/else")
+    state = asyncio.run(run(options, Failing("Claude", error)))
+    quiz = state.chapters[0]["tasks"]["quiz"]
+    assert quiz["status"] == "failed" and "[key hidden]" in quiz["error"] and "\n" not in quiz["error"]
+    saved = (options.out / "state.json").read_text() + (options.out / "book.json").read_text()
+    assert key not in saved and not any(key in line for line in lines)
+    assert not any(line.startswith("Study site:") for printed in lines for line in printed.splitlines())

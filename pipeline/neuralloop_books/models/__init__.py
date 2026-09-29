@@ -9,6 +9,7 @@ and the fake model.
 import asyncio
 import contextlib
 import os
+import re
 from collections.abc import Mapping
 from typing import Protocol
 
@@ -43,6 +44,24 @@ async def communicate(process: asyncio.subprocess.Process, timeout: float) -> tu
             process.kill()
         await process.wait()
         raise
+
+
+KEY_VARIABLES = (*PROVIDER_KEYS.values(), "NEURALLOOP_API_KEY")
+# Key-shaped tokens (Anthropic, OpenAI, OpenRouter, bearer headers), for keys not from our variables.
+_KEY_SHAPES = re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}|\b[Bb]earer\s+[A-Za-z0-9._~+/\-]{16,}=*")
+
+
+def safe_message(text: object, limit: int = 200, env: Mapping[str, str] | None = None) -> str:
+    """One line of error text that is safe to print and save. SDK and command-line errors can quote the
+    request, and progress lines and the book's files (which can sync to Drive) must never hold a key.
+    Multi-line text is joined, so it can't pose as one of the pipeline's own progress lines."""
+    env = os.environ if env is None else env
+    line = " ".join(str(text).split())
+    for variable in KEY_VARIABLES:
+        key = env.get(variable, "")
+        if len(key) >= 8:
+            line = line.replace(key, "[key hidden]")
+    return _KEY_SHAPES.sub("[key hidden]", line)[:limit]
 
 
 def resolve_provider(provider: str, env: Mapping[str, str]) -> str:

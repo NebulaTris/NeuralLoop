@@ -361,7 +361,7 @@ def _strings(value) -> list[str]:
     return []
 
 
-_FIGURE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_FIGURE = re.compile(r"!\[([^\[\]\n]*)\]\([^()\n]*\)")  # stops early, so book text can't make it slow
 
 
 def _chapter_text(file: Path) -> str:

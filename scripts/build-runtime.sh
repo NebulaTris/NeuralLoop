@@ -133,10 +133,14 @@ if [[ "$GOT" != "$OLLAMA_SHA256" ]]; then
 fi
 tar -xzf "$DL/ollama-darwin.tgz" -C "$WORK/ollama"
 test -x "$WORK/ollama/ollama"
-codesign --verify --strict "$WORK/ollama/ollama"
-TEAM="$(codesign -dv --verbose=4 "$WORK/ollama/ollama" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-if [[ "$TEAM" != "$OLLAMA_TEAM_ID" ]]; then
-  echo "Ollama's binary is signed by team '$TEAM', expected $OLLAMA_TEAM_ID." >&2
+# The TeamIdentifier codesign prints is only the leaf certificate's OU, which a self-signed certificate can claim too:
+# require a Developer ID chain to Apple's root with Ollama's team in it.
+DEVELOPER_ID='anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists'
+DEVELOPER_ID+=" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+DEVELOPER_ID+=" and certificate leaf[subject.OU] = \"$OLLAMA_TEAM_ID\""
+if ! codesign --verify --strict -R="$DEVELOPER_ID" "$WORK/ollama/ollama"; then
+  TEAM="$(codesign -dv --verbose=4 "$WORK/ollama/ollama" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+  echo "Ollama's binary isn't signed with Ollama's Developer ID ($OLLAMA_TEAM_ID); it says team '$TEAM'." >&2
   exit 1
 fi
 
@@ -149,6 +153,8 @@ export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HERE/browsers}"
 # Keep the app bundle untouched (its signature seals it): compiled Python goes to the person's caches.
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$HOME/Library/Caches/NeuralLoop/pycache}"
 export PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
+# Only the bundled packages: a PYTHONPATH or PYTHONHOME from the person's shell must not replace them.
+unset PYTHONPATH PYTHONHOME
 exec "$HERE/python/bin/python3" "$HERE/pipeline/nl_book.py" "$@"
 LAUNCHER
 chmod +x "$WORK/bin/neuralloop"
