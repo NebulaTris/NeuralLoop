@@ -41,3 +41,30 @@ def test_a_missing_key_exits_3_with_a_friendly_message(epub, tmp_path, capsys, m
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     code = main([str(epub), "--provider", "openai", "--no-open", "--out", str(tmp_path / "o")])
     assert code == 3 and "OPENAI_API_KEY" in capsys.readouterr().out
+
+
+def test_check_ai_tests_every_configured_model_and_reports_json(tmp_path, capsys):
+    import json
+
+    config = tmp_path / "ai.json"
+    config.write_text(json.dumps({"make": {"provider": "fake"}, "recall": {"provider": "fake"}}))
+    assert main(["--check-ai", "--ai-config", str(config)]) == 0
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1].removeprefix("AI check: "))
+    assert (
+        report["make"]["ok"] and report["recall"]["ok"] and report["make"]["name"] == "Pip's practice brain"
+    )
+
+
+def test_check_ai_explains_what_is_missing(tmp_path, capsys, monkeypatch):
+    import json
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    config = tmp_path / "ai.json"
+    config.write_text(json.dumps({"make": {"provider": "anthropic"}, "recall": {"provider": "fake"}}))
+    assert main(["--check-ai", "--ai-config", str(config)]) == 3
+    report = json.loads(capsys.readouterr().out.strip().splitlines()[-1].removeprefix("AI check: "))
+    assert (
+        not report["make"]["ok"]
+        and "ANTHROPIC_API_KEY" in report["make"]["message"]
+        and report["recall"]["ok"]
+    )

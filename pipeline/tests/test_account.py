@@ -63,3 +63,11 @@ def test_the_library_runs_through_this_python_so_a_moved_app_still_works():
     import sys
 
     assert account._cli()[:3] == [sys.executable, "-m", "notebooklm"]
+
+
+def test_sign_out_clears_the_saved_session(monkeypatch):
+    calls = []
+    monkeypatch.setattr(account.subprocess, "run", fake_run([(0, "")], calls))
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.sign_out() == 0
+    assert calls[0][-2:] == ["auth", "logout"]

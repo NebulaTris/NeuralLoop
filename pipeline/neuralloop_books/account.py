@@ -66,3 +66,12 @@ def sign_in(log: Callable[[str], None]) -> int:
         return 3
     log("Account: " + json.dumps(now))
     return 0
+
+
+def sign_out() -> int:
+    """Forget the saved Google session (NotebookLM stops being used until the next sign-in)."""
+    cli = _cli()
+    if not cli:
+        return 0
+    result = subprocess.run([*cli, "auth", "logout"], capture_output=True, text=True, timeout=60)
+    return 0 if result.returncode == 0 else 3

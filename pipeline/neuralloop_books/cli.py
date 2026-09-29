@@ -67,6 +67,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--signin", action="store_true", help="sign in with Google (used for NotebookLM)")
     parser.add_argument("--account", action="store_true", help="print the signed-in Google account as JSON")
+    parser.add_argument("--signout", action="store_true", help="forget the saved Google sign-in")
+    parser.add_argument(
+        "--check-ai", action="store_true", help="test every model in ai.json (Settings → Save and test)"
+    )
     parser.add_argument(
         "--grade-recall",
         action="store_true",
@@ -90,7 +94,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.provider, args.model = args.config.make.provider, args.model or args.config.make.model
         args.base_url = args.base_url or args.config.make.base_url
     args.voices = args.voices or ",".join(args.config.voices)
-    if args.setup or args.signin or args.account:
+    if args.setup or args.signin or args.account or args.signout or args.check_ai:
         return args
     if args.dry_run and not args.book:
         args.book = str(SAMPLE_BOOK)
@@ -146,6 +150,42 @@ def _model_for(choice: aiconfig.ModelChoice):
 
     env = {**os.environ, **({"NEURALLOOP_BASE_URL": choice.base_url} if choice.base_url else {})}
     return make_model(choice.provider, choice.model, env)
+
+
+async def _check_ai(config: aiconfig.AIConfig) -> dict:
+    """Try each configured model: a setup check, then a tiny request. Keys come from the environment."""
+    import time
+
+    roles = {
+        "make": config.make,
+        **{f"task:{t}": c for t, c in config.tasks.items()},
+        "recall": config.recall,
+    }
+
+    async def one(choice: aiconfig.ModelChoice) -> dict:
+        started = time.monotonic()
+        try:
+            model = _model_for(choice)
+            await model.check()
+            await asyncio.wait_for(
+                model.complete("check", "Reply with JSON only.", "", 'Reply with {"ok": true}'), 90
+            )
+        except Exception as error:  # every failure becomes a message for Settings, never a crash
+            return {
+                "ok": False,
+                "provider": choice.provider,
+                "message": str(error).splitlines()[0][:200] or type(error).__name__,
+            }
+        return {
+            "ok": True,
+            "provider": getattr(model, "provider", choice.provider),
+            "name": model.name,
+            "model": model.model or "",
+            "seconds": round(time.monotonic() - started, 1),
+        }
+
+    results = await asyncio.gather(*(one(choice) for choice in roles.values()))
+    return dict(zip(roles, results, strict=True))
 
 
 def _grade_recall(args: argparse.Namespace) -> int:
@@ -219,6 +259,14 @@ def main(argv: list[str] | None = None) -> int:
         return _grade_recall(args)
     if args.signin:
         return _signin()
+    if args.signout:
+        from . import account
+
+        return account.sign_out()
+    if args.check_ai:
+        report = asyncio.run(_check_ai(args.config))
+        print("AI check: " + json.dumps(report, ensure_ascii=False))
+        return 0 if all(r["ok"] for r in report.values()) else 3
     if args.account:
         from . import account
 

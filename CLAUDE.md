@@ -148,7 +148,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
   per item when NotebookLM fails or hits its limit. Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
   `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup` (start Ollama, download
   the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in in a real browser; the
-  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--grade-recall` (stdin `{question, keyPoints, answer}`,
+  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`, `--check-ai` (tries every model in ai.json: prints
+  `AI check: {role: {ok, provider, name, model, seconds} | {ok: false, provider, message}}` for `make`, `task:<item>`, `recall`; exit 3 if any fail), `--grade-recall` (stdin `{question, keyPoints, answer}`,
   stdout `{covered:[bool], score, feedback, missing, by}`; one parallel check per key point, word matching as fallback).
   `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider, model, baseUrl},
   tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B], voiceQuality:"fast"|"best"}` (Rumik 4-bit, about twice as fast, or 8-bit);

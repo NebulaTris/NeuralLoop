@@ -108,5 +108,6 @@ class FakeModel:
             "video": lambda: _explainer(title),
             "condense": lambda: {"notes": f"- Key idea from this part ({len(source)} characters)."},
             "recall": lambda: _recall(prompt),
+            "check": lambda: {"ok": True},
         }
         return json.dumps(answers[kind]())
