@@ -5,7 +5,7 @@ CARGO_ENV ?=
 CLT := /Library/Developer/CommandLineTools/Library/Developer
 SWIFT_FLAGS := $(if $(findstring CommandLineTools,$(shell xcode-select -p 2>/dev/null)),-Xswiftc -F$(CLT)/Frameworks -Xlinker -F$(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/usr/lib,)
 
-.PHONY: setup test check lint site app runtime
+.PHONY: setup test check lint site app runtime mac
 
 setup:            ## install dev tools for every part
 	cd pipeline && $(PY) -m pip install -e ".[dev]" playwright && $(PY) -m playwright install chromium
@@ -36,3 +36,7 @@ app:              ## build the desktop app for this computer
 
 runtime:          ## self-contained runtime for the Mac app (build/runtime): Python, pipeline, Rumik, Ollama
 	scripts/build-runtime.sh
+
+mac:              ## build and open the SwiftUI Mac app (needs Xcode and XcodeGen: brew install xcodegen)
+	cd apple && xcodegen generate --quiet && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoop -configuration Debug -derivedDataPath build/dd build -quiet
+	open apple/build/dd/Build/Products/Debug/NeuralLoop.app

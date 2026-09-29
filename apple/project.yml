@@ -1,0 +1,38 @@
+# XcodeGen spec: `xcodegen` (or `make app-project`) writes NeuralLoop.xcodeproj; don't edit the project by hand.
+name: NeuralLoop
+options:
+  bundleIdPrefix: app.neuralloop
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  NeuralLoopCore:
+    path: .
+targets:
+  NeuralLoop:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: NeuralLoopCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: NeuralLoop
+        CFBundleShortVersionString: "0.2.0"
+        LSApplicationCategoryType: public.app-category.education
+        NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
+        # Development only: where the repo is, so the app can run the pipeline from source.
+        NeuralLoopRepo: "$(SRCROOT)/.."
+        ATSApplicationFontsPath: Fonts
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.neuralloop.books
+        PRODUCT_NAME: NeuralLoop
+        CODE_SIGN_IDENTITY: "-"          # ad-hoc: no Apple account needed ("Open Anyway" once)
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO           # the app runs the book pipeline, which a sandbox forbids
+        SWIFT_VERSION: "5.0"            # app target; the core package uses Swift 6
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: NO

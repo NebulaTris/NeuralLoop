@@ -341,7 +341,7 @@ POSES = {
     "study": pose_focus,
     "proud": pose_proud,
 }
-OUTPUTS = ("pipeline/site/pip-poses.js", "src/pip-poses.js")
+OUTPUTS = ("pipeline/site/pip-poses.js", "src/pip-poses.js", "apple/App/Resources/pip-poses.js")
 
 
 def build_js() -> str:

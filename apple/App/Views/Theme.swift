@@ -1,0 +1,51 @@
+// NeuralLoop's colours and type (the same tokens as the study site's styles.css), light and dark.
+
+import AppKit
+import SwiftUI
+
+enum Theme {
+    static func color(light: UInt32, dark: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                           blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        })
+    }
+
+    static let paper = color(light: 0xFFF7F2, dark: 0x1D1716)
+    static let surface = color(light: 0xFFFFFF, dark: 0x2A2220)
+    static let sunk = color(light: 0xFCEDE6, dark: 0x241D1B)
+    static let ink = color(light: 0x35251F, dark: 0xFBEFEA)
+    static let ink2 = color(light: 0x6E5A52, dark: 0xCDB9B1)
+    static let ink3 = color(light: 0xA08E86, dark: 0x9A867E)
+    static let line = color(light: 0xF1DDD3, dark: 0x3E3230)
+    static let accent = color(light: 0xE0683F, dark: 0xF2875F)
+    static let accentSoft = color(light: 0xFDE3D7, dark: 0x4A2B20)
+    static let mint = color(light: 0x3FA88A, dark: 0x5CCBA9)
+    static let mintSoft = color(light: 0xDDF3EA, dark: 0x1F3A33)
+    static let sky = color(light: 0x5C86E0, dark: 0x86A8F2)
+    static let skySoft = color(light: 0xE3ECFF, dark: 0x23304D)
+    static let butterSoft = color(light: 0xFCEFCF, dark: 0x3E331A)
+    static let rose = color(light: 0xE2577E, dark: 0xF07E9E)
+    static let roseSoft = color(light: 0xFDE2EA, dark: 0x462330)
+
+    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
+        .custom("Fredoka", size: size).weight(weight)
+    }
+
+    static func body(_ size: CGFloat = 15) -> Font { .custom("Atkinson Hyperlegible", size: size) }
+}
+
+/// A rounded card on the paper ground.
+struct CardBox<Content: View>: View {
+    var fill: Color = Theme.surface
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+    }
+}
