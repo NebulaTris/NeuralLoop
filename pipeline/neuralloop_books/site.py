@@ -1,4 +1,4 @@
-"""Write the study site for a book: its data file plus the site's static files."""
+"""Write a book's data (book.json for the app, book-data.js for the site) plus the site's static files."""
 
 import json
 import shutil
@@ -42,9 +42,12 @@ def build(out_dir: Path, state: BookState, options: dict) -> None:
         "chapters": [_chapter_payload(out_dir, c) for c in state.chapters],
         "graph": book_graph.build(state.chapters),
     }
-    (out_dir / "book-data.js").write_text(
-        "window.BOOK = " + json.dumps(data, ensure_ascii=False) + ";\n", encoding="utf-8"
-    )
+    payload = json.dumps(data, ensure_ascii=False)
+    (out_dir / "book-data.js").write_text("window.BOOK = " + payload + ";\n", encoding="utf-8")
+    # The native app reads book.json; written atomically so it never sees half a file.
+    tmp = out_dir / "book.json.tmp"
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(out_dir / "book.json")
     (out_dir / "knowledge-graph.json").write_text(
         json.dumps(data["graph"], indent=1, ensure_ascii=False), encoding="utf-8"
     )

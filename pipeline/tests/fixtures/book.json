@@ -1,0 +1,1000 @@
+{
+ "title": "sample book",
+ "source": "sample-book.epub",
+ "made": "2026-09-29 09:00",
+ "dryRun": true,
+ "engine": "local",
+ "provider": "fake",
+ "model": "fake",
+ "options": {
+  "audio": "deep-dive",
+  "video": "explainer",
+  "style": "kawaii",
+  "language": "en"
+ },
+ "chapters": [
+  {
+   "n": 1,
+   "title": "Why Systems Fail",
+   "pages": null,
+   "graph": {
+    "concepts": [
+     {
+      "id": "k0",
+      "name": "Basics",
+      "type": "concept",
+      "summary": "What 'Basics' means in Why Systems Fail.",
+      "detail": "A longer note about Basics.",
+      "complexity": "simple",
+      "layer": "l1"
+     },
+     {
+      "id": "k1",
+      "name": "Core trade-off",
+      "type": "concept",
+      "summary": "What 'Core trade-off' means in Why Systems Fail.",
+      "detail": "A longer note about Core trade-off.",
+      "complexity": "moderate",
+      "layer": "l1"
+     },
+     {
+      "id": "k2",
+      "name": "Failure modes",
+      "type": "concept",
+      "summary": "What 'Failure modes' means in Why Systems Fail.",
+      "detail": "A longer note about Failure modes.",
+      "complexity": "complex",
+      "layer": "l1"
+     },
+     {
+      "id": "k3",
+      "name": "Monitoring",
+      "type": "concept",
+      "summary": "What 'Monitoring' means in Why Systems Fail.",
+      "detail": "A longer note about Monitoring.",
+      "complexity": "simple",
+      "layer": "l1"
+     },
+     {
+      "id": "k4",
+      "name": "Design patterns",
+      "type": "concept",
+      "summary": "What 'Design patterns' means in Why Systems Fail.",
+      "detail": "A longer note about Design patterns.",
+      "complexity": "moderate",
+      "layer": "l2"
+     },
+     {
+      "id": "k5",
+      "name": "Keep it simple",
+      "type": "claim",
+      "summary": "What 'Keep it simple' means in Why Systems Fail.",
+      "detail": "A longer note about Keep it simple.",
+      "complexity": "complex",
+      "layer": "l2"
+     },
+     {
+      "id": "k6",
+      "name": "Testing",
+      "type": "concept",
+      "summary": "What 'Testing' means in Why Systems Fail.",
+      "detail": "A longer note about Testing.",
+      "complexity": "simple",
+      "layer": "l2"
+     }
+    ],
+    "layers": [
+     {
+      "id": "l1",
+      "name": "Foundations"
+     },
+     {
+      "id": "l2",
+      "name": "In practice"
+     }
+    ],
+    "edges": [
+     {
+      "source": "k1",
+      "target": "k0",
+      "type": "builds_on",
+      "description": "builds on"
+     },
+     {
+      "source": "k2",
+      "target": "k1",
+      "type": "depends_on",
+      "description": "depends on"
+     },
+     {
+      "source": "k3",
+      "target": "k2",
+      "type": "related",
+      "description": "related"
+     },
+     {
+      "source": "k4",
+      "target": "k1",
+      "type": "builds_on",
+      "description": "builds on"
+     },
+     {
+      "source": "k5",
+      "target": "k4",
+      "type": "contradicts",
+      "description": "contradicts"
+     },
+     {
+      "source": "k6",
+      "target": "k3",
+      "type": "exemplifies",
+      "description": "exemplifies"
+     }
+    ],
+    "tour": [
+     {
+      "title": "Start here",
+      "description": "The basic idea.",
+      "nodeIds": [
+       "k0"
+      ]
+     },
+     {
+      "title": "Where it breaks",
+      "description": "Trade-offs and failures.",
+      "nodeIds": [
+       "k1",
+       "k2"
+      ]
+     }
+    ]
+   },
+   "quiz": [
+    {
+     "q": "What is the main idea of \"Why Systems Fail\"?",
+     "options": [
+      "A core trade-off and when it matters",
+      "A list of unrelated facts",
+      "Only history",
+      "Nothing matters"
+     ],
+     "a": 0,
+     "hint": "Think about the trade-off.",
+     "why": [
+      "That's the chapter's central point.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues."
+     ]
+    },
+    {
+     "q": "What should you check first when something breaks?",
+     "options": [
+      "Simple engineering bugs",
+      "Rewrite everything",
+      "Ignore it",
+      "Blame the users"
+     ],
+     "a": 0,
+     "hint": "Think about the trade-off.",
+     "why": [
+      "That's the chapter's central point.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues."
+     ]
+    }
+   ],
+   "cards": [
+    {
+     "front": "Main idea of Why Systems Fail",
+     "back": "A core trade-off and when it matters."
+    },
+    {
+     "front": "First thing to check when it breaks",
+     "back": "Simple engineering bugs."
+    },
+    {
+     "front": "Why monitor?",
+     "back": "Problems show up before users complain."
+    }
+   ],
+   "mindmap": {
+    "name": "Why Systems Fail",
+    "children": [
+     {
+      "name": "Foundations",
+      "children": [
+       {
+        "name": "Key terms"
+       },
+       {
+        "name": "Core trade-off"
+       }
+      ]
+     },
+     {
+      "name": "In practice",
+      "children": [
+       {
+        "name": "Patterns"
+       },
+       {
+        "name": "Failure modes"
+       }
+      ]
+     },
+     {
+      "name": "Takeaways"
+     }
+    ]
+   },
+   "audio": "media/01-podcast.m4a",
+   "video": null,
+   "guide": [
+    {
+     "section": "Part one",
+     "level": "deep",
+     "why": "The core idea; everything later builds on it."
+    }
+   ],
+   "recall": [
+    {
+     "prompt": "In your own words, what is the main idea of \"Why Systems Fail\"?",
+     "keyPoints": [
+      "Names the core trade-off",
+      "Says when it matters",
+      "Gives a concrete example"
+     ]
+    },
+    {
+     "prompt": "Something breaks in production. What would you check first, and why?",
+     "keyPoints": [
+      "Rule out simple bugs first",
+      "Look at monitoring signals",
+      "Change one thing at a time"
+     ]
+    },
+    {
+     "prompt": "How would you explain this chapter to a new teammate in two minutes?",
+     "keyPoints": [
+      "Starts with the problem",
+      "Explains the key idea",
+      "Ends with one practical tip"
+     ]
+    }
+   ],
+   "explainer": {
+    "slides": [
+     {
+      "title": "Welcome to Why Systems Fail",
+      "points": [
+       "What this chapter is about"
+      ],
+      "narration": "Hi! I'm Pip. Let's explore Why Systems Fail together.",
+      "pose": "hop",
+      "audio": "media/01-explainer-01.m4a",
+      "duration": 0.333
+     },
+     {
+      "title": "The core trade-off",
+      "points": [
+       "Every choice costs something",
+       "Know when it matters"
+      ],
+      "narration": "Every design choice costs something. The trick is knowing when it matters.",
+      "pose": "study",
+      "audio": "media/01-explainer-02.m4a",
+      "duration": 0.385
+     },
+     {
+      "title": "When it breaks",
+      "points": [
+       "Check simple bugs first",
+       "Monitor early"
+      ],
+      "narration": "When it breaks, check simple bugs first. Monitor to hear about it early.",
+      "pose": "play",
+      "audio": "media/01-explainer-03.m4a",
+      "duration": 0.38
+     },
+     {
+      "title": "Recap",
+      "points": [
+       "Trade-offs",
+       "Simplicity",
+       "Monitoring"
+      ],
+      "narration": "You did it! Trade-offs, simplicity, and monitoring. See you next chapter.",
+      "pose": "proud",
+      "audio": "media/01-explainer-04.m4a",
+      "duration": 0.383
+     }
+    ]
+   },
+   "transcript": "media/01-podcast.json",
+   "read": {
+    "kind": "text",
+    "text": "# Why Systems Fail\n\n# Why Systems Fail\n\n## Part 1\n\nSystems fail because the world keeps moving. Engineers ship a snapshot and reality drifts away from it. Systems fail because the world keeps moving. Engineers ship a snapshot and reality drifts away from it. Systems fail because the world keeps moving. Engineers ship a snapshot and reality drifts away from it. Systems fail because the world keeps moving. Engineers ship a snapshot and reality drifts away from it. Systems fail because the world keeps moving. Engineers ship a snapshot and reality drifts away from it. Systems fail because the worl"
+   },
+   "status": {
+    "study": "done",
+    "graph": "done",
+    "quiz": "done",
+    "cards": "done",
+    "mindmap": "done",
+    "audio": "done",
+    "video": "done"
+   },
+   "notes": {
+    "study": "",
+    "graph": "",
+    "quiz": "",
+    "cards": "",
+    "mindmap": "",
+    "audio": "",
+    "video": ""
+   }
+  },
+  {
+   "n": 2,
+   "title": "Monitoring That Matters",
+   "pages": null,
+   "graph": {
+    "concepts": [
+     {
+      "id": "k0",
+      "name": "Basics",
+      "type": "concept",
+      "summary": "What 'Basics' means in Monitoring That Matters.",
+      "detail": "A longer note about Basics.",
+      "complexity": "simple",
+      "layer": "l1"
+     },
+     {
+      "id": "k1",
+      "name": "Core trade-off",
+      "type": "concept",
+      "summary": "What 'Core trade-off' means in Monitoring That Matters.",
+      "detail": "A longer note about Core trade-off.",
+      "complexity": "moderate",
+      "layer": "l1"
+     },
+     {
+      "id": "k2",
+      "name": "Failure modes",
+      "type": "concept",
+      "summary": "What 'Failure modes' means in Monitoring That Matters.",
+      "detail": "A longer note about Failure modes.",
+      "complexity": "complex",
+      "layer": "l1"
+     },
+     {
+      "id": "k3",
+      "name": "Monitoring",
+      "type": "concept",
+      "summary": "What 'Monitoring' means in Monitoring That Matters.",
+      "detail": "A longer note about Monitoring.",
+      "complexity": "simple",
+      "layer": "l1"
+     },
+     {
+      "id": "k4",
+      "name": "Design patterns",
+      "type": "concept",
+      "summary": "What 'Design patterns' means in Monitoring That Matters.",
+      "detail": "A longer note about Design patterns.",
+      "complexity": "moderate",
+      "layer": "l2"
+     },
+     {
+      "id": "k5",
+      "name": "Keep it simple",
+      "type": "claim",
+      "summary": "What 'Keep it simple' means in Monitoring That Matters.",
+      "detail": "A longer note about Keep it simple.",
+      "complexity": "complex",
+      "layer": "l2"
+     },
+     {
+      "id": "k6",
+      "name": "Testing",
+      "type": "concept",
+      "summary": "What 'Testing' means in Monitoring That Matters.",
+      "detail": "A longer note about Testing.",
+      "complexity": "simple",
+      "layer": "l2"
+     }
+    ],
+    "layers": [
+     {
+      "id": "l1",
+      "name": "Foundations"
+     },
+     {
+      "id": "l2",
+      "name": "In practice"
+     }
+    ],
+    "edges": [
+     {
+      "source": "k1",
+      "target": "k0",
+      "type": "builds_on",
+      "description": "builds on"
+     },
+     {
+      "source": "k2",
+      "target": "k1",
+      "type": "depends_on",
+      "description": "depends on"
+     },
+     {
+      "source": "k3",
+      "target": "k2",
+      "type": "related",
+      "description": "related"
+     },
+     {
+      "source": "k4",
+      "target": "k1",
+      "type": "builds_on",
+      "description": "builds on"
+     },
+     {
+      "source": "k5",
+      "target": "k4",
+      "type": "contradicts",
+      "description": "contradicts"
+     },
+     {
+      "source": "k6",
+      "target": "k3",
+      "type": "exemplifies",
+      "description": "exemplifies"
+     }
+    ],
+    "tour": [
+     {
+      "title": "Start here",
+      "description": "The basic idea.",
+      "nodeIds": [
+       "k0"
+      ]
+     },
+     {
+      "title": "Where it breaks",
+      "description": "Trade-offs and failures.",
+      "nodeIds": [
+       "k1",
+       "k2"
+      ]
+     }
+    ]
+   },
+   "quiz": [
+    {
+     "q": "What is the main idea of \"Monitoring That Matters\"?",
+     "options": [
+      "A core trade-off and when it matters",
+      "A list of unrelated facts",
+      "Only history",
+      "Nothing matters"
+     ],
+     "a": 0,
+     "hint": "Think about the trade-off.",
+     "why": [
+      "That's the chapter's central point.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues."
+     ]
+    },
+    {
+     "q": "What should you check first when something breaks?",
+     "options": [
+      "Simple engineering bugs",
+      "Rewrite everything",
+      "Ignore it",
+      "Blame the users"
+     ],
+     "a": 0,
+     "hint": "Think about the trade-off.",
+     "why": [
+      "That's the chapter's central point.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues.",
+      "Not what the chapter argues."
+     ]
+    }
+   ],
+   "cards": [
+    {
+     "front": "Main idea of Monitoring That Matters",
+     "back": "A core trade-off and when it matters."
+    },
+    {
+     "front": "First thing to check when it breaks",
+     "back": "Simple engineering bugs."
+    },
+    {
+     "front": "Why monitor?",
+     "back": "Problems show up before users complain."
+    }
+   ],
+   "mindmap": {
+    "name": "Monitoring That Matters",
+    "children": [
+     {
+      "name": "Foundations",
+      "children": [
+       {
+        "name": "Key terms"
+       },
+       {
+        "name": "Core trade-off"
+       }
+      ]
+     },
+     {
+      "name": "In practice",
+      "children": [
+       {
+        "name": "Patterns"
+       },
+       {
+        "name": "Failure modes"
+       }
+      ]
+     },
+     {
+      "name": "Takeaways"
+     }
+    ]
+   },
+   "audio": null,
+   "video": null,
+   "guide": [
+    {
+     "section": "Part one",
+     "level": "deep",
+     "why": "The core idea; everything later builds on it."
+    }
+   ],
+   "recall": [
+    {
+     "prompt": "In your own words, what is the main idea of \"Monitoring That Matters\"?",
+     "keyPoints": [
+      "Names the core trade-off",
+      "Says when it matters",
+      "Gives a concrete example"
+     ]
+    },
+    {
+     "prompt": "Something breaks in production. What would you check first, and why?",
+     "keyPoints": [
+      "Rule out simple bugs first",
+      "Look at monitoring signals",
+      "Change one thing at a time"
+     ]
+    },
+    {
+     "prompt": "How would you explain this chapter to a new teammate in two minutes?",
+     "keyPoints": [
+      "Starts with the problem",
+      "Explains the key idea",
+      "Ends with one practical tip"
+     ]
+    }
+   ],
+   "explainer": null,
+   "transcript": null,
+   "read": {
+    "kind": "text",
+    "text": "# Monitoring That Matters\n\n# Monitoring That Matters\n\n## Part 1\n\nGood monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitoring watches inputs and outputs, not only errors. Alert on what users feel. Good monitori"
+   },
+   "status": {
+    "study": "done",
+    "graph": "done",
+    "quiz": "done",
+    "cards": "done",
+    "mindmap": "done",
+    "audio": "skipped",
+    "video": "skipped"
+   },
+   "notes": {
+    "study": "",
+    "graph": "",
+    "quiz": "",
+    "cards": "",
+    "mindmap": "",
+    "audio": "",
+    "video": ""
+   }
+  },
+  {
+   "n": 3,
+   "title": "Designing for Change",
+   "pages": null,
+   "graph": null,
+   "quiz": null,
+   "cards": null,
+   "mindmap": null,
+   "audio": null,
+   "video": null,
+   "guide": null,
+   "recall": null,
+   "explainer": null,
+   "transcript": null,
+   "read": {
+    "kind": "text",
+    "text": "# Designing for Change\n\n# Designing for Change\n\n## Part 1\n\nDesigns that expect change isolate decisions behind boundaries so parts can be swapped. Designs that expect change isolate decisions behind boundaries so parts can be swapped. Designs that expect change isolate decisions behind boundaries so parts can be swapped. Designs that expect change isolate decisions behind boundaries so parts can be swapped. Designs that expect change isolate decisions behind boundaries so parts can be swapped. Designs that expect change isolate decisions behind boundaries so parts can be swapped. Designs that "
+   },
+   "status": {
+    "study": "skipped",
+    "graph": "skipped",
+    "quiz": "skipped",
+    "cards": "skipped",
+    "mindmap": "skipped",
+    "audio": "skipped",
+    "video": "skipped"
+   },
+   "notes": {
+    "study": "",
+    "graph": "",
+    "quiz": "",
+    "cards": "",
+    "mindmap": "",
+    "audio": "",
+    "video": ""
+   }
+  },
+  {
+   "n": 4,
+   "title": "Testing Without Fear",
+   "pages": null,
+   "graph": null,
+   "quiz": null,
+   "cards": null,
+   "mindmap": null,
+   "audio": null,
+   "video": null,
+   "guide": null,
+   "recall": null,
+   "explainer": null,
+   "transcript": null,
+   "read": {
+    "kind": "text",
+    "text": "# Testing Without Fear\n\n# Testing Without Fear\n\n## Part 1\n\nFast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refactor boldly. Tests are an executable spec. Fast tests with clear names let you refacto"
+   },
+   "status": {
+    "study": "skipped",
+    "graph": "skipped",
+    "quiz": "skipped",
+    "cards": "skipped",
+    "mindmap": "skipped",
+    "audio": "skipped",
+    "video": "skipped"
+   },
+   "notes": {
+    "study": "",
+    "graph": "",
+    "quiz": "",
+    "cards": "",
+    "mindmap": "",
+    "audio": "",
+    "video": ""
+   }
+  }
+ ],
+ "graph": {
+  "version": "1.0.0",
+  "kind": "knowledge",
+  "project": {
+   "name": "NeuralLoop book map",
+   "languages": [],
+   "frameworks": [],
+   "description": "",
+   "analyzedAt": "2026-09-29",
+   "gitCommitHash": ""
+  },
+  "nodes": [
+   {
+    "id": "c1:k0",
+    "name": "Basics",
+    "type": "concept",
+    "summary": "What 'Basics' means in Why Systems Fail.",
+    "detail": "A longer note about Basics.",
+    "complexity": "simple",
+    "chapter": 1,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c1:k1",
+    "name": "Core trade-off",
+    "type": "concept",
+    "summary": "What 'Core trade-off' means in Why Systems Fail.",
+    "detail": "A longer note about Core trade-off.",
+    "complexity": "moderate",
+    "chapter": 1,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c1:k2",
+    "name": "Failure modes",
+    "type": "concept",
+    "summary": "What 'Failure modes' means in Why Systems Fail.",
+    "detail": "A longer note about Failure modes.",
+    "complexity": "complex",
+    "chapter": 1,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c1:k3",
+    "name": "Monitoring",
+    "type": "concept",
+    "summary": "What 'Monitoring' means in Why Systems Fail.",
+    "detail": "A longer note about Monitoring.",
+    "complexity": "simple",
+    "chapter": 1,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c1:k4",
+    "name": "Design patterns",
+    "type": "concept",
+    "summary": "What 'Design patterns' means in Why Systems Fail.",
+    "detail": "A longer note about Design patterns.",
+    "complexity": "moderate",
+    "chapter": 1,
+    "layer": "l2",
+    "layerName": "In practice"
+   },
+   {
+    "id": "c1:k5",
+    "name": "Keep it simple",
+    "type": "claim",
+    "summary": "What 'Keep it simple' means in Why Systems Fail.",
+    "detail": "A longer note about Keep it simple.",
+    "complexity": "complex",
+    "chapter": 1,
+    "layer": "l2",
+    "layerName": "In practice"
+   },
+   {
+    "id": "c1:k6",
+    "name": "Testing",
+    "type": "concept",
+    "summary": "What 'Testing' means in Why Systems Fail.",
+    "detail": "A longer note about Testing.",
+    "complexity": "simple",
+    "chapter": 1,
+    "layer": "l2",
+    "layerName": "In practice"
+   },
+   {
+    "id": "c2:k0",
+    "name": "Basics",
+    "type": "concept",
+    "summary": "What 'Basics' means in Monitoring That Matters.",
+    "detail": "A longer note about Basics.",
+    "complexity": "simple",
+    "chapter": 2,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c2:k1",
+    "name": "Core trade-off",
+    "type": "concept",
+    "summary": "What 'Core trade-off' means in Monitoring That Matters.",
+    "detail": "A longer note about Core trade-off.",
+    "complexity": "moderate",
+    "chapter": 2,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c2:k2",
+    "name": "Failure modes",
+    "type": "concept",
+    "summary": "What 'Failure modes' means in Monitoring That Matters.",
+    "detail": "A longer note about Failure modes.",
+    "complexity": "complex",
+    "chapter": 2,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c2:k3",
+    "name": "Monitoring",
+    "type": "concept",
+    "summary": "What 'Monitoring' means in Monitoring That Matters.",
+    "detail": "A longer note about Monitoring.",
+    "complexity": "simple",
+    "chapter": 2,
+    "layer": "l1",
+    "layerName": "Foundations"
+   },
+   {
+    "id": "c2:k4",
+    "name": "Design patterns",
+    "type": "concept",
+    "summary": "What 'Design patterns' means in Monitoring That Matters.",
+    "detail": "A longer note about Design patterns.",
+    "complexity": "moderate",
+    "chapter": 2,
+    "layer": "l2",
+    "layerName": "In practice"
+   },
+   {
+    "id": "c2:k5",
+    "name": "Keep it simple",
+    "type": "claim",
+    "summary": "What 'Keep it simple' means in Monitoring That Matters.",
+    "detail": "A longer note about Keep it simple.",
+    "complexity": "complex",
+    "chapter": 2,
+    "layer": "l2",
+    "layerName": "In practice"
+   },
+   {
+    "id": "c2:k6",
+    "name": "Testing",
+    "type": "concept",
+    "summary": "What 'Testing' means in Monitoring That Matters.",
+    "detail": "A longer note about Testing.",
+    "complexity": "simple",
+    "chapter": 2,
+    "layer": "l2",
+    "layerName": "In practice"
+   }
+  ],
+  "edges": [
+   {
+    "source": "c1:k1",
+    "target": "c1:k0",
+    "type": "builds_on",
+    "description": "builds on"
+   },
+   {
+    "source": "c1:k2",
+    "target": "c1:k1",
+    "type": "depends_on",
+    "description": "depends on"
+   },
+   {
+    "source": "c1:k3",
+    "target": "c1:k2",
+    "type": "related",
+    "description": "related"
+   },
+   {
+    "source": "c1:k4",
+    "target": "c1:k1",
+    "type": "builds_on",
+    "description": "builds on"
+   },
+   {
+    "source": "c1:k5",
+    "target": "c1:k4",
+    "type": "contradicts",
+    "description": "contradicts"
+   },
+   {
+    "source": "c1:k6",
+    "target": "c1:k3",
+    "type": "exemplifies",
+    "description": "exemplifies"
+   },
+   {
+    "source": "c2:k1",
+    "target": "c2:k0",
+    "type": "builds_on",
+    "description": "builds on"
+   },
+   {
+    "source": "c2:k2",
+    "target": "c2:k1",
+    "type": "depends_on",
+    "description": "depends on"
+   },
+   {
+    "source": "c2:k3",
+    "target": "c2:k2",
+    "type": "related",
+    "description": "related"
+   },
+   {
+    "source": "c2:k4",
+    "target": "c2:k1",
+    "type": "builds_on",
+    "description": "builds on"
+   },
+   {
+    "source": "c2:k5",
+    "target": "c2:k4",
+    "type": "contradicts",
+    "description": "contradicts"
+   },
+   {
+    "source": "c2:k6",
+    "target": "c2:k3",
+    "type": "exemplifies",
+    "description": "exemplifies"
+   },
+   {
+    "source": "c2:k0",
+    "target": "c1:k0",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k1",
+    "target": "c1:k1",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k2",
+    "target": "c1:k2",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k3",
+    "target": "c1:k3",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k4",
+    "target": "c1:k4",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k5",
+    "target": "c1:k5",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   },
+   {
+    "source": "c2:k6",
+    "target": "c1:k6",
+    "type": "similar_to",
+    "description": "same idea in another chapter"
+   }
+  ],
+  "layers": [
+   {
+    "id": "c1",
+    "name": "1. Why Systems Fail"
+   },
+   {
+    "id": "c2",
+    "name": "2. Monitoring That Matters"
+   }
+  ],
+  "tour": [
+   {
+    "title": "Chapter 1: Start here",
+    "description": "The basic idea.",
+    "nodeIds": [
+     "c1:k0"
+    ]
+   },
+   {
+    "title": "Chapter 2: Start here",
+    "description": "The basic idea.",
+    "nodeIds": [
+     "c2:k0"
+    ]
+   }
+  ]
+ }
+}

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -153,3 +154,20 @@ def test_every_engine_builds_the_book_map(options):
     graph = data["graph"]
     assert graph["nodes"] and graph["edges"] and graph["tour"]
     assert all(chapter["graph"]["concepts"] for chapter in data["chapters"])
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "book.json"
+
+
+def test_book_json_matches_the_study_site_payload(options):
+    run_local(options)
+    assert json.loads((options.out / "book.json").read_text()) == book_data(options.out)
+
+
+def test_the_shared_fixture_still_has_every_field_the_pipeline_writes(options):
+    """apple/Tests decode this fixture; when the pipeline's shape changes, regenerate it (fixtures/README)."""
+    run_local(options)
+    made, fixture = book_data(options.out), json.loads(FIXTURE.read_text())
+    assert set(made) == set(fixture)
+    assert set(made["chapters"][0]) == set(fixture["chapters"][0])
+    assert set(made["graph"]) == set(fixture["graph"])
