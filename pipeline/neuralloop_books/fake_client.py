@@ -13,6 +13,7 @@ from .config import AUDIO_FORMATS, VIDEO_FORMATS, VIDEO_STYLES
 
 ENUMS = SimpleNamespace(
     AudioFormat=Enum("AudioFormat", list(AUDIO_FORMATS.values())),
+    AudioLength=Enum("AudioLength", ["SHORT", "DEFAULT", "LONG"]),
     VideoFormat=Enum("VideoFormat", list(VIDEO_FORMATS.values())),
     VideoStyle=Enum("VideoStyle", list(VIDEO_STYLES.values())),
     MindMapKind=Enum("MindMapKind", ["NOTE_BACKED", "INTERACTIVE"]),

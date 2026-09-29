@@ -64,6 +64,12 @@ PODCAST_FORMATS = {
     "debate": "a lively 8-10 minute debate where the hosts take different sides on the chapter's main claims",
 }
 
+PODCAST_LENGTHS = {
+    "short": " Keep it short and focused: about 5-7 minutes in all.",
+    "default": "",
+    "long": " Take your time: about 18-22 minutes in all.",
+}
+
 PODCAST = """Write a two-host podcast script about the chapter "{title}": {format}. {instructions}
 Host A is {host_a}, who leads and asks; host B is {host_b}, who explains and adds examples. They're curious, kind,
 and a little playful, and they call each other by name (never say "A", "B", "host", or "speaker" aloud).

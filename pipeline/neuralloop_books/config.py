@@ -7,6 +7,19 @@ TASKS = ("study", "graph", "quiz", "cards", "mindmap", "audio", "video")
 MEDIA_TASKS = frozenset({"audio", "video"})
 
 AUDIO_FORMATS = {"deep-dive": "DEEP_DIVE", "brief": "BRIEF", "critique": "CRITIQUE", "debate": "DEBATE"}
+AUDIO_LENGTHS = ("auto", "short", "default", "long")
+SHORT_CHAPTER_CHARS = (
+    30_000  # about 12 pages: less than this makes a short podcast, which is also quicker to make
+)
+
+
+def audio_length(choice: str, chars: int) -> str:
+    """The podcast length for a chapter: the person's choice, or ("auto") short for short chapters."""
+    if choice in ("short", "default", "long"):
+        return choice
+    return "short" if chars <= SHORT_CHAPTER_CHARS else "default"
+
+
 VIDEO_FORMATS = {"explainer": "EXPLAINER", "brief": "BRIEF", "short": "SHORT"}
 VIDEO_STYLES = {
     "auto": "AUTO_SELECT",

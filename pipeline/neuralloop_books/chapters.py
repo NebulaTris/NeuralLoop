@@ -304,3 +304,15 @@ def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) ->
 
     cleaned = _IMAGE_REF.sub(replace, text)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+PAGE_CHARS = 2_500  # a typical book page
+
+
+def chapter_size(chapter: dict, out_dir: Path) -> int:
+    """About how many characters a chapter has: from its pages (PDF) or its Markdown text (EPUB)."""
+    pages = chapter.get("pages")
+    if chapter["file"].endswith(".pdf") and pages:
+        return (pages[1] - pages[0] + 1) * PAGE_CHARS
+    file = out_dir / "chapters" / chapter["file"]
+    return len(file.read_text(encoding="utf-8")) if file.exists() else 0

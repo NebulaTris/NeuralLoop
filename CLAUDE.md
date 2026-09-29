@@ -145,7 +145,7 @@ permissions across rebuilds; `make mac` uses it) · `scripts/package-mac.sh` (`m
 
 - **Pipeline CLI** (used by `src-tauri/src/pipeline.rs`): `nl_book.py BOOK --out DIR --no-open --media SPEC --style S --audio A
   --video V --language L [--engine auto|local|notebooklm] [--provider auto|anthropic|openai|openrouter|custom|ollama|opencode|hermes|fake]
-  [--model M] [--base-url URL] [--context CHARS] [--speech auto|rumik|fake] [--voices A,B] [--dry-run] [--retry]`.
+  [--model M] [--base-url URL] [--context CHARS] [--audio-length auto|short|default|long] [--speech auto|rumik|fake] [--voices A,B] [--dry-run] [--retry]`.
   `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless a key is set) for the whole run when not, and
   per item when NotebookLM fails or hits its limit (a stale NotebookLM session is refreshed and the item
   retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
@@ -156,7 +156,8 @@ permissions across rebuilds; `make mac` uses it) · `scripts/package-mac.sh` (`m
   `AI check: {role: {ok, provider, name, model, seconds} | {ok: false, provider, message}}` for `make`, `task:<item>`, `recall`; exit 3 if any fail), `--grade-recall` (stdin `{question, keyPoints, answer}`,
   stdout `{covered:[bool], score, feedback, missing, by}`; one parallel check per key point, word matching as fallback).
   `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider, model, baseUrl},
-  tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B], voiceQuality:"fast"|"best"}` (Rumik 4-bit, about twice as fast, or 8-bit);
+  tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B], voiceQuality:"fast"|"best", audioLength:"auto"|"short"|"default"|"long"}` (Rumik 4-bit, about twice as fast, or 8-bit;
+  podcast length for NotebookLM and the local engine, `auto` = short for chapters under ~30,000 characters);
   flags override it. Progress lines on stdout:
   `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM couldn't (…); making it with X`,
   `  … chapter N task: {Engine} limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`. Exit 3 = setup needed.

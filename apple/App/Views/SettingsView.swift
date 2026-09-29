@@ -430,6 +430,19 @@ struct VoicesPage: View {
                            selected: settings.config.voiceQuality == .best) { settings.config.voiceQuality = .best }
             }
         }
+        SettingsCard(title: "Podcast length",
+                     note: "Shorter podcasts are also quicker to make, with NotebookLM and with your own AI.") {
+            HStack(spacing: 10) {
+                ChoiceCard(icon: "wand.and.stars", title: "Fits the chapter", detail: "Short for short chapters, standard for long ones.",
+                           selected: settings.config.audioLength == .auto) { settings.config.audioLength = .auto }
+                ChoiceCard(icon: "hare", title: "Short", detail: "About 5 to 7 minutes.",
+                           selected: settings.config.audioLength == .short) { settings.config.audioLength = .short }
+                ChoiceCard(icon: "headphones", title: "Standard", detail: "About 10 to 15 minutes.",
+                           selected: settings.config.audioLength == .default) { settings.config.audioLength = .default }
+                ChoiceCard(icon: "tortoise", title: "Long", detail: "About 20 minutes, for a deep dive.",
+                           selected: settings.config.audioLength == .long) { settings.config.audioLength = .long }
+            }
+        }
         SettingsCard(title: "Podcast hosts") {
             Field(label: "Asks") {
                 Picker("", selection: Binding(get: { settings.config.voices[0] }, set: { settings.config.voices[0] = $0 })) {

@@ -12,6 +12,7 @@ from pathlib import Path
 from . import aiconfig
 from .config import (
     AUDIO_FORMATS,
+    AUDIO_LENGTHS,
     DEFAULT_INSTRUCTIONS,
     LOCAL_PROVIDERS,
     PROVIDERS,
@@ -36,6 +37,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--media", default="1-3", help='chapters that also get a podcast + video (default "1-3")'
     )
     parser.add_argument("--audio", choices=[*AUDIO_FORMATS, "none"], default="deep-dive")
+    parser.add_argument(
+        "--audio-length", choices=AUDIO_LENGTHS, help="podcast length (default from ai.json, else auto)"
+    )
     parser.add_argument("--video", choices=[*VIDEO_FORMATS, "none"], default="explainer")
     parser.add_argument(
         "--style", choices=list(VIDEO_STYLES), default="kawaii", help="video look (kawaii matches Pip)"
@@ -306,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         chapters=args.chapters,
         media=args.media,
         audio=args.audio,
+        audio_length=args.audio_length or args.config.audio_length,
         video=args.video,
         style=args.style,
         language=args.language,

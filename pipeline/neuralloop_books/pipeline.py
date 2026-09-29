@@ -24,6 +24,7 @@ class Options:
     chapters: str = "all"
     media: str = "1-3"
     audio: str = "deep-dive"
+    audio_length: str = "auto"  # "auto" = short podcasts for short chapters (quicker to make)
     video: str = "explainer"
     style: str = "kawaii"
     language: str = "en"

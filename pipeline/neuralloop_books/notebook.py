@@ -10,7 +10,16 @@ from pathlib import Path
 from types import ModuleType
 
 from . import convert, prompts
-from .config import AUDIO_FORMATS, AUDIO_TIMEOUT, LIGHT_TIMEOUT, VIDEO_FORMATS, VIDEO_STYLES, VIDEO_TIMEOUT
+from .chapters import chapter_size
+from .config import (
+    AUDIO_FORMATS,
+    AUDIO_TIMEOUT,
+    LIGHT_TIMEOUT,
+    VIDEO_FORMATS,
+    VIDEO_STYLES,
+    VIDEO_TIMEOUT,
+    audio_length,
+)
 
 _QUOTA_HINTS = (
     "ratelimit",
@@ -59,6 +68,7 @@ class MediaOptions:
     style: str
     language: str
     instructions: str
+    length: str = "auto"
 
 
 class ChapterMaker:
@@ -137,6 +147,9 @@ class ChapterMaker:
             language=self.media.language,
             instructions=self.media.instructions,
             audio_format=self.enums.AudioFormat[AUDIO_FORMATS[self.media.audio]],
+            audio_length=self.enums.AudioLength[
+                audio_length(self.media.length, chapter_size(chapter, self.out_dir)).upper()
+            ],
         )
         await self.client.artifacts.wait_for_completion(
             self.notebook_id, status.task_id, timeout=AUDIO_TIMEOUT

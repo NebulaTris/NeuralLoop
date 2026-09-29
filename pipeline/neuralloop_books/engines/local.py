@@ -10,7 +10,8 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from .. import audio, context, convert, prompts
-from ..config import CONTEXT_CHARS
+from ..chapters import chapter_size
+from ..config import CONTEXT_CHARS, audio_length
 from ..notebook import UnusableAnswer
 from ..state import BookState
 
@@ -59,10 +60,12 @@ class LocalEngine:
         instructions: str,
         task_models: dict | None = None,
         before_start=None,
+        audio_length: str = "auto",
     ):
         self.before_start = before_start  # e.g. start Ollama; awaited in prepare(), inside the run's loop
         self.model, self.speech, self.out_dir, self.budget = model, speech, out_dir, budget
         self.audio_format, self.video_format, self.instructions = audio, video, instructions
+        self.audio_length = audio_length
         self.system = prompts.SYSTEM.format(language=LANGUAGES.get(language, language))
         self.name = model.name
         self.task_models = task_models or {}  # a different model for some items, e.g. {"quiz": claude}
@@ -86,6 +89,7 @@ class LocalEngine:
             opts.out,
             budget=budget,
             audio=opts.audio,
+            audio_length=getattr(opts, "audio_length", "auto"),
             video=opts.video,
             language=opts.language,
             instructions=opts.instructions,
@@ -225,6 +229,9 @@ class LocalEngine:
 
     async def _audio(self, chapter):
         style = prompts.PODCAST_FORMATS.get(self.audio_format, prompts.PODCAST_FORMATS["deep-dive"])
+        if self.audio_format != "brief":  # a brief is already short
+            length = audio_length(self.audio_length, chapter_size(chapter, self.out_dir))
+            style += prompts.PODCAST_LENGTHS[length]
         script = await self._ask(
             "audio",
             chapter,

@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .config import AUDIO_LENGTHS
+
 DEFAULT_RECALL_MODEL = "gemma2:2b"  # small and quick: grading one answer should feel instant
 
 
@@ -26,6 +28,9 @@ class AIConfig:
     tasks: dict = field(default_factory=dict)  # task -> ModelChoice, e.g. {"quiz": ModelChoice("anthropic")}
     recall: ModelChoice = field(default_factory=lambda: ModelChoice("ollama", DEFAULT_RECALL_MODEL))
     voices: tuple[str, str] = ("Ira", "Zoya")
+    audio_length: str = (
+        "auto"  # podcast length: "auto" (short for short chapters), "short", "default", "long"
+    )
     voice_quality: str = "fast"  # "fast" (Rumik 4-bit, ~2x quicker) or "best" (8-bit)
 
     def task(self, name: str) -> ModelChoice:
@@ -66,4 +71,5 @@ def load(path: Path | None = None) -> AIConfig:
         recall=_choice(data.get("recall"), defaults.recall),
         voices=tuple(voices) if isinstance(voices, list) and len(voices) == 2 else defaults.voices,
         voice_quality="best" if data.get("voiceQuality") == "best" else "fast",
+        audio_length=data.get("audioLength") if data.get("audioLength") in AUDIO_LENGTHS else "auto",
     )

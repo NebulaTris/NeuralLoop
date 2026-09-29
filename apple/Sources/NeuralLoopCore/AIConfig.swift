@@ -17,6 +17,9 @@ public enum Engine: String, Codable, CaseIterable, Sendable {
 
 public enum VoiceQuality: String, Codable, Sendable { case fast, best }
 
+/// How long podcasts are. "auto" makes short ones for short chapters (they're quicker to make, too).
+public enum AudioLength: String, Codable, Sendable, CaseIterable { case auto, short, `default`, long }
+
 public struct ModelChoice: Codable, Equatable, Sendable {
     public var provider: String
     public var model: String?
@@ -33,10 +36,11 @@ public struct AIConfig: Codable, Equatable, Sendable {
     public var recall = ModelChoice(provider: "ollama", model: "gemma2:2b")
     public var voices = ["Ira", "Zoya"]
     public var voiceQuality: VoiceQuality = .fast
+    public var audioLength: AudioLength = .auto
 
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case engine, make, tasks, recall, voices, voiceQuality }
+    enum CodingKeys: String, CodingKey { case engine, make, tasks, recall, voices, voiceQuality, audioLength }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AIConfig()
@@ -47,6 +51,7 @@ public struct AIConfig: Codable, Equatable, Sendable {
         let v = (try? c.decodeIfPresent([String].self, forKey: .voices)) ?? d.voices
         voices = v.count == 2 ? v : d.voices
         voiceQuality = (try? c.decodeIfPresent(VoiceQuality.self, forKey: .voiceQuality)) ?? d.voiceQuality
+        audioLength = (try? c.decodeIfPresent(AudioLength.self, forKey: .audioLength)) ?? d.audioLength
     }
 }
 

@@ -56,7 +56,9 @@ class NotebookLMEngine:
             chapter["sourceId"] = source.id
             state.save()
             opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
-        media = MediaOptions(opts.audio, opts.video, opts.style, opts.language, opts.instructions)
+        media = MediaOptions(
+            opts.audio, opts.video, opts.style, opts.language, opts.instructions, opts.audio_length
+        )
         self.maker = ChapterMaker(client, self.enums, notebook_id, opts.out, media)
 
     async def make(self, task: str, chapter: dict) -> dict:
