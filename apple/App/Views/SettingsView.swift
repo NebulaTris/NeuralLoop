@@ -1,16 +1,17 @@
-// Settings (⌘,): a warm, NeuralLoop-styled window with a sidebar — Account, Your AI, Voices.
+// Settings (⌘,): a warm, NeuralLoop-styled window with a sidebar — Account, Your AI, Voices, Nudges.
 
 import NeuralLoopCore
 import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case account = "Account", ai = "Your AI", voices = "Voices"
+    case account = "Account", ai = "Your AI", voices = "Voices", nudges = "Nudges"
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .account: "person.crop.circle.fill"
         case .ai: "sparkles"
         case .voices: "waveform"
+        case .nudges: "bell.badge"
         }
     }
     var blurb: String {
@@ -18,6 +19,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .account: "Google sign-in for NotebookLM"
         case .ai: "Engine, models, and keys"
         case .voices: "Rumik's podcast voices"
+        case .nudges: "Gentle reminders from Pip"
         }
     }
 }
@@ -40,6 +42,7 @@ struct SettingsView: View {
                     case .account: AccountPage()
                     case .ai: AIPage()
                     case .voices: VoicesPage()
+                    case .nudges: NudgesPage()
                     }
                 }
                 .padding(28)
@@ -190,6 +193,7 @@ struct AIPage: View {
                 if let result = settings.check[role] { CheckRow(role: role, result: result) }
             }
             if !settings.checkNote.isEmpty { Text(settings.checkNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
+            if !settings.keyNote.isEmpty { Text(settings.keyNote).font(Theme.body(12)).foregroundStyle(Theme.rose) }
         }
     }
 
@@ -249,6 +253,7 @@ struct ChoiceCard: View {
 
 /// Provider cards, then the model, address, and key for the chosen one.
 struct ModelPicker: View {
+    @Environment(AISettings.self) private var settings
     let title: String
     let note: String
     @Binding var choice: ModelChoice
@@ -307,7 +312,8 @@ struct ModelPicker: View {
 
     private func status(_ p: ProviderPreset) -> String {
         guard let variable = p.keyVariable else { return p.id == "ollama" ? "Free, on this Mac" : "Uses its own setup" }
-        if !(keys[variable] ?? "").isEmpty { return "Key saved" }
+        if settings.isSaved(variable) { return "Key saved" }
+        if !(keys[variable] ?? "").isEmpty { return "Not saved yet" }
         if p.id == "lmstudio" { return "Free, on this Mac" }
         return p.keyOptional ? "Your own address" : "Needs a key"
     }
@@ -411,6 +417,50 @@ struct CheckRow: View {
         if role == "recall" { return "Recall checker" }
         let id = role.replacingOccurrences(of: "task:", with: "")
         return AISettings.items.first { $0.id == id }?.name ?? id
+    }
+}
+
+// MARK: Nudges
+
+struct NudgesPage: View {
+    @State private var settings = Nudger.settings
+    @State private var note = ""
+
+    var body: some View {
+        SettingsCard(title: "Let Pip nudge me",
+                     note: "At most one a day, only when there's something small worth doing: cards that are due, or a chapter loop you left halfway. Never during quiet hours. If you skip two in a row, Pip backs off.") {
+            Toggle("Gentle nudges", isOn: $settings.enabled).toggleStyle(.switch)
+            Field(label: "Quiet from") {
+                Picker("", selection: $settings.quietStart) { ForEach(0..<24, id: \.self) { Text(Self.hour($0)).tag($0) } }
+                    .labelsHidden().frame(width: 120)
+                Text("until").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                Picker("", selection: $settings.quietEnd) { ForEach(0..<24, id: \.self) { Text(Self.hour($0)).tag($0) } }
+                    .labelsHidden().frame(width: 120)
+            }
+            .disabled(!settings.enabled)
+            HStack {
+                Button("Send a test nudge") {
+                    Nudger.send(Nudge(title: "🐾 Hi from Pip", body: "This is how a nudge looks. Pip will only ever send one a day."))
+                    note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
+                }
+                Button("Pause until tomorrow") {
+                    Nudger.settings = settings
+                    Nudger.pauseUntilTomorrow()
+                    settings = Nudger.settings
+                    note = "Nudges paused until tomorrow. Pip will be quiet."
+                }
+            }
+            if settings.pausedUntil > Date().timeIntervalSince1970 * 1000 {
+                Text("Paused until \(Date(timeIntervalSince1970: settings.pausedUntil / 1000).formatted(date: .abbreviated, time: .shortened)).")
+                    .font(Theme.body(12)).foregroundStyle(Theme.ink3)
+            }
+            if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true) }
+        }
+        .onChange(of: settings) { Nudger.settings = settings }
+    }
+
+    static func hour(_ h: Int) -> String {
+        Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date())?.formatted(date: .omitted, time: .shortened) ?? "\(h):00"
     }
 }
 

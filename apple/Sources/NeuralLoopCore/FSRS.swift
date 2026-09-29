@@ -1,4 +1,4 @@
-// FSRS-4.5 spaced-repetition scheduler: the same rules as pipeline/site/src/core/fsrs.js.
+// FSRS-4.5 spaced-repetition scheduler: the the same rules the study site used, kept exact by FSRSTests.
 
 import Foundation
 

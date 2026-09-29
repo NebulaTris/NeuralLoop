@@ -15,14 +15,14 @@ struct ListenStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Watch").font(Theme.display(20))
-            if let video = chapter.video {
-                ChapterVideo(url: session.file(video))
+            if let video = chapter.video, let url = session.file(video) {
+                ChapterVideo(url: url)
             } else {
                 NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id)
             }
             Text("Listen").font(Theme.display(20))
-            if let audio = chapter.audio {
-                PodcastPlayer(url: session.file(audio), transcript: chapter.transcript.map(session.file))
+            if let audio = chapter.audio, let url = session.file(audio) {
+                PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file))
             } else {
                 NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
             }
@@ -190,9 +190,9 @@ struct ReadStep: View {
             }
             switch chapter.read {
             case .pdf(let file):
-                PDFReader(url: session.file(file)).frame(minHeight: 640)
+                if let url = session.file(file) { PDFReader(url: url).frame(minHeight: 640) }
             case .text(let text):
-                ReaderText(text: text, folder: session.file("chapters"), guide: chapter.guide)
+                ReaderText(text: text, folder: session.entry.folder.appendingPathComponent("chapters"), guide: chapter.guide)
             }
         }
     }
@@ -278,8 +278,26 @@ struct RecallStep: View {
     @State private var feedback = ""
     @State private var checkedBy = ""
     @State private var checking = false
+    @State private var showQuiz = UserDefaults.standard.bool(forKey: "NLQuiz")  // development: `-NLQuiz YES`
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !chapter.quiz.isEmpty {
+                Picker("Recall", selection: $showQuiz) {
+                    Text("In your own words").tag(false)
+                    Text("Quiz").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 320)
+            }
+            if showQuiz {
+                QuizView(session: session, chapter: chapter)
+            } else {
+                ownWords
+            }
+        }
+    }
+
+    @ViewBuilder private var ownWords: some View {
         if chapter.recall.isEmpty {
             NotReady(what: "Recall questions", status: chapter.status["study"], note: chapter.notes["study"], bookId: session.entry.id)
         } else {
@@ -298,6 +316,8 @@ struct RecallStep: View {
                     if checking { ProgressView().controlSize(.small) }
                     if index + 1 < chapter.recall.count {
                         Button("Next question") { index += 1; answer = ""; covered = nil; feedback = "" }
+                    } else if !chapter.quiz.isEmpty, covered != nil {
+                        Button("On to the quiz") { showQuiz = true }
                     }
                 }
                 if let covered {
@@ -324,7 +344,7 @@ extension RecallStep {
         defer { checking = false }
         let request: [String: Any] = ["question": prompt.prompt, "keyPoints": prompt.keyPoints, "answer": answer]
         let input = String(decoding: (try? JSONSerialization.data(withJSONObject: request)) ?? Data(), as: UTF8.self)
-        let (_, lines) = await PipelineRunner.once(["--grade-recall"], input: input)
+        let (_, lines) = await PipelineRunner.once(["--grade-recall"], input: input, timeout: .seconds(240))
         if let line = lines.last, let result = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
            let marks = result["covered"] as? [Bool], marks.count == prompt.keyPoints.count {
             covered = marks
@@ -342,32 +362,43 @@ extension RecallStep {
 // MARK: Map
 
 struct MapStep: View {
+    let session: BookSession
     let chapter: Chapter
+    // Development: `-NLMapMode concepts|mind|remake` opens that view.
+    @State private var mode: MapMode? = ["concepts": MapMode.concepts, "mind": .mind, "remake": .remake][UserDefaults.standard.string(forKey: "NLMapMode") ?? ""]
+
+    enum MapMode: String, CaseIterable { case remake = "Remake from memory", mind = "Mind map", concepts = "Concept graph" }
+
+    private var modes: [MapMode] {
+        (chapter.mindmap != nil ? [.remake, .mind] : []) + (chapter.graph != nil || !chapterGraph.nodes.isEmpty ? [.concepts] : [])
+    }
+
+    private var chapterGraph: KnowledgeGraph { session.book.graph.chapter(chapter.n, tour: chapter.graph?.tour ?? []) }
 
     var body: some View {
-        if let tree = chapter.mindmap {
-            CardBox {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(tree.name).font(Theme.display(20)).foregroundStyle(Theme.accent)
-                    ForEach(tree.children, id: \.name) { branch in MindBranch(node: branch, depth: 0) }
+        let current = mode ?? (chapter.mindmap != nil ? (Loop.isMapped(session.progress, chapter.n) ? .mind : .remake) : .concepts)
+        if modes.isEmpty {
+            NotReady(what: "The mind map", status: chapter.status["mindmap"], note: chapter.notes["mindmap"], bookId: session.entry.id)
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                Picker("Map view", selection: Binding(get: { current }, set: { mode = $0 })) {
+                    ForEach(modes, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 480)
+                switch current {
+                case .remake:
+                    if let map = chapter.mindmap {
+                        RemakeView(session: session, chapter: chapter, map: map) {
+                            _ = session.complete(chapter.n, .map)  // remaking it counts as mapping the chapter
+                            mode = .mind
+                        }
+                    }
+                case .mind:
+                    if let map = chapter.mindmap { MindMapTree(map: map) }
+                case .concepts:
+                    GraphExplorer(graph: chapterGraph)
                 }
             }
-        } else {
-            NotReady(what: "The mind map", status: chapter.status["mindmap"], note: chapter.notes["mindmap"])
-        }
-    }
-}
-
-struct MindBranch: View {
-    let node: MindNode
-    let depth: Int
-    @State private var open = true
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $open) {
-            ForEach(node.children, id: \.name) { child in MindBranch(node: child, depth: depth + 1).padding(.leading, 14) }
-        } label: {
-            Text(node.name).font(depth == 0 ? Theme.display(16, .medium) : Theme.body(14))
         }
     }
 }
@@ -379,6 +410,7 @@ struct RememberStep: View {
     let chapter: Chapter
     @State private var flipped = false
     @State private var reviewed = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let due = Cards.due([chapter], session.progress, now: session.now)
@@ -387,12 +419,12 @@ struct RememberStep: View {
         } else if let card = due.first {
             VStack(spacing: 18) {
                 Text("\(due.count) card\(due.count == 1 ? "" : "s") to go").font(Theme.body(13)).foregroundStyle(Theme.ink3)
-                Button { withAnimation(.spring(duration: 0.4)) { flipped.toggle() } } label: {
-                    Text(flipped ? card.card.back : card.card.front)
+                Button { withAnimation(reduceMotion ? nil : .spring(duration: 0.4)) { flipped.toggle() } } label: {
+                    Text(PlainMath.clean(flipped ? card.card.back : card.card.front))
                         .font(Theme.display(22, .medium)).multilineTextAlignment(.center).padding(30)
                         .frame(maxWidth: 560, minHeight: 220)
                         .background(flipped ? Theme.mintSoft : Theme.butterSoft, in: RoundedRectangle(cornerRadius: 22))
-                        .rotation3DEffect(.degrees(flipped ? 360 : 0), axis: (x: 0, y: 1, z: 0))
+                        .rotation3DEffect(.degrees(flipped && !reduceMotion ? 360 : 0), axis: (x: 0, y: 1, z: 0))
                 }
                 .buttonStyle(.plain)
                 if flipped {

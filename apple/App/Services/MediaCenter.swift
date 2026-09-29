@@ -14,11 +14,20 @@ final class MediaCenter {
     private(set) var playing: Set<URL> = []
     @ObservationIgnored private var players: [URL: AVPlayer] = [:]
     @ObservationIgnored private var observers: [URL: Any] = [:]
+    /// Each file's modification date when its player was made: a remade podcast gets a fresh player.
+    @ObservationIgnored private var madeFrom: [URL: Date] = [:]
+    @ObservationIgnored private var lastUsed: [URL: Date] = [:]
+    static let keepAtMost = 6
 
     func player(for url: URL) -> AVPlayer {
-        if let player = players[url] { return player }
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        lastUsed[url] = Date()
+        if let player = players[url], madeFrom[url] == modified { return player }
+        forget(url)
         let player = AVPlayer(url: url)
         players[url] = player
+        madeFrom[url] = modified
+        DispatchQueue.main.async { [weak self] in self?.trim() }  // not during a view update
         // Fires every quarter second while playing, and whenever playback starts, stops, or jumps.
         observers[url] = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) {
             [weak self] time in
@@ -30,6 +39,21 @@ final class MediaCenter {
             }
         }
         return player
+    }
+
+    /// Lets go of a player and its observer.
+    private func forget(_ url: URL) {
+        guard let player = players[url] else { return }
+        player.pause()
+        if let observer = observers[url] { player.removeTimeObserver(observer) }
+        (players[url], observers[url], madeFrom[url], durations[url]) = (nil, nil, nil, nil)
+        playing.remove(url)
+    }
+
+    /// Keeps memory small: the least recently used players that aren't playing are released.
+    private func trim() {
+        let idle = players.keys.filter { !playing.contains($0) }.sorted { (lastUsed[$0] ?? .distantPast) < (lastUsed[$1] ?? .distantPast) }
+        for url in idle.prefix(max(0, players.count - Self.keepAtMost)) { forget(url) }
     }
 
     func isPlaying(_ url: URL) -> Bool { playing.contains(url) }

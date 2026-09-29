@@ -1,7 +1,7 @@
 // Runs the book pipeline and streams its output lines.
-// Where the pipeline lives, in order: a downloaded runtime (Application Support/app.neuralloop.books/runtime), the one
-// packaged inside the app (Contents/Resources/runtime, `make package`),
-// NEURALLOOP_PIPELINE (a folder with nl_book.py) with NEURALLOOP_PYTHON, then (development) the repo this app was built from.
+// Where the pipeline lives, in order: the runtime packaged inside the app (Contents/Resources/runtime, `make package`;
+// it's covered by the app's signature, so nothing outside the app can swap it), NEURALLOOP_PIPELINE (a folder with
+// nl_book.py) with NEURALLOOP_PYTHON, then (development builds) the repo this app was built from.
 
 import Foundation
 import NeuralLoopCore
@@ -9,16 +9,13 @@ import NeuralLoopCore
 final class PipelineRunner: @unchecked Sendable {
     enum Failure: LocalizedError {
         case notFound
-        var errorDescription: String? { "NeuralLoop's engine isn't installed yet. Open NeuralLoop once while online to finish setup." }
+        var errorDescription: String? { "NeuralLoop's engine is missing from the app. Download NeuralLoop again to repair it." }
     }
 
     private var process: Process?
 
     static func command() -> (executable: URL, prefix: [String])? {
         let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("app.neuralloop.books")
-        let runtime = support.appendingPathComponent("runtime/bin/neuralloop")
-        if fm.isExecutableFile(atPath: runtime.path) { return (runtime, []) }
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime/bin/neuralloop"),
            fm.isExecutableFile(atPath: bundled.path) { return (bundled, []) }
         let env = ProcessInfo.processInfo.environment
@@ -78,32 +75,57 @@ final class PipelineRunner: @unchecked Sendable {
         return env
     }
 
-    /// Run a quick pipeline command (sign in, account, check AI, grade recall) and collect its output.
-    static func once(_ arguments: [String], input: String? = nil) async -> (code: Int32, lines: [String]) {
+    /// Run a quick pipeline command (sign in, account, usage, check AI, grade recall) and collect its output.
+    /// Output is read while it runs (so a chatty command never blocks), and a command that runs past `timeout` is stopped.
+    static func once(_ arguments: [String], input: String? = nil, timeout: Duration = .seconds(120)) async -> (code: Int32, lines: [String]) {
         guard let (executable, prefix) = command() else { return (3, [Failure.notFound.errorDescription ?? ""]) }
-        return await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = prefix + arguments
-            process.environment = environment()
-            let out = Pipe()
-            process.standardOutput = out
-            process.standardError = Pipe()
-            let stdin = Pipe()
-            process.standardInput = stdin
-            process.terminationHandler = { finished in
-                let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                continuation.resume(returning: (finished.terminationStatus, text.split(separator: "\n").map(String.init)))
-            }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = prefix + arguments
+        process.environment = environment()
+        let out = Pipe()
+        let stdin = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = stdin
+        let collected = OutputBuffer()
+        out.fileHandleForReading.readabilityHandler = { handle in collected.append(handle.availableData) }
+        let code: Int32 = await withCheckedContinuation { continuation in
+            process.terminationHandler = { finished in continuation.resume(returning: finished.terminationStatus) }
             do {
                 try process.run()
-                if let input { stdin.fileHandleForWriting.write(Data(input.utf8)) }
-                try? stdin.fileHandleForWriting.close()
             } catch {
-                continuation.resume(returning: (3, [error.localizedDescription]))
+                process.terminationHandler = nil
+                continuation.resume(returning: -1)
+                return
+            }
+            if let input { try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8)) }
+            try? stdin.fileHandleForWriting.close()
+            let running = UncheckedProcess(process)
+            Task.detached {
+                try? await Task.sleep(for: timeout)
+                if running.process.isRunning { running.process.terminate() }
             }
         }
+        out.fileHandleForReading.readabilityHandler = nil
+        collected.append((try? out.fileHandleForReading.readToEnd()) ?? Data())
+        if code == -1 { return (3, [Failure.notFound.errorDescription ?? ""]) }
+        return (code, collected.text.split(separator: "\n").map(String.init))
     }
+}
+
+/// A process handed to the timeout task (Process isn't Sendable; only isRunning and terminate are used).
+private struct UncheckedProcess: @unchecked Sendable {
+    let process: Process
+    init(_ process: Process) { self.process = process }
+}
+
+/// Bytes collected from a pipe on a background thread.
+private final class OutputBuffer: @unchecked Sendable {
+    private var data = Data()
+    private let lock = NSLock()
+    func append(_ more: Data) { lock.lock(); data.append(more); lock.unlock() }
+    var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
 }
 
 /// Follows a growing log file: reads new bytes every half second, hands out whole lines, keeps the last few.
@@ -113,18 +135,18 @@ final class LogFollower: @unchecked Sendable {
     private let lock = NSLock()
     private var lines: [String] = []
     private var timer: DispatchSourceTimer?
-    private let buffer: LineBuffer
+    private let buffer = LineBuffer()
+    /// Reading and stopping happen on this one queue, so the same bytes are never read twice.
+    private let queue = DispatchQueue(label: "app.neuralloop.log-follower")
 
     init(url: URL, from offset: UInt64, onLine: @escaping @Sendable (String) -> Void) {
         self.url = url
         self.offset = offset
-        var keep: ((String) -> Void)?
-        buffer = LineBuffer { line in keep?(line); onLine(line) }
-        keep = { [weak self] line in self?.remember(line) }
+        buffer.onLine = { [weak self] line in self?.remember(line); onLine(line) }
     }
 
     func start() {
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(500))
         timer.setEventHandler { [weak self] in self?.read() }
         timer.resume()
@@ -132,19 +154,20 @@ final class LogFollower: @unchecked Sendable {
     }
 
     func stop() {
-        read()
-        timer?.cancel()
-        buffer.flush()
+        queue.sync {
+            read()
+            timer?.cancel()
+            buffer.flush()
+        }
     }
 
     private func read() {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return }
         defer { try? handle.close() }
-        lock.lock(); let from = offset; lock.unlock()
-        try? handle.seek(toOffset: from)
+        try? handle.seek(toOffset: offset)
         let data = handle.readDataToEndOfFile()
         guard !data.isEmpty else { return }
-        lock.lock(); offset = from + UInt64(data.count); lock.unlock()
+        offset += UInt64(data.count)
         buffer.append(data)
     }
 
@@ -160,7 +183,12 @@ final class LogFollower: @unchecked Sendable {
 
     /// The last progress line in a log, for books being prepared by a run this app didn't start (or before a relaunch).
     static func lastProgress(in url: URL) -> PipelineLine? {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        // Only the end matters, and logs grow with every run.
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 65_536 ? size - 65_536 : 0)
+        let text = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
         for raw in text.split(separator: "\n").suffix(200).reversed() {
             let line = PipelineLine.parse(String(raw))
             switch line {
@@ -176,9 +204,7 @@ final class LogFollower: @unchecked Sendable {
 private final class LineBuffer: @unchecked Sendable {
     private var pending = Data()
     private let lock = NSLock()
-    private let onLine: @Sendable (String) -> Void
-
-    init(_ onLine: @escaping @Sendable (String) -> Void) { self.onLine = onLine }
+    var onLine: (@Sendable (String) -> Void)?
 
     func append(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
@@ -186,12 +212,12 @@ private final class LineBuffer: @unchecked Sendable {
         while let newline = pending.firstIndex(of: 0x0A) {
             let line = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self)
             pending.removeSubrange(pending.startIndex...newline)
-            onLine(line)
+            onLine?(line)
         }
     }
 
     func flush() {
         lock.lock(); defer { lock.unlock() }
-        if !pending.isEmpty { onLine(String(decoding: pending, as: UTF8.self)); pending.removeAll() }
+        if !pending.isEmpty { onLine?(String(decoding: pending, as: UTF8.self)); pending.removeAll() }
     }
 }

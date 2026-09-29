@@ -1,4 +1,4 @@
-// The five-step learning loop per chapter, and which chapters are unlocked (same rules as site/src/core/loop.js).
+// The five-step learning loop per chapter, and which chapters are unlocked.
 
 public enum Stage: String, CaseIterable, Codable, Sendable {
     case prime, read, recall, map, space

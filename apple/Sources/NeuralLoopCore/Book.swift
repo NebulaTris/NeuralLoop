@@ -1,4 +1,4 @@
-// book.json: the payload the pipeline writes for every book (the same data as the study site's book-data.js).
+// book.json: the payload the pipeline writes for every book (and, for books made before the app, book-data.js).
 // Every part may be missing or null while a book is still being prepared, so everything decodes with a default.
 
 import Foundation
@@ -70,6 +70,7 @@ public struct TourStep: Codable, Equatable, Sendable {
     public var title: String
     public var description: String?
     public var nodeIds: [String]
+    public init(title: String, description: String?, nodeIds: [String]) { (self.title, self.description, self.nodeIds) = (title, description, nodeIds) }
 }
 
 public struct ConceptGraph: Codable, Equatable, Sendable {
@@ -158,25 +159,57 @@ public struct Chapter: Decodable, Equatable, Sendable {
 
 /// The book map in Understand-Anything's knowledge-graph format; only the fields the app draws are decoded.
 public struct KnowledgeGraph: Decodable, Equatable, Sendable {
-    public struct Node: Decodable, Equatable, Sendable {
+    public struct Node: Decodable, Equatable, Sendable, Identifiable {
         public var id: String
         public var name: String
         public var summary: String?
+        public var detail: String?
+        public var type: String?          // "concept" | "claim" | "topic"
+        public var complexity: String?    // "simple" | "moderate" | "complex"
         public var chapter: Int?
+        public var layer: String?
+        public var layerName: String?
+        public var group: String { layerName ?? layer ?? "Ideas" }
     }
     public struct Edge: Decodable, Equatable, Sendable {
         public var source: String
         public var target: String
         public var type: String?
+        public var description: String?
     }
     public var nodes: [Node]
     public var edges: [Edge]
+    public var tour: [TourStep]
 
-    enum CodingKeys: String, CodingKey { case nodes, edges }
+    public init(nodes: [Node], edges: [Edge], tour: [TourStep] = []) { (self.nodes, self.edges, self.tour) = (nodes, edges, tour) }
+
+    enum CodingKeys: String, CodingKey { case nodes, edges, tour }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        nodes = try c.decodeIfPresent([Node].self, forKey: .nodes) ?? []
-        edges = try c.decodeIfPresent([Edge].self, forKey: .edges) ?? []
+        nodes = (try? c.decodeIfPresent([Node].self, forKey: .nodes)) ?? []
+        edges = (try? c.decodeIfPresent([Edge].self, forKey: .edges)) ?? []
+        tour = (try? c.decodeIfPresent([TourStep].self, forKey: .tour)) ?? []
+    }
+
+    /// Only the ideas from these chapters, the links between them, and tour steps that still have ideas.
+    public func only(chapters: Set<Int>) -> KnowledgeGraph {
+        let kept = nodes.filter { $0.chapter.map(chapters.contains) ?? false }
+        let ids = Set(kept.map(\.id))
+        return KnowledgeGraph(
+            nodes: kept,
+            edges: edges.filter { ids.contains($0.source) && ids.contains($0.target) },
+            tour: tour.map { TourStep(title: $0.title, description: $0.description, nodeIds: $0.nodeIds.filter(ids.contains)) }
+                .filter { !$0.nodeIds.isEmpty }
+        )
+    }
+
+    /// One chapter's concept graph, with that chapter's own guided tour (its ids carry the "cN:" prefix in the book map).
+    public func chapter(_ n: Int, tour chapterTour: [TourStep]) -> KnowledgeGraph {
+        var graph = only(chapters: [n])
+        graph.tour = chapterTour.map { TourStep(title: $0.title, description: $0.description, nodeIds: $0.nodeIds.map { "c\(n):\($0)" }) }
+            .map { step in TourStep(title: step.title, description: step.description, nodeIds: step.nodeIds.filter { id in graph.nodes.contains { $0.id == id } }) }
+            .filter { !$0.nodeIds.isEmpty }
+        return graph
     }
 }
 

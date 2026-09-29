@@ -1,5 +1,5 @@
 // The daily study log: seconds per local day, a year-long calendar grid, and encouraging totals
-// (same rules as site/src/core/activity.js).
+// (first written for the study site).
 
 import Foundation
 

@@ -52,23 +52,26 @@ public struct StudyProgress: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey { case cards, loop, quiz, recall, remake, mapPos, mapSeen, last, log, updatedAt }
 
+    /// Lenient: one odd card, day, or field (from an older or newer app, or a half-finished edit) is skipped rather
+    /// than losing everything else.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        cards = try c.decodeIfPresent([String: CardState].self, forKey: .cards) ?? [:]
-        loop = try c.decodeIfPresent([String: [String: FlexibleNumber]].self, forKey: .loop)?
-            .mapValues { $0.mapValues(\.value) } ?? [:]
-        quiz = try c.decodeIfPresent([String: JSONValue].self, forKey: .quiz) ?? [:]
-        recall = try c.decodeIfPresent([String: JSONValue].self, forKey: .recall) ?? [:]
-        remake = try c.decodeIfPresent([String: JSONValue].self, forKey: .remake) ?? [:]
-        mapPos = try c.decodeIfPresent([String: [Double]].self, forKey: .mapPos) ?? [:]
-        mapSeen = try c.decodeIfPresent([Int].self, forKey: .mapSeen) ?? []
-        last = try c.decodeIfPresent(Resume.self, forKey: .last)
-        log = try c.decodeIfPresent([String: Double].self, forKey: .log) ?? [:]
-        updatedAt = try c.decodeIfPresent(Double.self, forKey: .updatedAt) ?? 0
+        cards = ((try? c.decodeIfPresent([String: Lossy<CardState>].self, forKey: .cards)) ?? nil)?.compactMapValues(\.value) ?? [:]
+        loop = ((try? c.decodeIfPresent([String: [String: Lossy<FlexibleNumber>]].self, forKey: .loop)) ?? nil)?
+            .mapValues { $0.compactMapValues { $0.value?.value } } ?? [:]
+        quiz = ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .quiz)) ?? nil) ?? [:]
+        recall = ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .recall)) ?? nil) ?? [:]
+        remake = ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .remake)) ?? nil) ?? [:]
+        mapPos = ((try? c.decodeIfPresent([String: Lossy<[Double]>].self, forKey: .mapPos)) ?? nil)?
+            .compactMapValues(\.value).filter { $0.value.count == 2 } ?? [:]
+        mapSeen = ((try? c.decodeIfPresent([Lossy<Int>].self, forKey: .mapSeen)) ?? nil)?.compactMap(\.value) ?? []
+        last = (try? c.decodeIfPresent(Resume.self, forKey: .last)) ?? nil
+        log = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .log)) ?? nil)?.compactMapValues(\.value) ?? [:]
+        updatedAt = ((try? c.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil) ?? 0
     }
 
     /// Merge every device's progress. Cards: the latest review wins. Loop steps: done anywhere is done (earliest time).
-    /// Study log: seconds add up across devices. Quiz, recall, remake, map positions, and where you left off: the most
+    /// Study log: the most seconds any copy has for a day (so merging a merged copy again never inflates it). Quiz, recall, remake, map positions, and where you left off: the most
     /// recently updated device wins.
     public static func merged(_ devices: [StudyProgress]) -> StudyProgress {
         var out = StudyProgress()
@@ -77,7 +80,7 @@ public struct StudyProgress: Codable, Equatable, Sendable {
             for (chapter, steps) in device.loop {
                 out.loop[chapter, default: [:]].merge(steps) { min($0, $1) }
             }
-            for (day, seconds) in device.log { out.log[day, default: 0] += seconds }
+            for (day, seconds) in device.log { out.log[day] = max(out.log[day] ?? 0, seconds) }
             out.quiz.merge(device.quiz) { $1 }
             out.recall.merge(device.recall) { $1 }
             out.remake.merge(device.remake) { $1 }
@@ -96,5 +99,29 @@ struct FlexibleNumber: Decodable {
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if let b = try? c.decode(Bool.self) { value = b ? 1 : 0 } else { value = try c.decode(Double.self) }
+    }
+}
+
+/// Decodes to nil instead of failing, so one bad entry doesn't take its neighbours down with it.
+struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+}
+
+/// progress.json on disk: a missing file is a fresh start; a file that isn't readable JSON is kept aside
+/// (progress.json.unreadable-<time>) before starting fresh, so nothing is ever overwritten silently.
+public enum ProgressFile {
+    public static func load(from folder: URL, now: Date = Date()) -> StudyProgress {
+        let file = folder.appendingPathComponent("progress.json")
+        guard let data = try? Data(contentsOf: file) else { return StudyProgress() }
+        if let progress = try? JSONDecoder().decode(StudyProgress.self, from: data) { return progress }
+        let aside = folder.appendingPathComponent("progress.json.unreadable-\(Int(now.timeIntervalSince1970))")
+        try? FileManager.default.moveItem(at: file, to: aside)
+        return StudyProgress()
+    }
+
+    public static func save(_ progress: StudyProgress, to folder: URL) {
+        guard let data = try? JSONEncoder().encode(progress) else { return }
+        try? data.write(to: folder.appendingPathComponent("progress.json"), options: .atomic)
     }
 }

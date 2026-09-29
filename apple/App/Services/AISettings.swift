@@ -8,6 +8,9 @@ import Observation
 final class AISettings {
     var config = AIConfig()
     var keys: [String: String] = [:]
+    /// What the Keychain holds, so Settings can tell a saved key from one that's only typed.
+    private(set) var savedKeys: [String: String] = [:]
+    var keyNote = ""
     var account: (signedIn: Bool, email: String) = (false, "")
     var checking = false
     var check: [String: AICheck] = [:]
@@ -28,6 +31,13 @@ final class AISettings {
         for name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"] {
             keys[name] = Keychain.read(name) ?? ""
         }
+        savedKeys = keys
+    }
+
+    /// When the person last changed their AI settings or keys; automatic runs that needed setup wait for this.
+    static var changedAt: Double {
+        get { UserDefaults.standard.double(forKey: "settingsChangedAt") }
+        set { UserDefaults.standard.set(newValue, forKey: "settingsChangedAt") }
     }
 
     func save() {
@@ -35,22 +45,29 @@ final class AISettings {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: PipelineRunner.aiConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? encoder.encode(config).write(to: PipelineRunner.aiConfigURL, options: .atomic)
-        for (name, value) in keys { Keychain.save(name, value) }
+        var problems: [String] = []
+        for (name, value) in keys where value != savedKeys[name] {
+            if let problem = Keychain.save(name, value) { problems.append(problem) } else { savedKeys[name] = value }
+        }
+        keyNote = problems.joined(separator: " ")
+        Self.changedAt = Date().timeIntervalSince1970 * 1000
     }
+
+    func isSaved(_ variable: String) -> Bool { !(keys[variable] ?? "").isEmpty && keys[variable] == savedKeys[variable] }
 
     /// Save, then try every configured model once (`--check-ai`).
     func saveAndTest() async {
         save()
         checking = true
         checkNote = ""
-        let (_, lines) = await PipelineRunner.once(["--check-ai"])
+        let (_, lines) = await PipelineRunner.once(["--check-ai"], timeout: .seconds(900))
         check = lines.compactMap(AICheck.parse).first ?? [:]
         if check.isEmpty { checkNote = lines.last ?? "Pip couldn't run the check." }
         checking = false
     }
 
     func refreshAccount() async {
-        let (_, lines) = await PipelineRunner.once(["--account"])
+        let (_, lines) = await PipelineRunner.once(["--account"], timeout: .seconds(60))
         if let line = lines.first(where: { $0.hasPrefix("Account: ") }),
            let object = try? JSONSerialization.jsonObject(with: Data(line.dropFirst("Account: ".count).utf8)) as? [String: Any] {
             account = (object["signedIn"] as? Bool ?? false, object["email"] as? String ?? "")
@@ -61,7 +78,7 @@ final class AISettings {
     func signIn() async {
         signingIn = true
         accountNote = "A browser window is opening. Sign in to Google there, then come back."
-        let (code, lines) = await PipelineRunner.once(["--signin"])
+        let (code, lines) = await PipelineRunner.once(["--signin"], timeout: .seconds(900))
         accountNote = code == 0 ? "" : (lines.last ?? "Sign-in didn't finish. You can try again any time.")
         signingIn = false
         await refreshAccount()

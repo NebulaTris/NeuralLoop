@@ -15,13 +15,24 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func save(_ name: String, _ value: String) {
+    /// Saves (or, for an empty value, removes) a key. Updates in place, so a refused write never loses the old key.
+    /// Returns nil on success, or what went wrong in plain words.
+    @discardableResult
+    static func save(_ name: String, _ value: String) -> String? {
         let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                    kSecAttrAccount as String: name]
-        SecItemDelete(base as CFDictionary)
-        guard !value.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+        var status: OSStatus
+        if value.isEmpty {
+            status = SecItemDelete(base as CFDictionary)
+            if status == errSecItemNotFound { status = errSecSuccess }
+        } else {
+            let fields: [String: Any] = [kSecValueData as String: Data(value.utf8),
+                                         kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+            status = SecItemUpdate(base as CFDictionary, fields as CFDictionary)
+            if status == errSecItemNotFound { status = SecItemAdd(base.merging(fields) { $1 } as CFDictionary, nil) }
+        }
+        guard status != errSecSuccess else { return nil }
+        let reason = SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)"
+        return "The Keychain didn't accept \(name) (\(reason)). Your previous key is unchanged."
     }
 }

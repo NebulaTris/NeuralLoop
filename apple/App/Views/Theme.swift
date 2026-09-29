@@ -1,4 +1,4 @@
-// NeuralLoop's colours and type (the same tokens as the study site's styles.css), light and dark.
+// NeuralLoop's colours and type , light and dark.
 
 import AppKit
 import SwiftUI

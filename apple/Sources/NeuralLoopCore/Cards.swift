@@ -1,4 +1,4 @@
-// Flashcards across the book, limited to unlocked chapters (same rules as site/src/core/cards.js).
+// Flashcards across the book, limited to unlocked chapters.
 
 public struct ReviewCard: Equatable, Sendable {
     public let id: String      // "chapter:index", the key in progress.cards

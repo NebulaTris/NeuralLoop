@@ -4,18 +4,32 @@ import NeuralLoopCore
 import SwiftUI
 
 struct BookView: View {
+    let entry: BookEntry
+    @State private var session: BookSession?
+
+    var body: some View {
+        Group {
+            if let session { BookContent(session: session) } else { Color.clear }
+        }
+        // Made once per book (not on every redraw of the shelf behind it).
+        .task(id: entry.id) { if session?.entry.id != entry.id { session = BookSession(entry: entry) } }
+    }
+}
+
+struct BookContent: View {
     @Environment(Library.self) private var library
     @Environment(\.controlActiveState) private var active
-    @State private var session: BookSession
+    let session: BookSession
     @State private var selected: Int?
-
-    init(entry: BookEntry) { _session = State(initialValue: BookSession(entry: entry)) }
+    @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")
 
     var body: some View {
         HStack(spacing: 0) {
             chapterList.frame(width: 290)
             Divider()
-            if let n = selected, let chapter = session.book.chapters.first(where: { $0.n == n }) {
+            if showingMap {
+                BookMapView(session: session) { n in showingMap = false; selected = n }
+            } else if let n = selected, let chapter = session.book.chapters.first(where: { $0.n == n }) {
                 if Loop.isUnlocked(session.progress, session.book.chapters, n) {
                     ChapterView(session: session, chapter: chapter).id(n)
                 } else {
@@ -32,27 +46,27 @@ struct BookView: View {
         .background(Theme.paper)
         .navigationTitle(session.book.title)
         .toolbar {
+            Button { showingMap.toggle() } label: {
+                Label(showingMap ? "Chapters" : "Book map", systemImage: showingMap ? "list.bullet" : "point.3.filled.connected.trianglepath.dotted")
+            }
+            .help("Your map of the book grows with every chapter you map")
             if library.entry(session.entry.id)?.preparing != true {
                 Button("Prepare more") { library.prepareMore(session.entry.id) }
             }
         }
         .onAppear {
             selected = session.progress.last?.n ?? session.book.chapters.first?.n
-            session.startClock { [active] in active == .key }
+            session.isActive = active == .key
+            session.startClock()
         }
-        .onDisappear { session.stopClock() }
-        .onChange(of: library.entry(session.entry.id)?.lastLine) { session.reloadBook() }
-        .task {
-            // New chapters and items appear while Pip is still preparing the book.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                session.reloadBook()
-            }
-        }
+        .onChange(of: active) { session.isActive = active == .key }
+        .onDisappear { session.isActive = false; session.stopClock() }
+        // New chapters and items appear while Pip is still preparing the book (the library reads book.json off the main thread).
+        .onChange(of: library.entry(session.entry.id)?.book) { _, fresh in if let fresh, fresh != session.book { session.book = fresh } }
     }
 
     private var chapterList: some View {
-        List(selection: $selected) {
+        List(selection: Binding(get: { selected }, set: { selected = $0; showingMap = false })) {
             Section("Chapters") {
                 ForEach(session.book.chapters, id: \.n) { chapter in
                     let unlocked = Loop.isUnlocked(session.progress, session.book.chapters, chapter.n)
@@ -104,7 +118,7 @@ struct ChapterView: View {
                     case .prime: ListenStep(session: session, chapter: chapter)
                     case .read: ReadStep(session: session, chapter: chapter)
                     case .recall: RecallStep(session: session, chapter: chapter)
-                    case .map: MapStep(chapter: chapter)
+                    case .map: MapStep(session: session, chapter: chapter)
                     case .space: RememberStep(session: session, chapter: chapter)
                     }
                 }
@@ -115,6 +129,7 @@ struct ChapterView: View {
         }
         .overlay { if celebrate { closedOverlay } }
         .onAppear {
+            if let forced = UserDefaults.standard.string(forKey: "NLStage").flatMap(Stage.init) { stage = forced; return }
             if let last = session.progress.last, last.n == chapter.n, let s = Stage(rawValue: last.stage) { stage = s }
             else if let next = Loop.nextStage(session.progress, chapter.n) { stage = next }
         }

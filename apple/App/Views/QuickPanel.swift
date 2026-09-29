@@ -19,7 +19,7 @@ struct ShelfSummary {
         for entry in entries {
             if entry.preparing { summary.preparing.append(entry) }
             guard let book = entry.book else { continue }
-            let progress = progress(entry.folder)
+            let progress = entry.progress
             summary.dueCards += Cards.due(book.chapters, progress, now: nowMs).filter { progress.cards[$0.id] != nil }.count
             for back in 0..<7 {
                 summary.weekSeconds += progress.log[Activity.dayKey(nowMs - Double(back) * FSRS.dayMs)] ?? 0
@@ -32,11 +32,6 @@ struct ShelfSummary {
             }
         }
         return summary
-    }
-
-    static func progress(_ folder: URL) -> StudyProgress {
-        let data = try? Data(contentsOf: folder.appendingPathComponent("progress.json"))
-        return data.flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } ?? StudyProgress()
     }
 }
 
@@ -142,8 +137,8 @@ struct PanelMedia: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Listen & watch · \(chapter.title)", systemImage: "headphones")
                 .font(Theme.display(13, .medium)).foregroundStyle(Theme.ink2).lineLimit(1)
-            if let video = chapter.video {
-                ChapterVideo(url: folder.appendingPathComponent(video), corner: 10)
+            if let video = chapter.video, let url = BookFiles.url(video, in: folder) {
+                ChapterVideo(url: url, corner: 10)
             } else if let status = chapter.status["video"], status == .working || status == .waiting {
                 HStack(spacing: 8) {
                     if status == .working { ProgressView().controlSize(.mini) } else { Image(systemName: "clock").foregroundStyle(Theme.ink3) }
@@ -153,8 +148,8 @@ struct PanelMedia: View {
                 .frame(maxWidth: .infinity, minHeight: 60)
                 .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 10))
             }
-            if let audio = chapter.audio {
-                PodcastControls(url: folder.appendingPathComponent(audio), compact: true)
+            if let audio = chapter.audio, let url = BookFiles.url(audio, in: folder) {
+                PodcastControls(url: url, compact: true)
             }
         }
         .padding(10)

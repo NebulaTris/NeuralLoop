@@ -29,10 +29,32 @@ func progress(_ json: String) throws -> StudyProgress {
     #expect(StudyProgress.merged([mac, ipad]).loop["1"] == ["prime": 10, "read": 40, "recall": 50])
 }
 
-@Test func studyTimeAddsUpAcrossDevices() throws {
+@Test func mergingAgainNeverInflatesStudyTime() throws {
     let mac = try progress(#"{"log":{"2026-09-28":600,"2026-09-27":60}}"#)
     let ipad = try progress(#"{"log":{"2026-09-28":300}}"#)
-    #expect(StudyProgress.merged([mac, ipad]).log == ["2026-09-28": 900, "2026-09-27": 60])
+    let merged = StudyProgress.merged([mac, ipad])
+    #expect(merged.log == ["2026-09-28": 600, "2026-09-27": 60])
+    #expect(StudyProgress.merged([merged, mac, ipad]).log == merged.log)
+}
+
+@Test func oneOddEntryDoesNotLoseTheRest() throws {
+    let p = try progress("""
+    {"cards":{"1:0":{"s":3,"d":5,"reps":1,"last":100,"due":400},"1:1":{"s":"oops"}},"log":{"2026-09-28":900,"x":"y"},
+     "loop":{"1":{"prime":10,"read":"soon"}},"mapPos":{"a":[1,2],"b":[1]},"quiz":7,"updatedAt":"later"}
+    """)
+    #expect(p.cards.keys.sorted() == ["1:0"] && p.log == ["2026-09-28": 900] && p.loop["1"] == ["prime": 10])
+    #expect(p.mapPos == ["a": [1, 2]] && p.quiz.isEmpty && p.updatedAt == 0)
+}
+
+@Test func anUnreadableProgressFileIsKeptAsideNotOverwritten() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    #expect(ProgressFile.load(from: folder) == StudyProgress())
+    try Data("{not json".utf8).write(to: folder.appendingPathComponent("progress.json"))
+    #expect(ProgressFile.load(from: folder, now: Date(timeIntervalSince1970: 42)) == StudyProgress())
+    let kept = folder.appendingPathComponent("progress.json.unreadable-42")
+    #expect(try String(contentsOf: kept, encoding: .utf8) == "{not json")
 }
 
 @Test func whereYouLeftOffComesFromTheLatestDevice() throws {

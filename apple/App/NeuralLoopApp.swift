@@ -4,8 +4,14 @@ import SwiftUI
 
 @main
 struct NeuralLoopApp: App {
-    @State private var library = Library()
+    @State private var library: Library
     @State private var settings = AISettings()
+
+    init() {
+        let library = Library()
+        _library = State(initialValue: library)
+        library.start()  // the shelf loop lives as long as the app, window or not
+    }
 
     var body: some Scene {
         WindowGroup("NeuralLoop", id: "main") {
@@ -13,25 +19,6 @@ struct NeuralLoopApp: App {
                 .environment(library)
                 .environment(settings)
                 .frame(minWidth: 900, minHeight: 620)
-                .task {
-                    Notifier.shared.start()
-                    Notifier.shared.openBook = { id in library.path = [id] }
-                    library.reload()
-                    library.resumeUnfinished()
-                    // Books can be prepared outside this window (a run from the command line, later the iPad's queue):
-                    // look at the shelf again every few seconds while the app is open.
-                    await library.refreshUsage(force: true)
-                    var ticks = 0
-                    while !Task.isCancelled {
-                        library.reload()
-                        ticks += 1
-                        if ticks % 75 == 0 {  // every ~5 minutes: NotebookLM's usage, and retry anything whose limit lifted
-                            await library.refreshUsage()
-                            library.resumeUnfinished()
-                        }
-                        try? await Task.sleep(for: .seconds(4))
-                    }
-                }
         }
         .defaultSize(width: 1240, height: 820)
         .commands {
@@ -77,6 +64,11 @@ struct RootView: View {
         .task {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
+            // `-NLOpenBook <id> [-NLStage map] [-NLBookMap YES]` opens a book (for screenshots and checks).
+            if let id = UserDefaults.standard.string(forKey: "NLOpenBook") {
+                try? await Task.sleep(for: .seconds(1))
+                library.path = [id]
+            }
         }
     }
 }

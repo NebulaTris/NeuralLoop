@@ -36,7 +36,7 @@ struct LibraryView: View {
                         }
                     }
                     section("Your year with Pip", detail: "Every minute you study, across all your books") {
-                        YearLog(log: Shelf.combinedLog(library.entries.map { ShelfSummary.progress($0.folder).log }))
+                        YearLog(log: Shelf.combinedLog(library.entries.map { $0.progress.log }))
                     }
                 }
             }
@@ -270,7 +270,7 @@ struct BookCard: View {
     let entry: BookEntry
 
     var body: some View {
-        let progress = ShelfSummary.progress(entry.folder)
+        let progress = entry.progress
         let chapters = entry.book?.chapters ?? []
         let dots = Shelf.dots(chapters, progress)
         let closed = dots.filter { $0 == .closed }.count
@@ -349,8 +349,8 @@ struct ResumeCard: View {
                         Label("Continue", systemImage: "arrow.right").font(Theme.display(15, .medium)).padding(.horizontal, 6)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
-                    if let audio = chapter.audio {
-                        PodcastControls(url: entry.folder.appendingPathComponent(audio), compact: true).frame(maxWidth: 300)
+                    if let audio = chapter.audio, let url = BookFiles.url(audio, in: entry.folder) {
+                        PodcastControls(url: url, compact: true).frame(maxWidth: 300)
                     }
                 }
                 .padding(.top, 4)
