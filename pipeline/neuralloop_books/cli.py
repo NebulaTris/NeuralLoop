@@ -134,15 +134,18 @@ def _local_engine(opts: Options):
     from .speech import make_speech
 
     env = {**os.environ, **({"NEURALLOOP_BASE_URL": opts.base_url} if opts.base_url else {})}
-    if resolve_provider(opts.provider, env) == "ollama":
+    choices = [opts.provider, *(c.provider for c in opts.task_choices.values())]
+    before_start = None
+    if any(resolve_provider(p, env) == "ollama" for p in choices):
         from . import setup
 
-        asyncio.run(setup.ensure_ollama(setup.ollama_host(), opts.log))
+        async def before_start() -> None:  # awaited by the engine, inside whatever loop is running
+            await setup.ensure_ollama(setup.ollama_host(), opts.log)
+
     model = make_model(opts.provider, opts.model, env)
     task_models = {task: _model_for(choice) for task, choice in opts.task_choices.items()}
-    return LocalEngine.from_options(
-        opts, model, make_speech(opts.speech, opts.voices, opts.voice_quality), task_models
-    )
+    speech = make_speech(opts.speech, opts.voices, opts.voice_quality)
+    return LocalEngine.from_options(opts, model, speech, task_models, before_start=before_start)
 
 
 def _model_for(choice: aiconfig.ModelChoice):

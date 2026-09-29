@@ -5,11 +5,13 @@ import SwiftUI
 @main
 struct NeuralLoopApp: App {
     @State private var library = Library()
+    @State private var settings = AISettings()
 
     var body: some Scene {
         WindowGroup("NeuralLoop") {
             RootView()
                 .environment(library)
+                .environment(settings)
                 .frame(minWidth: 900, minHeight: 620)
                 .task {
                     library.reload()
@@ -28,11 +30,16 @@ struct NeuralLoopApp: App {
                 Button("Add a Book…") { library.isPicking = true }.keyboardShortcut("o")
             }
         }
+        Settings {
+            SettingsView().environment(settings)
+        }
     }
 }
 
 struct RootView: View {
     @Environment(Library.self) private var library
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("welcomed") private var welcomed = false
 
     var body: some View {
         @Bindable var library = library
@@ -44,5 +51,8 @@ struct RootView: View {
         }
         .background(Theme.paper)
         .tint(Theme.accent)
+        .sheet(isPresented: Binding(get: { !welcomed }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
+        // Development: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
+        .task { if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() } }
     }
 }

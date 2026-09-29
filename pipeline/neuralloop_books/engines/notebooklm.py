@@ -16,13 +16,13 @@ class NotebookLMEngine:
         self.maker: ChapterMaker | None = None
 
     async def __aenter__(self):
-        if self.client is None:
-            self.client = await self._open_client()
-        await self.client.__aenter__()
+        # notebooklm-py hands back a context manager: the client is what entering it returns.
+        self._context = self.client if self.client is not None else await self._open_client()
+        self.client = await self._context.__aenter__()
         return self
 
     async def __aexit__(self, *exc):
-        return await self.client.__aexit__(*exc)
+        return await self._context.__aexit__(*exc)
 
     async def prepare(self, state: BookState) -> None:
         state.data.update(engine="notebooklm", provider="notebooklm", model="")

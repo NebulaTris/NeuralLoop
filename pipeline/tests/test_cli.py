@@ -68,3 +68,31 @@ def test_check_ai_explains_what_is_missing(tmp_path, capsys, monkeypatch):
         and "ANTHROPIC_API_KEY" in report["make"]["message"]
         and report["recall"]["ok"]
     )
+
+
+def test_the_local_fallback_can_start_inside_a_running_book_run(tmp_path, monkeypatch):
+    """auto builds the local engine mid-run, inside the event loop; starting Ollama needs no new loop."""
+    import asyncio
+
+    from neuralloop_books import cli, setup
+    from neuralloop_books.models.fake import FakeModel
+    from neuralloop_books.pipeline import Options
+    from neuralloop_books.state import BookState
+
+    started = []
+
+    async def fake_ensure(host, log, **kwargs):
+        started.append(host)
+
+    monkeypatch.setattr(setup, "ensure_ollama", fake_ensure)
+    monkeypatch.setattr(cli, "resolve_provider", lambda provider, env: "ollama")
+    monkeypatch.setattr("neuralloop_books.models.make_model", lambda *a, **k: FakeModel())
+    opts = Options(book=tmp_path / "b.epub", out=tmp_path, speech="fake", log=lambda _: None)
+    state = BookState.create(tmp_path / "state.json", title="T", source="b", chapters=[], dry_run=False)
+
+    async def inside_a_run():
+        engine = cli._local_engine(opts)  # what AutoEngine's fallback factory does, mid-run
+        await engine.prepare(state)
+
+    asyncio.run(inside_a_run())
+    assert started  # Ollama was started from inside the loop

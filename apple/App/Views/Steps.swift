@@ -218,6 +218,9 @@ struct RecallStep: View {
     @State private var index = 0
     @State private var answer = ""
     @State private var covered: [Bool]?
+    @State private var feedback = ""
+    @State private var checkedBy = ""
+    @State private var checking = false
 
     var body: some View {
         if chapter.recall.isEmpty {
@@ -233,10 +236,11 @@ struct RecallStep: View {
                     .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
                 HStack {
-                    Button("Check my answer") { covered = RecallCheck.wordMatch(prompt.keyPoints, answer: answer) }
-                        .buttonStyle(.borderedProminent).disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(checking ? "Pip is checking…" : "Check my answer") { Task { await check(prompt) } }
+                        .buttonStyle(.borderedProminent).disabled(checking || answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if checking { ProgressView().controlSize(.small) }
                     if index + 1 < chapter.recall.count {
-                        Button("Next question") { index += 1; answer = ""; covered = nil }
+                        Button("Next question") { index += 1; answer = ""; covered = nil; feedback = "" }
                     }
                 }
                 if let covered {
@@ -246,11 +250,34 @@ struct RecallStep: View {
                                 Label(pair.0, systemImage: pair.1 ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(pair.1 ? Theme.mint : Theme.ink3).font(Theme.body(14))
                             }
-                            Text(RecallCheck.feedback(prompt.keyPoints, covered: covered)).font(Theme.body(14))
+                            Text(feedback).font(Theme.body(14))
+                            if !checkedBy.isEmpty { Text("Checked by \(checkedBy)").font(Theme.body(11)).foregroundStyle(Theme.ink3) }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+extension RecallStep {
+    /// The recall model from Settings checks each key point (gemma2:2b on this Mac by default); word matching if it can't.
+    func check(_ prompt: RecallPrompt) async {
+        checking = true
+        defer { checking = false }
+        let request: [String: Any] = ["question": prompt.prompt, "keyPoints": prompt.keyPoints, "answer": answer]
+        let input = String(decoding: (try? JSONSerialization.data(withJSONObject: request)) ?? Data(), as: UTF8.self)
+        let (_, lines) = await PipelineRunner.once(["--grade-recall"], input: input)
+        if let line = lines.last, let result = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+           let marks = result["covered"] as? [Bool], marks.count == prompt.keyPoints.count {
+            covered = marks
+            feedback = result["feedback"] as? String ?? RecallCheck.feedback(prompt.keyPoints, covered: marks)
+            checkedBy = result["by"] as? String ?? ""
+        } else {
+            let marks = RecallCheck.wordMatch(prompt.keyPoints, answer: answer)
+            covered = marks
+            feedback = RecallCheck.feedback(prompt.keyPoints, covered: marks)
+            checkedBy = "word match"
         }
     }
 }

@@ -195,3 +195,24 @@ def test_a_stale_lock_from_a_dead_run_does_not_block(options):
     (options.out / ".running").write_text("999999")  # no such process
     assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
     assert not (options.out / ".running").exists()
+
+
+class OpenedLikeTheRealLibrary:
+    """notebooklm-py's from_storage() gives a context whose __aenter__ returns the real client."""
+
+    def __init__(self):
+        self.client = FakeClient(delay=0)
+        self.closed = False
+
+    async def __aenter__(self):
+        return self.client
+
+    async def __aexit__(self, *exc):
+        self.closed = True
+        return False
+
+
+def test_notebooklm_uses_the_client_its_context_opens(options):
+    context = OpenedLikeTheRealLibrary()
+    state = asyncio.run(run(options, NotebookLMEngine(context, ENUMS, options)))
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and context.closed

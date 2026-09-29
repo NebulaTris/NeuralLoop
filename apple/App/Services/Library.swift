@@ -147,10 +147,11 @@ final class Library {
         let runner = PipelineRunner()
         runs[id] = runner
         do {
-            try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options)) { [weak self] line in
+            try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options),
+                             log: out.appendingPathComponent("pipeline.log")) { [weak self] line in
                 Task { @MainActor in self?.handle(id, line) }
-            } onExit: { [weak self] code in
-                Task { @MainActor in self?.finished(id, code: code) }
+            } onExit: { [weak self] code, tail in
+                Task { @MainActor in self?.finished(id, code: code, tail: tail) }
             }
         } catch {
             runs[id] = nil
@@ -164,10 +165,21 @@ final class Library {
         if case .made = PipelineLine.parse(raw) { entries[index].book = Self.loadBook(entries[index].folder) }
     }
 
-    private func finished(_ id: String, code: Int32) {
+    private func finished(_ id: String, code: Int32, tail: [String]) {
         runs[id] = nil
         reload()
-        message = code == 0 ? "“\(entry(id)?.title ?? "Your book")” is ready." : "Pip hit a snag preparing this book. Open it and choose Prepare more to try again."
+        message = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
+    }
+
+    /// What to tell the person when a run ends: nothing alarming when another run already has the book, the pipeline's
+    /// own advice when setup is needed (exit 3), and the actual last error otherwise.
+    static func outcome(title: String, code: Int32, tail: [String]) -> String? {
+        if code == 0 { return "“\(title)” is ready." }
+        if tail.contains(where: { $0.contains("already being prepared") }) { return nil }
+        let reason = tail.last(where: { !$0.hasPrefix("File \"") && !$0.hasPrefix("^") && !$0.hasPrefix("Traceback") }) ?? ""
+        if code == 3 { return reason.isEmpty ? "Pip needs a little setup first. Open Settings → Your AI." : reason }
+        let detail = reason.isEmpty ? "" : " (\(reason.prefix(160)))"
+        return "Pip hit a snag preparing “\(title)”\(detail). Open the book and choose Prepare more to try again; the full story is in its pipeline.log."
     }
 
     /// Plain words for a progress line, for the book card.

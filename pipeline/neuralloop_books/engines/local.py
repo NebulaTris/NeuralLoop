@@ -57,7 +57,9 @@ class LocalEngine:
         language: str,
         instructions: str,
         task_models: dict | None = None,
+        before_start=None,
     ):
+        self.before_start = before_start  # e.g. start Ollama; awaited in prepare(), inside the run's loop
         self.model, self.speech, self.out_dir, self.budget = model, speech, out_dir, budget
         self.audio_format, self.video_format, self.instructions = audio, video, instructions
         self.system = prompts.SYSTEM.format(language=LANGUAGES.get(language, language))
@@ -69,7 +71,9 @@ class LocalEngine:
         self._speaking = asyncio.Lock()  # speech models are big: one clip at a time
 
     @classmethod
-    def from_options(cls, opts, model, speech, task_models: dict | None = None) -> "LocalEngine":
+    def from_options(
+        cls, opts, model, speech, task_models: dict | None = None, before_start=None
+    ) -> "LocalEngine":
         budget = opts.context or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
         return cls(
             model,
@@ -81,6 +85,7 @@ class LocalEngine:
             language=opts.language,
             instructions=opts.instructions,
             task_models=task_models,
+            before_start=before_start,
         )
 
     async def __aenter__(self):
@@ -90,6 +95,8 @@ class LocalEngine:
         return False
 
     async def prepare(self, state: BookState) -> None:
+        if self.before_start:
+            await self.before_start()
         for model in {id(m): m for m in (self.model, *self.task_models.values())}.values():
             await model.check()
         voiced = ("audio", "video")
