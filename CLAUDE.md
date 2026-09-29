@@ -1,6 +1,6 @@
 # CLAUDE.md — working in the NeuralLoop repo
 
-Read this first, every session. Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
+Read this first, every session. `docs/ARCHITECTURE.md` is the guided tour of every directory and module. Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
 (where it disagrees with this file or the specs, **this file and `docs/specs` win**; notably the repo license is **MIT**).
 
 ## What this repo is
@@ -90,12 +90,14 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
-| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, idempotent merge), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges`, `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
+| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges`, `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
 | `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications |
 | `App/Views/` | `LibraryView` (shelf, resume card, year log), `BookView` (chapters, five steps, book map), `Steps` (Listen, Read, Recall + quiz, Map, Remember), `StudyViews` (quiz, mind map, remake, book map), `GraphExplorer`, `QuickPanel`, `SettingsView` (Account, Your AI, Voices, Nudges), `PipView`, `Theme` |
+| `Sources/NeuralLoopCore/Sync*.swift`, `DriveStore.swift`, `GoogleOAuth.swift` | Drive sync (spec 07): `SyncPlan` (who uploads/downloads what), `SyncEngine` (scan, plan, carry out; MD5 cache in `sync-state.json`), `GoogleDrive` REST client and `MemoryDrive` for tests, Google sign-in with PKCE |
+| `App/Services/DriveAccount.swift`, `DriveSync.swift` | Google sign-in for Drive (tokens in the Keychain) and the sync loop (every 2 min, after studying, when a chapter opens); `-NLFakeDrive URL` (Debug only) uses `scripts/fake_drive.py` |
 | `App/iPad/` | The iPad's entry point (`NeuralLoopPadApp`: library, book screens), its profile button and Settings sheet (account and sync). Books added on the iPad go to `inbox/` for the Mac (`Library.addToInbox`) |
 | `project.yml` | XcodeGen spec: `NeuralLoop` (macOS; Debug knows the repo path, Release runs only its bundled runtime) and `NeuralLoopPad` (iPadOS 17, same App sources minus the pipeline runner, AI settings, notifications, move-in, and the Mac's App struct); `PipLayers` is a folder resource in both |
 
@@ -149,6 +151,10 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   last:{n,stage}, log:{"YYYY-MM-DD": seconds}, updatedAt}` (`log`: study time per local day, counted in 15 s ticks while the
   book is in front and the app active). Decoding is lenient (a bad entry is skipped); a file that isn't JSON is kept aside as
   `progress.json.unreadable-<time>`. Merging copies keeps the most seconds per day, so merging again never inflates it.
+- **Drive app folder** (spec 07): files flat, named by path: `books/<id>/…` (only the Mac uploads these; never logs, locks,
+  state, meta, source copies, or `devices/`), `books/<id>/progress/<device>.json` (each device uploads only its own; others are
+  downloaded to `books/<id>/devices/<device>.json`), `inbox/<uuid>.{pdf,epub}` + `inbox/<uuid>.json` (`{title, addedAt}`; the Mac
+  downloads, prepares under the title, then deletes). A pad downloads media only for opened chapters.
 - **Auto-resume**: the app starts a run on its own only when there's work (`AutoResume.hasWork`) and the last run allows it:
   after exit 2 or 3 it waits until settings change; other failures back off 5 minutes, doubling, up to 6 hours.
 
@@ -159,7 +165,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
    NotebookLM, a warm worker process.
 3. `docs/specs/04-native-macos-app.md` + `docs/specs/07-every-device.md` — the SwiftUI Mac app is the product (the Tauri app
    and the per-book study site are gone; their screens live in the app). Next: Pip's animation rig, first-launch setup screen,
-   Google Drive library (spec 07), then Windows and Linux laptops; iPad is a personal extra for now.
+   Windows and Linux laptops. Done: Pip's rig, the Google Drive library and the iPad app (spec 07; needs the owner's OAuth client
+   ID in `apple/Config/Google.xcconfig`, see `docs/DEVELOPMENT.md`).
 4. `docs/specs/02-book-import-and-parsing.md` — parse preview, correct parsing, tests on real-world shapes.
 5. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
 
