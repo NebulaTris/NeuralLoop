@@ -1,8 +1,0 @@
-{
-  "name": "neuralloop-books",
-  "private": true,
-  "version": "0.1.0",
-  "license": "MIT",
-  "scripts": { "dev": "tauri dev", "build": "tauri build" },
-  "devDependencies": { "@tauri-apps/cli": "^2" }
-}

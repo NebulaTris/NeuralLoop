@@ -1,7 +1,5 @@
 # dependencies and builds
 node_modules/
-src-tauri/target/
-src-tauri/gen/
 __pycache__/
 *.egg-info/
 .pytest_cache/

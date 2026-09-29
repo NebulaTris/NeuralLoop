@@ -1,5 +1,5 @@
 // Running the book pipeline: book ids, its command line, and reading its progress lines
-// (the "Pipeline CLI" contract in CLAUDE.md; same rules as src-tauri/src/pipeline.rs and storage.rs).
+// (the "Pipeline CLI" contract in CLAUDE.md).
 
 import Foundation
 
