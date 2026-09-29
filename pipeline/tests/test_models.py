@@ -302,3 +302,57 @@ def test_openai_compatible_requests_never_hang_for_long():
 
     model = OpenAICompatModel("custom", "m", api_key="none", base_url="http://localhost:1234/v1")
     assert model.client.timeout == REQUEST_TIMEOUT <= 300 and model.client.max_retries <= 1
+
+
+def _sleeper(tmp_path):
+    """A stand-in CLI that records its process id and then never answers."""
+    script = tmp_path / "slow-cli"
+    pid_file = tmp_path / "pid"
+    script.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nexec sleep 30\n")
+    script.chmod(0o755)
+    return script, pid_file
+
+
+def _gone(pid_file) -> bool:
+    import os
+
+    if not pid_file.exists():
+        return True  # stopped before the script even started
+    try:
+        os.kill(int(pid_file.read_text()), 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+@pytest.mark.parametrize("module", ["opencode", "hermes"])
+def test_a_cli_model_that_times_out_is_killed(tmp_path, monkeypatch, module):
+    import importlib
+
+    mod = importlib.import_module(f"neuralloop_books.models.{module}")
+    monkeypatch.setattr(mod, "TIMEOUT", 1.5)
+    script, pid_file = _sleeper(tmp_path)
+    model = (mod.OpencodeModel if module == "opencode" else mod.HermesModel)("m", executable=str(script))
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(model.complete("quiz", "", "", ""))
+    assert _gone(pid_file)
+
+
+@pytest.mark.parametrize("module", ["opencode", "hermes"])
+def test_a_cancelled_cli_model_is_killed(tmp_path, module):
+    import importlib
+
+    mod = importlib.import_module(f"neuralloop_books.models.{module}")
+    script, pid_file = _sleeper(tmp_path)
+    model = (mod.OpencodeModel if module == "opencode" else mod.HermesModel)("m", executable=str(script))
+
+    async def go():
+        task = asyncio.ensure_future(model.complete("quiz", "", "", ""))
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(go())
+    assert _gone(pid_file)

@@ -4,7 +4,7 @@ import asyncio
 import re
 import shutil
 
-from . import QuotaError, SetupError
+from . import QuotaError, SetupError, communicate
 
 TIMEOUT = 1800.0
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -33,7 +33,7 @@ class OpencodeModel:
         process = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), TIMEOUT)
+        stdout, stderr = await communicate(process, TIMEOUT)
         if process.returncode != 0:
             detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):

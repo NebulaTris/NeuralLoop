@@ -6,7 +6,6 @@ import json
 import os
 import re
 import sys
-import webbrowser
 from pathlib import Path
 
 from . import aiconfig
@@ -28,7 +27,9 @@ SAMPLE_BOOK = Path(__file__).resolve().parent.parent / "sample" / "sample-book.e
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="nl_book.py", description="A whole book in, a cute study site out.")
+    parser = argparse.ArgumentParser(
+        prog="nl_book.py", description="A whole book in, learning loops for the NeuralLoop app out."
+    )
     parser.add_argument("book", nargs="?", help="a PDF or EPUB")
     parser.add_argument(
         "--chapters", default="all", help='which chapters, e.g. "1-5" or "1,3,7" (default all)'
@@ -87,7 +88,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--title")
     parser.add_argument("--out")
     parser.add_argument("--retry", action="store_true", help="retry failed and quota-limited items")
-    parser.add_argument("--no-open", action="store_true", help="don't open the study site")
+    parser.add_argument(
+        "--no-open", action="store_true", help="(does nothing; kept so older callers still work)"
+    )
     parser.add_argument(
         "--dry-run", action="store_true", help="run everything offline with a practice model and voices"
     )
@@ -247,6 +250,23 @@ def _engine(opts: Options):
     return AutoEngine(lambda: _notebooklm_engine(opts), lambda: _local_engine(opts), opts.log)
 
 
+# NotebookLM's own words for a missing or expired sign-in (not just any error that mentions "author").
+_SIGNED_OUT = re.compile(
+    r"\bnot (?:signed|logged) in\b|\bnotebooklm login\b|\bstorage[_ ]state\b|\bunauthenticated\b"
+    r"|\b(?:sign|log) ?in (?:again|first)\b|\bsession (?:has )?expired\b",
+    re.IGNORECASE,
+)
+
+
+def _is_signed_out(error: BaseException) -> bool:
+    from .notebook import is_auth_error
+
+    names = {cls.__name__ for cls in type(error).__mro__}
+    if names & {"AuthError", "AuthenticationError", "NotAuthenticatedError"} or is_auth_error(error):
+        return True
+    return bool(_SIGNED_OUT.search(str(error)))
+
+
 def _signin() -> int:
     """Sign in with Google in a real browser window; the same session is what NotebookLM uses."""
     from . import account
@@ -331,8 +351,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         engine = _engine(opts)
-        if not args.no_open:
-            opts.out.mkdir(parents=True, exist_ok=True)
         state = asyncio.run(run(opts, engine))
     except KeyboardInterrupt:
         print("\nPaused. Run the same command again to continue.")
@@ -344,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         print(error)
         return 2
     except Exception as error:
-        if any(k in f"{type(error).__name__} {error}".lower() for k in ("storage", "login", "auth")):
+        if _is_signed_out(error):
             print("You're not signed in to NotebookLM. Run: notebooklm login")
             return 3
         raise
@@ -357,8 +375,5 @@ def main(argv: list[str] | None = None) -> int:
         )
     if counts.get(FAILED):
         print("Some items failed. Run again with --retry to try them again.")
-    site_page = (opts.out / "index.html").resolve()
-    print(f"Study site: {site_page}")
-    if not args.no_open:
-        webbrowser.open(site_page.as_uri())
+    print(f"Book: {opts.out.resolve()}")
     return 0

@@ -6,6 +6,8 @@ and the fake model.
 `schema` optionally pins the exact JSON shape for this one request (only Ollama uses it).
 """
 
+import asyncio
+import contextlib
 import os
 from collections.abc import Mapping
 from typing import Protocol
@@ -30,6 +32,17 @@ class TextModel(Protocol):
     async def complete(
         self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
     ) -> str: ...
+
+
+async def communicate(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
+    """(stdout, stderr) of a model's command line; on a timeout or a cancelled run, the child stops too."""
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout)
+    except (asyncio.TimeoutError, TimeoutError, asyncio.CancelledError):
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        raise
 
 
 def resolve_provider(provider: str, env: Mapping[str, str]) -> str:

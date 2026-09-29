@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NeuralLoop book pipeline: a whole book in, a cute study site out.
+"""NeuralLoop book pipeline: a whole book in, learning loops for the NeuralLoop app out.
 
     python nl_book.py mybook.pdf
     python nl_book.py mybook.epub --media 1-3 --style kawaii

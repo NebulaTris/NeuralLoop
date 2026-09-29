@@ -64,3 +64,23 @@ def test_frames_are_compressed_against_each_other_not_all_keyframes(tmp_path):
     with av.open(str(out)) as container:
         keys = [packet.is_keyframe for packet in container.demux(container.streams.video[0]) if packet.size]
     assert sum(keys) < len(keys) / 4
+
+
+def test_narration_cannot_close_the_scene_script_early():
+    slides = [{**SLIDES[0], "narration": "Never write </script><script>alert(1)</script> in a page."}]
+    html = video.scene_html("Caching", slides, video.timeline([2.0]))
+    assert html.count("</script>") == 1 and "<\\/script>" in html
+
+
+def test_the_temporary_narration_is_removed_even_when_rendering_fails(tmp_path, monkeypatch):
+    pytest.importorskip("av")
+    pytest.importorskip("playwright")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("no browser")
+
+    monkeypatch.setattr(video, "scene_html", broken)
+    clips = [write_tone(tmp_path / "a.wav", 0.5)]
+    with pytest.raises(RuntimeError):
+        video.render(tmp_path / "e.mp4", "Caching", SLIDES[:1], clips, fps=6, size=(320, 180))
+    assert not (tmp_path / "e.narration.wav").exists()

@@ -72,6 +72,7 @@ class LocalEngine:
         self._sources: dict[int, str] = {}
         self._mind_maps: dict[int, dict] = {}
         self._source_locks: dict[int, asyncio.Lock] = {}
+        self._mind_map_locks: dict[int, asyncio.Lock] = {}  # the graph fallback and the item share one
         self._speaking = asyncio.Lock()  # speech models are big: one clip at a time
 
     @classmethod
@@ -221,10 +222,11 @@ class LocalEngine:
 
     async def _mindmap(self, chapter):
         n = chapter["n"]
-        if n not in self._mind_maps:  # the graph fallback may already have made it
-            self._mind_maps[n] = await self._ask(
-                "mindmap", chapter, self._fill(prompts.MINDMAP, chapter), convert.mind_map, "mind map"
-            )
+        async with self._mind_map_locks.setdefault(n, asyncio.Lock()):
+            if n not in self._mind_maps:  # the graph fallback may already have made it (or be making it)
+                self._mind_maps[n] = await self._ask(
+                    "mindmap", chapter, self._fill(prompts.MINDMAP, chapter), convert.mind_map, "mind map"
+                )
         return {"mindmap": self._mind_maps[n]}
 
     async def _audio(self, chapter):

@@ -7,7 +7,7 @@ import pytest
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
 from neuralloop_books.fake_client import ENUMS, FakeClient, FakeQuotaClient, FakeStaleSessionClient
-from neuralloop_books.models import QuotaError
+from neuralloop_books.models import QuotaError, SetupError
 from neuralloop_books.models.fake import FakeModel
 from neuralloop_books.pipeline import Options, run
 from neuralloop_books.speech.fake import FakeSpeech
@@ -29,8 +29,7 @@ def run_local(opts, model=None):
 
 
 def book_data(out):
-    text = (out / "book-data.js").read_text()
-    return json.loads(text[len("window.BOOK = ") :].rstrip(";\n"))
+    return json.loads((out / "book.json").read_text())
 
 
 def test_full_run_makes_every_item_and_the_site(options):
@@ -44,7 +43,7 @@ def test_full_run_makes_every_item_and_the_site(options):
     assert first["quiz"] and first["cards"] and first["recall"] and first["graph"]["concepts"]
     data = book_data(options.out)
     assert data["chapters"][0]["read"]["kind"] == "text" and len(data["graph"]["nodes"]) == 14
-    assert (options.out / "index.html").exists() and (options.out / "knowledge-graph.json").exists()
+    assert (options.out / "knowledge-graph.json").exists() and not (options.out / "index.html").exists()
 
 
 def test_rerunning_does_not_redo_finished_work(options):
@@ -159,9 +158,11 @@ def test_every_engine_builds_the_book_map(options):
 FIXTURE = Path(__file__).parent / "fixtures" / "book.json"
 
 
-def test_book_json_matches_the_study_site_payload(options):
+def test_the_book_map_file_matches_book_json_and_no_half_written_files_are_left(options):
     run_local(options)
-    assert json.loads((options.out / "book.json").read_text()) == book_data(options.out)
+    graph = json.loads((options.out / "knowledge-graph.json").read_text())
+    assert graph == book_data(options.out)["graph"] and graph["nodes"]
+    assert not list(options.out.glob("*.tmp")) and not (options.out / "book-data.js").exists()
 
 
 def test_the_shared_fixture_still_has_every_field_the_pipeline_writes(options):
@@ -182,12 +183,112 @@ def test_a_crashed_run_is_resumed_and_its_working_items_finished(options):
 
 
 def test_two_runs_never_prepare_the_same_book_at_once(options):
+    import fcntl
     import os
 
     options.out.mkdir(parents=True)
-    (options.out / ".running").write_text(str(os.getpid()))  # this test process is alive: a run "in progress"
-    with pytest.raises(ValueError, match="already being prepared"):
-        run_local(options)
+    with open(options.out / ".running", "w") as held:  # another run holds the book's lock
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.write(str(os.getpid()))
+        held.flush()
+        with pytest.raises(ValueError, match="already being prepared"):
+            run_local(options)
+
+
+def test_a_second_run_started_during_the_first_stops(options):
+    from neuralloop_books.pipeline import _book_lock
+
+    options.out.mkdir(parents=True)
+    with _book_lock(options.out):
+        assert (options.out / ".running").read_text().strip() == str(__import__("os").getpid())
+        with pytest.raises(ValueError, match="already being prepared"), _book_lock(options.out):
+            pass
+    with _book_lock(options.out):  # released: the next run gets it
+        pass
+    assert not (options.out / ".running").exists()
+
+
+def test_a_left_over_lock_file_whose_process_id_was_reused_does_not_block(options):
+    """After a crash (even SIGKILL) nothing holds the lock, whatever process now has that id."""
+    import os
+
+    options.out.mkdir(parents=True)
+    (options.out / ".running").write_text(str(os.getpid()))  # a live process, but it holds no lock
+    assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
+
+
+class SetupFailsWhileMediaRuns:
+    """One item needs setup fixed while a slow podcast is still being made."""
+
+    name = "Timer"
+
+    def __init__(self):
+        self.running = 0
+        self.running_at_exit = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.running_at_exit = self.running
+        return False
+
+    async def prepare(self, state):
+        pass
+
+    async def make(self, task, chapter):
+        self.running += 1
+        try:
+            if task == "study":
+                await asyncio.sleep(0.05)
+                raise SetupError("the key was revoked")
+            await asyncio.sleep(5 if task in ("audio", "video") else 0)
+            return {}
+        finally:
+            self.running -= 1
+
+
+def test_a_setup_error_cancels_the_other_items_before_the_engine_closes(options):
+    engine = SetupFailsWhileMediaRuns()
+    with pytest.raises(SetupError):
+        asyncio.run(run(options, engine))
+    assert engine.running_at_exit == 0
+
+
+class Failing:
+    def __init__(self, name, error=None):
+        self.name, self.error = name, error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def prepare(self, state):
+        pass
+
+    async def make(self, task, chapter):
+        if self.error and task == "quiz":
+            raise self.error
+        return {}
+
+
+def test_a_limit_on_the_local_fallback_is_logged_with_the_fallbacks_name(options):
+    from neuralloop_books.engines.auto import AutoEngine
+
+    lines = []
+    options.log = lines.append
+    engine = AutoEngine(
+        lambda: Failing("NotebookLM", RuntimeError("boom")),
+        lambda: Failing("Ollama", QuotaError("slow down")),
+        options.log,
+    )
+    state = asyncio.run(run(options, engine))
+    quiz = state.chapters[0]["tasks"]["quiz"]
+    assert quiz["status"] == WAITING and quiz["error"].startswith("Ollama")
+    assert any("quiz: Ollama limit reached" in line for line in lines)
+    assert not any("NotebookLM limit reached" in line for line in lines)
 
 
 def test_a_stale_lock_from_a_dead_run_does_not_block(options):

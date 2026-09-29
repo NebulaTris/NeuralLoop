@@ -6,6 +6,8 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 
 import asyncio
 
+from ..models import SetupError
+
 
 class AutoEngine:
     def __init__(self, primary_factory, fallback_factory, log):
@@ -14,6 +16,7 @@ class AutoEngine:
         self._fallback_lock = asyncio.Lock()
         self._state = None
         self._why = ""
+        self._fallback_error: SetupError | None = None  # the local engine couldn't be set up this run
 
     @property
     def name(self) -> str:
@@ -53,13 +56,21 @@ class AutoEngine:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
             except Exception as error:  # this item is made locally instead; the book always finishes
-                fallback = await self._fallback_ready()
+                try:
+                    fallback = await self._fallback_ready()
+                except SetupError:
+                    # No local engine to hand it to: this item fails on its own; the rest carry on.
+                    raise _tagged(error, self.primary.name) from None
                 self._log(
                     f"  ↪ chapter {chapter['n']} {task}: NotebookLM couldn't ({_short(error)}); "
                     f"making it with {fallback.name}"
                 )
         fallback = await self._fallback_ready()
-        return {**await fallback.make(task, chapter), "_by": fallback.name}
+        try:
+            return {**await fallback.make(task, chapter), "_by": fallback.name}
+        except Exception as error:  # say who failed, so a limit is reported under the right name
+            _tagged(error, fallback.name)
+            raise
 
     async def _drop_primary(self, error: BaseException) -> None:
         self._why = _short(error)
@@ -68,12 +79,36 @@ class AutoEngine:
 
     async def _fallback_ready(self):
         async with self._fallback_lock:
+            if self._fallback_error is not None:
+                raise self._fallback_error
             if self.fallback is None:
-                fallback = self._fallback_factory()
-                await fallback.__aenter__()
-                await fallback.prepare(self._state)
+                try:
+                    fallback = self._fallback_factory()
+                    await fallback.__aenter__()
+                    try:
+                        await fallback.prepare(self._state)
+                    except BaseException:
+                        await fallback.__aexit__(None, None, None)
+                        raise
+                except SetupError as error:
+                    self._fallback_error = error  # don't try setting it up again for every failing item
+                    raise
                 self.fallback = fallback
+                if self.primary is not None:
+                    # A mid-run fallback records its provider and model, but the book is still made by auto.
+                    self._state.data["engine"] = "auto"
+                    self._state.save()
         return self.fallback
+
+
+def made_by(error: BaseException, default: str) -> str:
+    """The engine that actually ran the item that raised `error` (auto can hand items to its fallback)."""
+    return getattr(error, "engine_name", None) or default
+
+
+def _tagged(error: BaseException, name: str) -> BaseException:
+    error.engine_name = name
+    return error
 
 
 def _short(error: BaseException) -> str:

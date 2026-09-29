@@ -21,7 +21,7 @@ def test_bad_media_spec_is_reported_not_crashed(epub, tmp_path, capsys):
 
 def test_dry_run_end_to_end(epub, tmp_path, capsys):
     assert main([str(epub), "--dry-run", "--no-open", "--out", str(tmp_path / "o")]) == 0
-    assert "Study site:" in capsys.readouterr().out
+    assert "Book: " in capsys.readouterr().out
 
 
 def test_new_flags_parse(epub):
@@ -96,3 +96,35 @@ def test_the_local_fallback_can_start_inside_a_running_book_run(tmp_path, monkey
 
     asyncio.run(inside_a_run())
     assert started  # Ollama was started from inside the loop
+
+
+def test_a_broken_book_exits_2_with_a_friendly_message(tmp_path, capsys):
+    book = tmp_path / "broken.epub"
+    book.write_bytes(b"not a zip at all")
+    assert main([str(book), "--dry-run", "--no-open", "--out", str(tmp_path / "o")]) == 2
+    assert "This book couldn't be read" in capsys.readouterr().out
+
+
+def test_only_real_sign_in_problems_are_reported_as_not_signed_in(epub, tmp_path, capsys, monkeypatch):
+    from neuralloop_books import cli
+
+    class AuthError(Exception):
+        pass
+
+    def fails_with(error):
+        async def run(opts, engine):
+            raise error
+
+        return run
+
+    args = [str(epub), "--dry-run", "--no-open", "--out", str(tmp_path / "o")]
+    monkeypatch.setattr(cli, "run", fails_with(AuthError("session expired")))
+    assert main(args) == 3 and "not signed in" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "run", fails_with(RuntimeError("Not signed in. Run: notebooklm login")))
+    assert main(args) == 3
+    monkeypatch.setattr(cli, "run", fails_with(RuntimeError("the book's author field is odd")))
+    with pytest.raises(RuntimeError, match="author"):
+        main(args)
+    monkeypatch.setattr(cli, "run", fails_with(RuntimeError("couldn't write to storage")))
+    with pytest.raises(RuntimeError, match="storage"):
+        main(args)

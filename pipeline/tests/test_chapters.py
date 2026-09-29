@@ -97,3 +97,52 @@ def test_epub_emphasis_and_lists_survive(tmp_path):
     text = (out / chapters[0]["file"]).read_text()
     assert "*important*" in text and "**very**" in text
     assert "- First" in text and "- Second" in text
+
+
+@pytest.mark.parametrize("nav", [True, False])
+def test_chapters_anchored_inside_one_file_become_separate_chapters(tmp_path, nav):
+    chapters = [("Caching", "Cache " + LONG), ("Queues", "Queue " + LONG), ("Logs", "Log " + LONG)]
+    book = write_epub(tmp_path / "b.epub", chapters, nav=nav, one_file=True)
+    out = tmp_path / "out"
+    made = split_book(book, out)
+    assert [c["title"] for c in made] == ["Caching", "Queues", "Logs"]
+    texts = [(out / c["file"]).read_text() for c in made]
+    for text, word, others in zip(
+        texts,
+        ("Cache", "Queue", "Log"),
+        (("Queue", "Log"), ("Cache", "Log"), ("Cache", "Queue")),
+        strict=True,
+    ):
+        assert f"{word} Systems" in text
+        assert not any(f"{other} Systems" in text for other in others)
+
+
+def test_table_of_contents_links_with_fragments_to_separate_files_work_as_before(tmp_path):
+    book = write_epub(tmp_path / "b.epub", [("One", LONG), ("Two", LONG)], anchors=True)
+    out = tmp_path / "out"
+    made = split_book(book, out)
+    assert [c["title"] for c in made] == ["One", "Two"]
+    assert (out / "01.md").read_text().startswith("# One\n\n# One")
+
+
+def _epub_with(tmp_path, entries: dict[str, str]):
+    path = tmp_path / "broken.epub"
+    with zipfile.ZipFile(path, "w") as z:
+        for name, text in entries.items():
+            z.writestr(name, text)
+    return path
+
+
+@pytest.mark.parametrize(
+    "make_book",
+    [
+        lambda tmp: _epub_with(tmp, {"mimetype": "application/epub+zip"}),  # no container.xml
+        lambda tmp: _epub_with(tmp, {"META-INF/container.xml": "<container><rootfiles/></container>"}),
+        lambda tmp: _epub_with(tmp, {"META-INF/container.xml": '<rootfile full-path="OEBPS/missing.opf"/>'}),
+        lambda tmp: (tmp / "notzip.epub").write_bytes(b"this is not a zip") and tmp / "notzip.epub",
+        lambda tmp: (tmp / "broken.pdf").write_bytes(b"%PDF-1.4 nonsense") and tmp / "broken.pdf",
+    ],
+)
+def test_malformed_books_say_they_could_not_be_read(tmp_path, make_book):
+    with pytest.raises(ValueError, match="couldn't be read"):
+        split_book(make_book(tmp_path), tmp_path / "out")

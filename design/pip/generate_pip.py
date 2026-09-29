@@ -1,8 +1,8 @@
 """Pip the red panda: the single source of truth for Pip's artwork and animation.
 
 Run `python design/pip/generate_pip.py` from the repo root to regenerate:
-  - pipeline/site/pip-poses.js   (study site)
-  - src/pip-poses.js             (desktop app)
+  - apple/App/Resources/pip-poses.js                 (the Mac app)
+  - pipeline/neuralloop_books/assets/pip-poses.js   (explainer videos)
 Never edit those files by hand. See docs/specs/03-pip-design-system.md.
 """
 
@@ -341,7 +341,7 @@ POSES = {
     "study": pose_focus,
     "proud": pose_proud,
 }
-OUTPUTS = ("pipeline/site/pip-poses.js", "apple/App/Resources/pip-poses.js")
+OUTPUTS = ("apple/App/Resources/pip-poses.js", "pipeline/neuralloop_books/assets/pip-poses.js")
 
 
 def build_js() -> str:

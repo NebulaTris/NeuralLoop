@@ -279,3 +279,21 @@ def test_a_local_openai_compatible_server_gets_a_small_context_budget(tmp_path):
     remote = OpenAICompatModel("custom", "m", api_key="k", base_url="https://api.together.xyz/v1")
     assert LocalEngine.from_options(opts, local, FakeSpeech()).budget <= 12_000
     assert LocalEngine.from_options(opts, remote, FakeSpeech()).budget >= 100_000
+
+
+class SlowMindMapModel(NoGraphModel):
+    async def complete(self, kind, system, source, prompt, schema=None):
+        if kind == "mindmap":
+            await asyncio.sleep(0.05)
+        return await super().complete(kind, system, source, prompt, schema)
+
+
+def test_the_graph_fallback_and_the_mind_map_item_make_the_mind_map_once(tmp_path, chapter):
+    engine = engine_for(tmp_path, SlowMindMapModel())
+
+    async def both():
+        return await asyncio.gather(engine.make("graph", chapter), engine.make("mindmap", chapter))
+
+    graph, mind_map = asyncio.run(both())
+    assert graph["graph"] and mind_map["mindmap"]["name"] == "Caching"
+    assert [k for k, _ in engine.model.calls].count("mindmap") == 1

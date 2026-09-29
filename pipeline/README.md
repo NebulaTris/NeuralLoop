@@ -1,36 +1,18 @@
-# NeuralLoop book pipeline (NotebookLM POC)
+# NeuralLoop book pipeline
 
-A whole book in, a cute study site out, in one command.
+A whole book in, learning loops out, in one command. The NeuralLoop Mac app runs this for you; you can also run it directly.
 
-## Setup (once)
-For development: `pip install -e ".[dev]"`, then `pytest` (and `cd site && npm install && npm test`).
-
-## Setup for use
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install "notebooklm-py[browser]" pypdf
-python -m playwright install chromium
-notebooklm login
+pip install -e ".[all]"             # or pick extras: anthropic, openai, rumik, notebooklm, video
+python nl_book.py --dry-run --out /tmp/demo          # offline, with a practice model and voices
+python nl_book.py mybook.epub --out neuralloop-mybook # NotebookLM when signed in (--signin), your own AI otherwise
 ```
 
-## Run
-```bash
-python nl_book.py --dry-run                         # try the whole flow offline first
-python nl_book.py ~/Books/my-book.pdf               # or .epub
-python nl_book.py ~/Books/my-book.pdf --media 1-5 --style kawaii --audio debate
-```
-Open `neuralloop-<book>/index.html` any time; it updates itself while the pipeline runs.
+For development: `pip install -e ".[dev]"`, then `pytest`.
 
-Re-run the same command to continue after NotebookLM's daily limit, or add `--retry` to retry failed items.
+Each run writes the book's folder: `book.json` (everything the app shows), `knowledge-graph.json` (the book map in
+Understand-Anything's format), the chapters, and the media. Run the same command again to continue where it stopped;
+`--retry` tries failed and limit-waiting items again. See `CLAUDE.md` in the repo root for every flag and file.
 
-| Option | Meaning |
-|---|---|
-| `--chapters 1-5` | only these chapters (default all) |
-| `--media 1-3` | chapters that also get a podcast + video (default 1-3, "all", or "none") |
-| `--audio` | deep-dive, brief, critique, debate, none |
-| `--video` | explainer, brief, short, none |
-| `--style` | kawaii (default), whiteboard, classic, watercolor, anime, paper-craft, retro-print, heritage, auto |
-| `--language` | e.g. en, hi |
-| `--parallel 2` | items made at the same time |
-
-The book is sent to Google through notebooklm-py (unofficial APIs that can change). Use books you own; the site stays on your computer.
+The book is sent to the AI you choose (Google NotebookLM through notebooklm-py, which uses unofficial APIs that can change, or
+your own model). Use books you own.

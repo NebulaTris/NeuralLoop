@@ -28,13 +28,36 @@ class UnsafeBookError(ValueError):
 
 
 def split_book(path: Path, out_dir: Path) -> list[dict]:
-    """Write one file per chapter into ``out_dir`` and return chapter records."""
+    """Write one file per chapter into ``out_dir`` and return chapter records.
+
+    Raises ValueError with a message for people when the file isn't a readable PDF or EPUB.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    if path.suffix.lower() == ".pdf":
-        return split_pdf(path, out_dir)
-    if path.suffix.lower() == ".epub":
-        return split_epub(path, out_dir)
-    raise ValueError("The book must be a PDF or an EPUB.")
+    suffix = path.suffix.lower()
+    if suffix not in (".pdf", ".epub"):
+        raise ValueError("The book must be a PDF or an EPUB.")
+    try:
+        return split_pdf(path, out_dir) if suffix == ".pdf" else split_epub(path, out_dir)
+    except (UnsafeBookError, UnreadableBookError):
+        raise
+    except OSError:
+        raise  # the disk, not the book: let the real problem show
+    except Exception as error:  # any parse failure in a damaged or unusual book file
+        raise UnreadableBookError(_unreadable(error)) from error
+
+
+class UnreadableBookError(ValueError):
+    """The file is damaged or not really a PDF or EPUB."""
+
+
+def _unreadable(error: BaseException | str) -> str:
+    detail = (
+        error if isinstance(error, str) else (str(error).strip().splitlines() or [type(error).__name__])[0]
+    )
+    return (
+        f"This book couldn't be read: {detail[:160]}. "
+        "Try another copy of the file (one that opens in a book reader), or a PDF of it."
+    )
 
 
 def is_front_matter(title: str) -> bool:
@@ -104,14 +127,19 @@ def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
 
 
 def split_epub(path: Path, out_dir: Path) -> list[dict]:
-    with zipfile.ZipFile(str(path)) as book:
+    try:
+        book = zipfile.ZipFile(str(path))
+    except zipfile.BadZipFile as error:
+        raise UnreadableBookError(_unreadable("it isn't a valid EPUB (zip) file")) from error
+    with book:
         _check_epub_is_safe(book)
         spine, toc = _epub_spine_and_toc(book)
-        starts = _toc_starts(spine, toc) or [(f"Part {i + 1}", i) for i in range(len(spine))]
+        documents = _Documents(book)
+        starts = _toc_starts(spine, toc, documents) or [(f"Part {i + 1}", i, 0) for i in range(len(spine))]
         chapters = []
-        for i, (title, first) in enumerate(starts):
-            end = starts[i + 1][1] if i + 1 < len(starts) else len(spine)
-            text = _html_to_markdown(book, spine[first:end])
+        for i, (title, _, _) in enumerate(starts):
+            pieces = _pieces(spine, starts, i)
+            text = _html_to_markdown(documents, pieces)
             if is_front_matter(title) or len(text) < MIN_EPUB_CHARS:
                 continue
             number = len(chapters) + 1
@@ -120,6 +148,39 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
             chapters.append({"n": number, "title": title, "file": file.name, "chars": len(text)})
         return chapters
+
+
+def _pieces(
+    spine: list[str], starts: list[tuple[str, int, int]], i: int
+) -> list[tuple[str, int, int | None]]:
+    """(document, from offset, to offset or None for its end) that make up chapter i."""
+    _, first, offset = starts[i]
+    if i + 1 < len(starts):
+        end, end_offset = starts[i + 1][1], starts[i + 1][2]
+    else:
+        end, end_offset = len(spine), 0
+    if end == first:  # the next chapter starts further into the same file
+        return [(spine[first], offset, end_offset)]
+    pieces = [(spine[first], offset, None)]
+    pieces += [(name, 0, None) for name in spine[first + 1 : end]]
+    if end_offset:
+        pieces.append((spine[end], 0, end_offset))
+    return pieces
+
+
+class _Documents:
+    """The archive's XHTML files, decoded once. Missing ones read as None."""
+
+    def __init__(self, book: zipfile.ZipFile):
+        self.book, self._cache = book, {}
+
+    def get(self, name: str) -> str | None:
+        if name not in self._cache:
+            try:
+                self._cache[name] = _read(self.book, name)
+            except KeyError:  # listed in the spine but missing from the archive
+                self._cache[name] = None
+        return self._cache[name]
 
 
 def _check_epub_is_safe(book: zipfile.ZipFile) -> None:
@@ -139,10 +200,20 @@ def _read(book: zipfile.ZipFile, name: str) -> str:
     return book.read(name).decode("utf-8", "ignore")
 
 
-def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[str, str]]]:
-    container = _read(book, "META-INF/container.xml")
-    opf_path = re.search(r'full-path="([^"]+)"', container).group(1)
-    opf, base = _read(book, opf_path), dirname(opf_path)
+def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[str, str, str]]]:
+    try:
+        container = _read(book, "META-INF/container.xml")
+    except KeyError as error:
+        raise UnreadableBookError(_unreadable("its META-INF/container.xml is missing")) from error
+    found = re.search(r'full-path="([^"]+)"', container)
+    if not found:
+        raise UnreadableBookError(_unreadable("its container.xml doesn't say where the book's contents are"))
+    opf_path = found.group(1)
+    try:
+        opf = _read(book, opf_path)
+    except KeyError as error:
+        raise UnreadableBookError(_unreadable(f"its package file {opf_path} is missing")) from error
+    base = dirname(opf_path)
     manifest: dict[str, tuple[str, str]] = {}
     for item in re.findall(r"<item\b[^>]*>", opf):
         item_id, href = re.search(r'\bid="([^"]+)"', item), re.search(r'\bhref="([^"]+)"', item)
@@ -161,7 +232,7 @@ def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[st
     return spine, toc
 
 
-def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str]]:
+def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str, str]]:
     block = re.search(r"<nav[^>]*toc[^>]*>(.*?)</nav>", _read(book, nav), re.DOTALL)
     if not block:
         return []
@@ -171,34 +242,57 @@ def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str]]:
         else block.group(1)
     )
     return [
-        (
-            re.sub(r"<[^>]+>", "", html.unescape(label)).strip(),
-            normpath(join(dirname(nav), unquote(urldefrag(href)[0]))),
-        )
+        (re.sub(r"<[^>]+>", "", html.unescape(label)).strip(), *_target(nav, href))
         for href, label in re.findall(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', top_level, re.DOTALL)
     ]
 
 
-def _ncx_toc(book: zipfile.ZipFile, ncx: str) -> list[tuple[str, str]]:
+def _ncx_toc(book: zipfile.ZipFile, ncx: str) -> list[tuple[str, str, str]]:
     points = re.findall(
         r"<navPoint[^>]*>\s*<navLabel>\s*<text>(.*?)</text>.*?<content[^>]*src=\"([^\"]+)\"",
         _read(book, ncx),
         re.DOTALL,
     )
-    return [
-        (html.unescape(label).strip(), normpath(join(dirname(ncx), unquote(urldefrag(src)[0]))))
-        for label, src in points
-    ]
+    return [(html.unescape(label).strip(), *_target(ncx, src)) for label, src in points]
 
 
-def _toc_starts(spine: list[str], toc: list[tuple[str, str]]) -> list[tuple[str, int]]:
-    """(title, spine index) where each table-of-contents entry begins, in reading order."""
-    starts, seen = [], set()
-    for title, href in toc:
-        if href in spine and href not in seen:
-            seen.add(href)
-            starts.append((title, spine.index(href)))
-    return sorted(starts, key=lambda s: s[1])
+def _target(toc_file: str, href: str) -> tuple[str, str]:
+    """(file in the archive, #fragment or "") a table-of-contents link points at."""
+    path, fragment = urldefrag(html.unescape(href))
+    return normpath(join(dirname(toc_file), unquote(path))), unquote(fragment)
+
+
+def _toc_starts(
+    spine: list[str], toc: list[tuple[str, str, str]], documents: _Documents
+) -> list[tuple[str, int, int]]:
+    """(title, spine index, offset in that file) where each table-of-contents entry begins, in reading order.
+
+    Usually each entry is its own file (offset 0). Some books keep several chapters in one file and link to
+    them by #anchor: those entries start at their anchor instead.
+    """
+    by_file: dict[str, list[tuple[str, str]]] = {}
+    for title, href, fragment in toc:
+        if href in spine:
+            by_file.setdefault(href, []).append((title, fragment))
+    starts = []
+    for href, entries in by_file.items():
+        index = spine.index(href)
+        (title, _), rest = entries[0], entries[1:]
+        starts.append((title, index, 0))  # the file's first entry takes everything before the next anchor
+        text = documents.get(href) if rest else None
+        seen = {0}
+        for title, fragment in rest:
+            offset = _anchor_offset(text, fragment) if text and fragment else None
+            if offset and offset not in seen:
+                seen.add(offset)
+                starts.append((title, index, offset))
+    return sorted(starts, key=lambda s: (s[1], s[2]))
+
+
+def _anchor_offset(text: str, fragment: str) -> int | None:
+    """Where the element with id (or name) `fragment` begins in the file's text."""
+    found = re.search(rf"""<[A-Za-z][^>]*?\s(?:id|name)\s*=\s*["']{re.escape(fragment)}["']""", text)
+    return found.start() if found else None
 
 
 class _MarkdownText(HTMLParser):
@@ -271,14 +365,14 @@ class _MarkdownText(HTMLParser):
         return re.sub(r"\n{3,}", "\n\n", joined).strip()
 
 
-def _html_to_markdown(book: zipfile.ZipFile, documents: list[str]) -> str:
+def _html_to_markdown(documents: _Documents, pieces: list[tuple[str, int, int | None]]) -> str:
     parser = _MarkdownText()
-    for name in documents:
-        parser.document = name
-        try:
-            parser.feed(_read(book, name))
-        except KeyError:  # listed in the spine but missing from the archive
+    for name, start, end in pieces:
+        text = documents.get(name)
+        if text is None:
             continue
+        parser.document = name
+        parser.feed(text[start:end])
     return parser.text()
 
 

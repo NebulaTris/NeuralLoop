@@ -5,6 +5,7 @@ fake (fake_client.py) run exactly the same code.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -21,14 +22,17 @@ from .config import (
     audio_length,
 )
 
-_QUOTA_HINTS = (
-    "ratelimit",
-    "rate limit",
-    "quota",
-    "limit reached",
-    "daily limit",
-    "resource_exhausted",
-    "429",
+# Word boundaries, so "page 429" or "after 1429s" never read as a limit.
+_QUOTA = re.compile(
+    r"rate[\s_-]?limit"
+    r"|\bquota"
+    r"|\blimit\s+(?:has\s+been\s+)?reached\b"
+    r"|\b(?:daily|hourly|weekly|monthly|usage|request|generation)\s+limit\b"
+    r"|\bresource[\s_]exhausted\b"
+    r"|\btoo\s+many\s+requests\b"
+    r"|\b(?:status|error|code|http(?:/[\d.]+)?)[\s:=]*429\b"
+    r"|\b429\s+too\s+many\b",
+    re.IGNORECASE,
 )
 
 
@@ -41,8 +45,7 @@ def is_quota_error(error: BaseException) -> bool:
 
     if isinstance(error, QuotaError):
         return True
-    text = f"{type(error).__name__} {error}".lower()
-    return any(hint in text for hint in _QUOTA_HINTS)
+    return bool(_QUOTA.search(f"{type(error).__name__} {error}"))
 
 
 def is_auth_error(error: BaseException) -> bool:
@@ -108,7 +111,10 @@ class ChapterMaker:
         data = await self._generate_and_download(
             chapter, "quiz", self.client.artifacts.generate_quiz, self.client.artifacts.download_quiz, sources
         )
-        return {"quiz": convert.quiz(data)}
+        quiz = convert.quiz(data)
+        if not quiz:
+            raise UnusableAnswer("NotebookLM's quiz had no usable questions")
+        return {"quiz": quiz}
 
     async def _cards(self, chapter, sources):
         data = await self._generate_and_download(
@@ -118,7 +124,10 @@ class ChapterMaker:
             self.client.artifacts.download_flashcards,
             sources,
         )
-        return {"cards": convert.flashcards(data)}
+        cards = convert.flashcards(data)
+        if not cards:
+            raise UnusableAnswer("NotebookLM's flashcards had no usable cards")
+        return {"cards": cards}
 
     async def _generate_and_download(self, chapter, task, generate, download, sources):
         status = await generate(self.notebook_id, source_ids=sources)

@@ -16,7 +16,7 @@ from pathlib import Path
 from . import audio
 
 ASSETS = Path(__file__).resolve().parent / "assets"
-PIP_FILE = Path(__file__).resolve().parent.parent / "site" / "pip-poses.js"
+PIP_FILE = ASSETS / "pip-poses.js"
 GAP = 0.6  # seconds between slides
 FPS = 24
 SIZE = (1280, 720)
@@ -108,7 +108,7 @@ li::before{{content:"";position:absolute;left:4px;top:.42em;width:18px;height:18
 <div class="blob" id="b1"></div><div class="blob" id="b2"></div><div class="blob" id="b3"></div>
 {slide_html}<div id="brand">NeuralLoop · Pip explains</div><div id="bar"></div></div>
 <script>
-const DATA = {json.dumps(data)};
+const DATA = {_script_json(data)};
 const TOTAL = {total_length(spans)};
 const ease = x => 1 - Math.pow(1 - Math.min(Math.max(x, 0), 1), 3);
 const springIn = x => x <= 0 ? 0 : 1 + Math.exp(-6 * x) * Math.sin(12 * x) * -0.12;
@@ -148,6 +148,11 @@ window.renderAt = renderAt;
 </script></body></html>"""
 
 
+def _script_json(value) -> str:
+    """JSON that is safe inside <script>: narration saying "</script>" can't end the scene's code."""
+    return json.dumps(value).replace("</", "<\\/")
+
+
 def _decode_png(png: bytes, av):
     with av.open(io.BytesIO(png), format="png_pipe") as image:
         return next(image.decode(video=0))
@@ -180,34 +185,36 @@ def render(
     from playwright.sync_api import sync_playwright
 
     narration = out.with_suffix(".narration.wav")
-    lengths = audio.join_wavs(clips, narration, pause=GAP)
-    spans = timeline(lengths)
-    frames = int(total_length(spans) * fps) + 1
-    page_html = scene_html(title, slides, spans, size)
+    try:
+        lengths = audio.join_wavs(clips, narration, pause=GAP)
+        spans = timeline(lengths)
+        frames = int(total_length(spans) * fps) + 1
+        page_html = scene_html(title, slides, spans, size)
 
-    with av.open(str(out), "w") as container:
-        video_stream = _encoder(av, container, fps, size)
-        audio_stream = container.add_stream("aac", rate=24000)
-        with sync_playwright() as p:
-            browser = _browser(p)
-            page = browser.new_page(viewport={"width": size[0], "height": size[1]})
-            page.set_content(page_html)
-            page.evaluate("document.fonts.ready")
-            for i in range(frames):
-                page.evaluate(f"renderAt({i / fps})")
-                frame = _decode_png(page.screenshot(type="png"), av).reformat(format="yuv420p")
-                # A decoded PNG is marked as an intra frame; left as is, every frame becomes a keyframe (huge files).
-                frame.pict_type = av.video.frame.PictureType.NONE
-                frame.pts, frame.time_base = i, Fraction(1, fps)
-                container.mux(video_stream.encode(frame))
-            browser.close()
-        container.mux(video_stream.encode())
-        with av.open(str(narration)) as sound:
-            for frame in sound.decode(audio=0):
-                frame.pts = None
-                container.mux(audio_stream.encode(frame))
-        container.mux(audio_stream.encode())
-    narration.unlink(missing_ok=True)
+        with av.open(str(out), "w") as container:
+            video_stream = _encoder(av, container, fps, size)
+            audio_stream = container.add_stream("aac", rate=24000)
+            with sync_playwright() as p:
+                browser = _browser(p)
+                page = browser.new_page(viewport={"width": size[0], "height": size[1]})
+                page.set_content(page_html)
+                page.evaluate("document.fonts.ready")
+                for i in range(frames):
+                    page.evaluate(f"renderAt({i / fps})")
+                    frame = _decode_png(page.screenshot(type="png"), av).reformat(format="yuv420p")
+                    # A decoded PNG is marked as an intra frame; left as is, every frame becomes a keyframe (huge files).
+                    frame.pict_type = av.video.frame.PictureType.NONE
+                    frame.pts, frame.time_base = i, Fraction(1, fps)
+                    container.mux(video_stream.encode(frame))
+                browser.close()
+            container.mux(video_stream.encode())
+            with av.open(str(narration)) as sound:
+                for frame in sound.decode(audio=0):
+                    frame.pts = None
+                    container.mux(audio_stream.encode(frame))
+            container.mux(audio_stream.encode())
+    finally:
+        narration.unlink(missing_ok=True)  # also when the browser or encoder fails
     return out
 
 

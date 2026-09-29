@@ -1,7 +1,9 @@
-"""Write a book's data (book.json for the app, book-data.js for the site) plus the site's static files."""
+"""Write a book's data for the app: book.json (everything the app shows) and knowledge-graph.json
+(the book map in Understand-Anything's format). Both are written atomically, so the app never reads half
+a file."""
 
 import json
-import shutil
+import os
 import time
 from pathlib import Path
 
@@ -9,8 +11,6 @@ from . import book_graph
 from .config import TASKS
 from .state import BookState
 
-SITE_DIR = Path(__file__).resolve().parent.parent / "site"
-SITE_FILES = ("index.html", "styles.css", "app.js", "pip-poses.js")
 MAX_TEXT = 400_000
 CHAPTER_FIELDS = (
     "n",
@@ -27,9 +27,11 @@ CHAPTER_FIELDS = (
     "explainer",
     "transcript",
 )
+# Chapter text never changes after splitting; keep it instead of re-reading every chapter after every item.
+_texts: dict[Path, tuple[int, int, str]] = {}
 
 
-def build(out_dir: Path, state: BookState, options: dict) -> None:
+def write(out_dir: Path, state: BookState, options: dict) -> None:
     data = {
         "title": state.data["title"],
         "source": state.data["source"],
@@ -42,18 +44,14 @@ def build(out_dir: Path, state: BookState, options: dict) -> None:
         "chapters": [_chapter_payload(out_dir, c) for c in state.chapters],
         "graph": book_graph.build(state.chapters),
     }
-    payload = json.dumps(data, ensure_ascii=False)
-    (out_dir / "book-data.js").write_text("window.BOOK = " + payload + ";\n", encoding="utf-8")
-    # The native app reads book.json; written atomically so it never sees half a file.
-    tmp = out_dir / "book.json.tmp"
-    tmp.write_text(payload, encoding="utf-8")
-    tmp.replace(out_dir / "book.json")
-    (out_dir / "knowledge-graph.json").write_text(
-        json.dumps(data["graph"], indent=1, ensure_ascii=False), encoding="utf-8"
-    )
-    for name in SITE_FILES:
-        if (SITE_DIR / name).exists():
-            shutil.copyfile(SITE_DIR / name, out_dir / name)
+    _write_atomic(out_dir / "book.json", json.dumps(data, ensure_ascii=False))
+    _write_atomic(out_dir / "knowledge-graph.json", json.dumps(data["graph"], indent=1, ensure_ascii=False))
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def _chapter_payload(out_dir: Path, chapter: dict) -> dict:
@@ -69,4 +67,14 @@ def _reading(file: Path) -> dict | None:
         return None
     if file.suffix == ".pdf":
         return {"kind": "pdf", "file": f"chapters/{file.name}"}
-    return {"kind": "text", "text": file.read_text(encoding="utf-8")[:MAX_TEXT]}
+    return {"kind": "text", "text": _text(file)}
+
+
+def _text(file: Path) -> str:
+    stat = os.stat(file)
+    cached = _texts.get(file)
+    if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+        return cached[2]
+    text = file.read_text(encoding="utf-8")[:MAX_TEXT]
+    _texts[file] = (stat.st_mtime_ns, stat.st_size, text)
+    return text
