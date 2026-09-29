@@ -35,9 +35,32 @@ struct ChapterVideo: View {
     var corner: CGFloat = 16
 
     var body: some View {
-        VideoPlayer(player: MediaCenter.shared.player(for: url))
-            .aspectRatio(16 / 9, contentMode: .fit)
+        PlayerView(player: MediaCenter.shared.player(for: url))
+            .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: corner))
+    }
+}
+
+/// AppKit's player with the system controls (SwiftUI's VideoPlayer aborts while loading on this macOS).
+struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        view.player = player
+        return view
+    }
+
+    /// AVPlayerView has no useful size of its own; take the width offered and stay 16:9.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: AVPlayerView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 480
+        return CGSize(width: width, height: width * 9 / 16)
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
     }
 }
 
