@@ -90,6 +90,35 @@ private func stubbedDrive() -> GoogleDrive {
             "GET https://www.googleapis.com/drive/v3/files/f9?alt=media", "DELETE https://www.googleapis.com/drive/v3/files/f3"])
     }
 
+    @Test func theTokenOnlyGoesToGoogle() async throws {
+        DriveStub.seen = []
+        DriveStub.handler = { _, _ in (200, ["Location": "https://evil.example/upload/session/42"], Data()) }
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("up-\(UUID().uuidString)")
+        try Data("audio".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        await #expect(throws: DriveError.badResponse) { try await stubbedDrive().upload(source, as: "books/x/book.json", replacing: nil) }
+        #expect(DriveStub.seen.map(\.method) == ["POST"])  // no PUT to the other host
+        // File ids never reshape the request URL.
+        DriveStub.seen = []
+        await #expect(throws: DriveError.badResponse) { try await stubbedDrive().delete(SyncFile(path: "x", md5: "", size: 0, id: "../about")) }
+        await #expect(throws: DriveError.badResponse) {
+            try await stubbedDrive().download(SyncFile(path: "x", md5: "", size: 0, id: "a?b"), to: source)
+        }
+        #expect(DriveStub.seen.isEmpty)
+    }
+
+    @Test func aDownloadReplacesTheOldFileWhole() async throws {
+        DriveStub.handler = { _, _ in (200, [:], Data("new".utf8)) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("dl-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destination = folder.appendingPathComponent("book.json")
+        try Data("old".utf8).write(to: destination)
+        try await stubbedDrive().download(SyncFile(path: "books/x/book.json", md5: "", size: 3, id: "f1"), to: destination)
+        #expect(try Data(contentsOf: destination) == Data("new".utf8))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path) == ["book.json"])  // no staging files left
+    }
+
     @Test func driveErrorsBecomePlainWords() async throws {
         DriveStub.handler = { _, _ in (403, [:], Data(#"{"error":{"message":"Rate limit exceeded"}}"#.utf8)) }
         await #expect(throws: DriveError.http(403, "Rate limit exceeded")) { try await stubbedDrive().list() }

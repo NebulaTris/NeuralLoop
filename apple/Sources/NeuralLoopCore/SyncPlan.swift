@@ -32,15 +32,38 @@ public enum SyncLayout {
         return parts.count >= 3 && parts[0] == "books" && BookID.isValid(String(parts[1])) ? String(parts[1]) : nil
     }
 
-    /// "books/<id>/progress/<device>.json" → the device.
+    /// "books/<id>/progress/<device>.json" → the device (device ids are letters, digits, and dashes, like book ids).
     public static func progressDevice(_ path: String) -> String? {
-        let parts = path.split(separator: "/")
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 4, parts[0] == "books", parts[2] == "progress", parts[3].hasSuffix(".json") else { return nil }
-        return String(parts[3].dropLast(5))
+        let device = String(parts[3].dropLast(5))
+        return BookID.isValid(device) ? device : nil
     }
 
     public static func progressPath(book: String, device: String) -> String { "books/\(book)/progress/\(device).json" }
-    public static func isInbox(_ path: String) -> Bool { path.hasPrefix("inbox/") && !path.dropFirst(6).contains("/") }
+
+    /// "inbox/<name>.{pdf,epub,json}": one file, its name made only of letters, digits, and dashes (a pad uses a UUID).
+    public static func isInbox(_ path: String) -> Bool {
+        guard path.hasPrefix("inbox/") else { return false }
+        let name = path.dropFirst(6)
+        guard let dot = name.lastIndex(of: "."), ["pdf", "epub", "json"].contains(name[name.index(after: dot)...]) else { return false }
+        return BookID.isValid(String(name[..<dot]))
+    }
+
+    /// The biggest file sync will download (a long video is well under this); bigger ones are left in the Drive.
+    public static let maxDownloadBytes: Int64 = 2 << 30
+
+    /// Whether a path from the Drive is one this app could have written, so it's safe to place on disk. The Drive app
+    /// folder is only as trustworthy as the account and every device signed in to it: names that climb out of a
+    /// folder ("..", "."), empty segments, backslashes or NULs, and the device's private files are never downloaded.
+    public static func isSafeRemote(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") || $0.contains("\0") }) else { return false }
+        if isInbox(path) { return true }
+        if progressDevice(path) != nil { return book(path) != nil }
+        guard book(path) != nil else { return false }
+        return !isPrivate(parts.dropFirst(2).joined(separator: "/"))
+    }
 
     /// Media and original PDF pages: big, fetched when a chapter is opened. "media/03-podcast.m4a" → chapter 3.
     public static func mediaChapter(_ path: String) -> Int? {
@@ -90,7 +113,7 @@ extension SyncPlan {
             }
         }
 
-        for file in remote {
+        for file in remote where SyncLayout.isSafeRemote(file.path) && file.size <= SyncLayout.maxDownloadBytes {
             let mine = localByPath[file.path]
             if let owner = SyncLayout.progressDevice(file.path) {
                 if owner != device, mine?.md5 != file.md5 { plan.downloads.append(file) }

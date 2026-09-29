@@ -74,12 +74,8 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
     }
 
     func signOut() async {
-        if let token = tokens?.refresh ?? tokens?.access,
-           var revoke = URLComponents(string: "https://oauth2.googleapis.com/revoke").map({ URLRequest(url: $0.url!) }) {
-            revoke.httpMethod = "POST"
-            revoke.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-            revoke.httpBody = "token=\(token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")".data(using: .utf8)
-            _ = try? await URLSession.shared.data(for: revoke)  // best effort: the local tokens go regardless
+        if let token = tokens?.refresh ?? tokens?.access, let clientID = Self.clientID {
+            _ = try? await URLSession.shared.data(for: GoogleOAuth(clientID: clientID).revokeRequest(token: token))  // best effort: the local tokens go regardless
         }
         tokens = nil
         email = nil

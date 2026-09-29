@@ -80,6 +80,43 @@ private func read(_ root: URL, _ path: String) -> String? {
     #expect(read(pad, "inbox/u1.pdf") == nil)  // the pad tidies up once the Mac has it
 }
 
+@Test func remoteFilesNeverLandOutsideTheLibraryFolder() async throws {
+    let drive = MemoryDrive()
+    let parent = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: parent) }
+    let root = parent.appendingPathComponent("library", isDirectory: true)
+    try write(#"{"title":"MCP"}"#, root, "books/mcp/book.json")
+    try write("mine", root, "books/mcp/progress.json")
+    let source = parent.appendingPathComponent("payload")
+    try Data("gotcha".utf8).write(to: source)
+    // What a compromised device could put in the Drive app folder.
+    for path in ["inbox/..", "inbox/../escaped.pdf", "books/mcp/..", "books/mcp/../../../escaped", "books/mcp/progress.json",
+                 "books/mcp/progress/../../../escaped.json", "books/../escaped", "../escaped"] {
+        try await drive.upload(source, as: path, replacing: nil)
+    }
+    for role in [SyncRole.pad, .mac] {
+        let report = try await SyncEngine(root: root, device: "me1", role: role, store: drive).sync(wantedMedia: ["mcp:1"])
+        #expect(report.downloaded == 0 && report.arrived.isEmpty)
+    }
+    #expect(read(root, "books/mcp/book.json") == #"{"title":"MCP"}"# && read(root, "books/mcp/progress.json") == "mine")
+    let outside = try FileManager.default.contentsOfDirectory(atPath: parent.path).sorted()
+    #expect(outside == ["library", "payload"])
+}
+
+
+@Test func localPathsStayInsideTheirFolder() async throws {
+    let root = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let engine = SyncEngine(root: root, device: "me1", role: .pad, store: MemoryDrive())
+    #expect(await engine.localURL("books/mcp/../../x") == nil)
+    #expect(await engine.localURL("books/mcp/..") == nil)
+    #expect(await engine.localURL("inbox/..") == nil)
+    #expect(await engine.localURL("sync-state.json") == nil)
+    #expect(await engine.localURL("books/mcp/chapters/01.md")?.path.hasSuffix("/books/mcp/chapters/01.md") == true)
+    #expect(await engine.localURL("books/mcp/progress/pad-2.json")?.path.hasSuffix("/books/mcp/devices/pad-2.json") == true)
+    #expect(await engine.localURL("books/mcp/progress/me1.json")?.path.hasSuffix("/books/mcp/progress.json") == true)
+}
+
 @Test func md5MatchesDrivesChecksums() throws {
     #expect(FileHash.md5(Data("hello".utf8)) == "5d41402abc4b2a76b9719d911017c592")
 }

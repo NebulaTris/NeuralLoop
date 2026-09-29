@@ -75,7 +75,8 @@ public actor SyncEngine {
         var report = SyncReport()
         for file in plan.uploads {
             do {
-                try await store.upload(localURL(file.path), as: file.path, replacing: file.id)
+                guard let source = localURL(file.path) else { continue }
+                try await store.upload(source, as: file.path, replacing: file.id)
                 report.uploaded += 1
                 report.bytes += file.size
                 if SyncLayout.isInbox(file.path) { state.sent.insert(file.path) }
@@ -83,7 +84,7 @@ public actor SyncEngine {
         }
         for file in plan.downloads {
             do {
-                let destination = localURL(file.path)
+                guard let destination = localURL(file.path) else { continue }  // never outside the library folder
                 try await store.download(file, to: destination)
                 report.downloaded += 1
                 report.bytes += file.size
@@ -102,7 +103,7 @@ public actor SyncEngine {
             // Books the Mac has picked up: their uploads are gone from the Drive, so the local copies can go too.
             let there = Set(remote.map(\.path))
             for path in state.sent where !there.contains(path) && !plan.uploads.contains(where: { $0.path == path }) {
-                try? FileManager.default.removeItem(at: localURL(path))
+                if let url = localURL(path) { try? FileManager.default.removeItem(at: url) }
                 state.sent.remove(path)
             }
         }
@@ -141,14 +142,19 @@ public actor SyncEngine {
         return files
     }
 
-    /// Where a Drive path lives on this device.
-    func localURL(_ path: String) -> URL {
+    /// Where a Drive path lives on this device: inside a book's folder or the inbox, or nowhere (nil) for anything else.
+    func localURL(_ path: String) -> URL? {
         if let id = SyncLayout.book(path), let owner = SyncLayout.progressDevice(path) {
             let folder = books.appendingPathComponent(id, isDirectory: true)
             return owner == device ? folder.appendingPathComponent("progress.json")
-                : folder.appendingPathComponent("devices/\(owner).json")
+                : folder.appendingPathComponent("devices", isDirectory: true).appendingPathComponent("\(owner).json")
         }
-        return root.appendingPathComponent(path)
+        let container: URL
+        if let id = SyncLayout.book(path) { container = books.appendingPathComponent(id, isDirectory: true) }
+        else if SyncLayout.isInbox(path) { container = inbox }
+        else { return nil }
+        let url = root.appendingPathComponent(path).standardizedFileURL
+        return url.path.hasPrefix(container.standardizedFileURL.path + "/") ? url : nil
     }
 
     private func hashed(_ url: URL, as path: String) -> SyncFile? {

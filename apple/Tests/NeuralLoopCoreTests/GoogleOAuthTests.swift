@@ -21,6 +21,22 @@ private let oauth = GoogleOAuth(clientID: "123-abc.apps.googleusercontent.com")
     let good = URL(string: "com.googleusercontent.apps.123-abc:/oauth2redirect?state=\(attempt.state)&code=4/xyz")!
     let forged = URL(string: "com.googleusercontent.apps.123-abc:/oauth2redirect?state=nope&code=4/xyz")!
     #expect(oauth.code(from: good, for: attempt) == "4/xyz" && oauth.code(from: forged, for: attempt) == nil)
+    let elsewhere = URL(string: "https://evil.example/oauth2redirect?state=\(attempt.state)&code=4/xyz")!
+    #expect(oauth.code(from: elsewhere, for: attempt) == nil)
+    let stateless = URL(string: "com.googleusercontent.apps.123-abc:/oauth2redirect?code=4/xyz")!
+    #expect(oauth.code(from: stateless, for: attempt) == nil)
+}
+
+@Test func signingOutRevokesWithTheTokenInTheBody() {
+    let request = oauth.revokeRequest(token: "1//r+t/=")
+    #expect(request.httpMethod == "POST" && request.url?.absoluteString == "https://oauth2.googleapis.com/revoke")
+    #expect(String(decoding: request.httpBody ?? Data(), as: UTF8.self) == "token=1%2F%2Fr%2Bt%2F%3D")
+}
+
+@Test func theVerifierAndStateUseTheFullPKCEAlphabet() {
+    let attempt = oauth.begin()
+    let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    #expect(attempt.state.count == 24 && attempt.state.allSatisfy(allowed.contains) && attempt.verifier.allSatisfy(allowed.contains))
 }
 
 @Test func tokensAreReadAndRefreshKeepsWhatItDoesntResend() throws {

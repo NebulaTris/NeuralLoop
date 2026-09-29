@@ -280,6 +280,10 @@ struct ReaderText: View {
         }
         .frame(maxWidth: 680, alignment: .leading)
         .textSelection(.enabled)
+        // Links in a chapter open in the browser; anything else (file:, other apps' schemes) is ignored.
+        .environment(\.openURL, OpenURLAction { url in
+            ["http", "https"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
+        })
     }
 
     @ViewBuilder

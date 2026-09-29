@@ -57,6 +57,7 @@ targets:
           NEURALLOOP_REPO: "$(SRCROOT)/.."
         Release:
           NEURALLOOP_REPO: ""            # a packaged app runs its bundled runtime, never a repo
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO   # no get-task-allow: other processes can't attach to a shipped app
   # The iPad app: the same App sources, without the Mac-only parts (the pipeline, the menu bar, moving into
   # Applications, notifications, the Mac's App struct). Views and services guard AppKit with #if os(macOS).
   NeuralLoopPad:

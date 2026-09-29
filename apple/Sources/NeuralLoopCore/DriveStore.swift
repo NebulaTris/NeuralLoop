@@ -15,6 +15,7 @@ public enum DriveError: LocalizedError, Equatable {
     case notSignedIn
     case http(Int, String)
     case badResponse
+    case tooBig
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +23,7 @@ public enum DriveError: LocalizedError, Equatable {
         case .http(401, _), .http(403, _): "Google Drive didn't accept the sign-in. Sign in again in Settings → Account."
         case .http(let code, let message): "Google Drive answered \(code)\(message.isEmpty ? "" : ": \(message)"). Pip will try again soon."
         case .badResponse: "Google Drive sent something Pip didn't understand. Pip will try again soon."
+        case .tooBig: "This file is bigger than 2 GB, so Pip left it in Google Drive."
         }
     }
 }
@@ -60,18 +62,31 @@ public struct GoogleDrive: DriveStore {
     }
 
     public func download(_ file: SyncFile, to destination: URL) async throws {
-        guard let id = file.id else { throw DriveError.badResponse }
+        guard let id = file.id, Self.isFileID(id) else { throw DriveError.badResponse }
         var request = URLRequest(url: URL(string: "\(api)/\(id)?alt=media")!)
         request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
         let (temporary, response) = try await session.download(for: request)
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: temporary) }
         try check(response, data: nil)
-        try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        _ = try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: temporary, to: destination)
+        let size = ((try? fm.attributesOfItem(atPath: temporary.path))?[.size] as? NSNumber)?.int64Value ?? 0
+        guard size <= SyncLayout.maxDownloadBytes else { throw DriveError.tooBig }
+        // Next to the destination first (same volume), then swapped in whole: a reader never sees half a file.
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staged = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).download.tmp")
+        try fm.moveItem(at: temporary, to: staged)
+        do {
+            if fm.fileExists(atPath: destination.path) { _ = try fm.replaceItemAt(destination, withItemAt: staged) }
+            else { try fm.moveItem(at: staged, to: destination) }
+        } catch {
+            try? fm.removeItem(at: staged)
+            throw error
+        }
     }
 
     public func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
         // Resumable upload: one request for the session, one PUT with the bytes (works for podcasts and videos).
+        if let id, !Self.isFileID(id) { throw DriveError.badResponse }
         var start = URLRequest(url: URL(string: id.map { "\(uploadAPI)/\($0)?uploadType=resumable&fields=id,name,md5Checksum,size" }
                                         ?? "\(uploadAPI)?uploadType=resumable&fields=id,name,md5Checksum,size")!)
         start.httpMethod = id == nil ? "POST" : "PATCH"
@@ -79,9 +94,10 @@ public struct GoogleDrive: DriveStore {
         let metadata: [String: Any] = id == nil ? ["name": path, "parents": ["appDataFolder"]] : [:]
         start.httpBody = try JSONSerialization.data(withJSONObject: metadata)
         let (_, response) = try await send(start)
-        guard let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"), let url = URL(string: location) else {
-            throw DriveError.badResponse
-        }
+        // The upload session must be on the same host: the bearer token only ever goes to Google (or the dev stand-in).
+        guard let location = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Location"), let url = URL(string: location),
+              let expected = URL(string: uploadAPI), url.scheme == expected.scheme, url.host == expected.host, url.port == expected.port
+        else { throw DriveError.badResponse }
         var put = URLRequest(url: url)
         put.httpMethod = "PUT"
         put.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
@@ -92,9 +108,15 @@ public struct GoogleDrive: DriveStore {
 
     public func delete(_ file: SyncFile) async throws {
         guard let id = file.id else { return }
+        guard Self.isFileID(id) else { throw DriveError.badResponse }
         var request = URLRequest(url: URL(string: "\(api)/\(id)")!)
         request.httpMethod = "DELETE"
         _ = try await send(request)
+    }
+
+    /// Drive's file ids are letters, digits, "-" and "_"; anything else never goes into a request URL.
+    static func isFileID(_ id: String) -> Bool {
+        !id.isEmpty && id.count <= 200 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {

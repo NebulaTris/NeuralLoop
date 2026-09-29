@@ -42,8 +42,9 @@ public struct GoogleOAuth: Sendable {
         return Attempt(verifier: verifier, state: state, url: components.url!)
     }
 
-    /// The code from Google's redirect, if it belongs to this attempt (the state must match).
+    /// The code from Google's redirect, if it belongs to this attempt (our redirect scheme, and the state must match).
     public func code(from callback: URL, for attempt: Attempt) -> String? {
+        guard callback.scheme?.lowercased() == redirectScheme.lowercased() else { return nil }
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
         guard items.first(where: { $0.name == "state" })?.value == attempt.state else { return nil }
         return items.first(where: { $0.name == "code" })?.value
@@ -55,6 +56,11 @@ public struct GoogleOAuth: Sendable {
 
     public func refreshRequest(refreshToken: String) -> URLRequest {
         form(["refresh_token": refreshToken, "client_id": clientID, "grant_type": "refresh_token"])
+    }
+
+    /// Signing out: Google forgets the grant. The token goes in the POST body, never the URL (URLs end up in logs).
+    public func revokeRequest(token: String) -> URLRequest {
+        form(["token": token], to: "https://oauth2.googleapis.com/revoke")
     }
 
     public struct Tokens: Codable, Equatable, Sendable {
@@ -97,8 +103,8 @@ public struct GoogleOAuth: Sendable {
         return String((0..<length).map { _ in alphabet[Int(generator.next(upperBound: UInt64(alphabet.count)))] })
     }
 
-    private func form(_ fields: [String: String]) -> URLRequest {
-        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+    private func form(_ fields: [String: String], to endpoint: String = "https://oauth2.googleapis.com/token") -> URLRequest {
+        var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var allowed = CharacterSet.alphanumerics

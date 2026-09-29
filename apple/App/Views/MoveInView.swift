@@ -31,11 +31,21 @@ enum AppMover {
         let name = Bundle.main.bundleURL.lastPathComponent
         let personal = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         var lastProblem = ""
+        let here = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
         for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), personal] {
             let destination = folder.appendingPathComponent(name)
+            // Already there: nothing to move (and never trash the copy that's running).
+            if destination.standardizedFileURL.resolvingSymlinksInPath() == here { return nil }
             do {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-                if fm.fileExists(atPath: destination.path) { try fm.trashItem(at: destination, resultingItemURL: nil) }
+                if fm.fileExists(atPath: destination.path) {
+                    // Only an older NeuralLoop goes to the Trash, never another app that happens to share the name.
+                    guard Bundle(url: destination)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
+                        lastProblem = "There's already a different app called \(name) in \(folder.path). Rename or move it, then try again."
+                        continue
+                    }
+                    try fm.trashItem(at: destination, resultingItemURL: nil)
+                }
                 try fm.copyItem(at: Bundle.main.bundleURL, to: destination)
                 reopen(from: destination)
                 return nil
