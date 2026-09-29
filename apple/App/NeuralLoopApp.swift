@@ -11,6 +11,10 @@ struct NeuralLoopApp: App {
         let library = Library()
         _library = State(initialValue: library)
         library.start()  // the shelf loop lives as long as the app, window or not
+        // Your library on every device: upload what the Mac prepares, prepare books added on the iPad.
+        DriveSync.shared.onArrived = { file, title in library.addFromInbox(file, title: title) }
+        DriveSync.shared.onChanged = { library.reload() }
+        DriveSync.shared.start()
     }
 
     var body: some Scene {

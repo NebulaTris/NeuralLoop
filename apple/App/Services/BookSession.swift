@@ -1,7 +1,9 @@
 // One open book: its data, this device's progress (progress.json), and the study clock.
 
-import AppKit
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 import NeuralLoopCore
 import Observation
 
@@ -9,7 +11,10 @@ import Observation
 final class BookSession {
     let entry: BookEntry
     var book: Book
+    /// Progress from every device (this one plus others' files that sync brought in). Changes save to this device's
+    /// file with only its own study time, so syncing never counts another device's minutes twice.
     var progress: StudyProgress
+    @ObservationIgnored private var ownLog: [String: Double] = [:]
     private var clock: Timer?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
@@ -17,7 +22,9 @@ final class BookSession {
         self.entry = entry
         self.book = entry.book ?? Library.loadBook(entry.folder) ?? BookSession.emptyBook
         // An unreadable file is kept aside rather than overwritten by the first save.
-        self.progress = ProgressFile.load(from: entry.folder)
+        let loaded = ProgressFile.loadMerged(from: entry.folder)
+        self.progress = loaded.merged
+        self.ownLog = loaded.own.log
     }
 
     /// True while this book's window is the one in front and the app is active (the study clock only counts then).
@@ -95,19 +102,32 @@ final class BookSession {
         save()
     }
 
-    func save() { ProgressFile.save(progress, to: entry.folder) }
+    func save() {
+        ProgressFile.save(progress, ownLog: ownLog, to: entry.folder)
+        DriveSync.shared.soon()  // your other devices catch up a few seconds later
+    }
 
     /// Counts study time in 15-second ticks while the book is open and in front (`isActive`, kept current by the view).
     func startClock() {
         clock?.invalidate()
         clock = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isActive, NSApp.isActive else { return }
+                guard let self, self.isActive, Self.appIsActive else { return }
                 Activity.log(&self.progress, now: self.now, seconds: 15)
+                self.ownLog[Activity.dayKey(self.now), default: 0] += 15
                 self.save()
             }
         }
     }
 
     func stopClock() { clock?.invalidate() }
+
+    /// The Mac also checks the app is in front; on the iPad the view's scene phase already says so (`isActive`).
+    private static var appIsActive: Bool {
+        #if os(macOS)
+        NSApp.isActive
+        #else
+        true
+        #endif
+    }
 }

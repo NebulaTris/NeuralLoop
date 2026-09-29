@@ -1,8 +1,12 @@
 // The shelf: books in the library folder, adding a book (which starts the pipeline), live progress, and the background
 // loop that keeps it all current (resuming unfinished books, NotebookLM's usage, notifications, and Pip's nudges).
+// Preparing books is the Mac's job (#if os(macOS)): the iPad reads the same folder, which sync fills, and hands new
+// books to the Mac through inbox/.
 
-import AppKit
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 import NeuralLoopCore
 import Observation
 
@@ -45,13 +49,15 @@ final class Library {
     /// NotebookLM's live usage (five-hour and weekly windows), refreshed every few minutes.
     var usage: NotebookLMUsage?
 
+    #if os(macOS)
     @ObservationIgnored private var runs: [String: PipelineRunner] = [:]
+    @ObservationIgnored private var records: [String: RunRecord] = Library.loadRecords()
+    @ObservationIgnored private var usageCheckedAt = Date.distantPast
+    #endif
     @ObservationIgnored private var scanned: [String: Scanned] = [:]
     /// What each book looked like when notifications were last worked out; separate from `entries`, which live progress
     /// lines update early, so "chapter ready" is never missed.
     @ObservationIgnored private var notified: [String: Book] = [:]
-    @ObservationIgnored private var records: [String: RunRecord] = Library.loadRecords()
-    @ObservationIgnored private var usageCheckedAt = Date.distantPast
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var started = false
@@ -68,6 +74,7 @@ final class Library {
 
     // MARK: the background loop
 
+    #if os(macOS)
     /// Runs for as long as the app does, with or without a window open (Pip lives in the menu bar).
     func start() {
         guard !started else { return }
@@ -101,6 +108,28 @@ final class Library {
         let (_, lines) = await PipelineRunner.once(["--usage"], timeout: .seconds(60))
         if let fresh = lines.compactMap(NotebookLMUsage.parse).first { usage = fresh }
     }
+    #else
+    /// The iPad only reads the shelf: it looks again every few seconds (sync writes into the same folder).
+    func start() {
+        guard !started else { return }
+        started = true
+        Task {
+            while !Task.isCancelled {
+                await refresh()
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
+    }
+    #endif
+
+    /// True while this app is running the pipeline for a book (the Mac; the iPad never prepares books).
+    private func runningHere(_ id: String) -> Bool {
+        #if os(macOS)
+        runs[id] != nil
+        #else
+        false
+        #endif
+    }
 
     /// Look at the shelf again soon (after adding a book, a run ending, …).
     func reload() { Task { await refresh() } }
@@ -121,16 +150,19 @@ final class Library {
     private func apply(_ fresh: [Scanned]) {
         scanned = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
         let updated = fresh.map { item -> BookEntry in
-            let running = runs[item.id] != nil
+            let running = runningHere(item.id)
             let line = running ? (entry(item.id)?.lastLine ?? "")
                 : item.elsewhereLine ?? item.elsewhere.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
             return BookEntry(id: item.id, folder: item.folder, book: item.book, progress: item.progress,
                              preparing: running || item.elsewhere != nil, lastLine: line)
         }
+        #if os(macOS)
         announce(updated)
+        #endif
         if updated != entries { entries = updated }  // unchanged shelves don't redraw every view
     }
 
+    #if os(macOS)
     /// "Chapter 2 is ready to study" and "Your book is ready", for changes seen while the app runs.
     private func announce(_ updated: [BookEntry]) {
         for entry in updated {
@@ -147,6 +179,7 @@ final class Library {
             }
         }
     }
+    #endif
 
     nonisolated private static func scan(previous: [String: Scanned]) -> [Scanned] {
         let fm = FileManager.default
@@ -161,11 +194,15 @@ final class Library {
                 let bookModified = modified(bookFile) ?? modified(folder.appendingPathComponent("book-data.js"))
                 let book = old != nil && old?.bookModified == bookModified ? old?.book : loadBook(folder)
                 let progressModified = modified(folder.appendingPathComponent("progress.json"))
-                let progress = old != nil && old?.progressModified == progressModified ? old!.progress : ProgressFile.load(from: folder)
+                let progress = old != nil && old?.progressModified == progressModified ? old!.progress : ProgressFile.loadMerged(from: folder).merged
                 let meta = (try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("meta.json")))) as? [String: Any]
                 let options = meta?["options"] as? [String: Any]
                 // A run started elsewhere (the command line, or before a relaunch) holds the book's lock.
+                #if os(macOS)
                 let elsewhere = runningElsewhere(folder) ? (working(book) ?? (0, "study")) : nil
+                #else
+                let elsewhere: (n: Int, item: String)? = nil
+                #endif
                 let log = folder.appendingPathComponent("pipeline.log")
                 return Scanned(
                     id: id, folder: folder, book: book, bookModified: bookModified, progress: progress, progressModified: progressModified,
@@ -173,10 +210,18 @@ final class Library {
                     dryRun: options?["dryRun"] as? Bool ?? false, sourcePath: meta?["path"] as? String,
                     logModified: (modified(log)?.timeIntervalSince1970 ?? 0) * 1000,
                     elsewhere: elsewhere,
-                    elsewhereLine: elsewhere == nil ? nil : LogFollower.lastProgress(in: log).flatMap(describe)
+                    elsewhereLine: elsewhereLine(elsewhere != nil, log: log)
                 )
             }
             .sorted { $0.addedAt > $1.addedAt }
+    }
+
+    nonisolated private static func elsewhereLine(_ running: Bool, log: URL) -> String? {
+        #if os(macOS)
+        running ? LogFollower.lastProgress(in: log).flatMap(describe) : nil
+        #else
+        nil
+        #endif
     }
 
     // MARK: book folder helpers
@@ -201,6 +246,7 @@ final class Library {
         try? JSONSerialization.data(withJSONObject: meta).write(to: file, options: .atomic)
     }
 
+    #if os(macOS)
     /// True while a pipeline run holds this book's lock (the pipeline keeps an OS lock on `.running` for the whole run,
     /// released even if it's killed; a leftover file never counts).
     nonisolated static func runningElsewhere(_ folder: URL) -> Bool {
@@ -213,6 +259,7 @@ final class Library {
         }
         return errno == EWOULDBLOCK
     }
+    #endif
 
     /// The first item Pip is making right now, if any.
     nonisolated static func working(_ book: Book?) -> (n: Int, item: String)? {
@@ -237,6 +284,36 @@ final class Library {
 
     // MARK: adding and preparing
 
+    /// Where books added on a device that can't prepare them wait for the Mac (sync uploads them to Drive's inbox/).
+    nonisolated static let inbox: URL = root.deletingLastPathComponent().appendingPathComponent("inbox", isDirectory: true)
+
+    /// The iPad's "Add a book": keep a copy in inbox/ with a {title, addedAt} sidecar, for the Mac to prepare.
+    func addToInbox(_ file: URL) {
+        guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
+            message = "Pip can read PDF and EPUB books."
+            return
+        }
+        let title = file.deletingPathExtension().lastPathComponent
+        let scoped = file.startAccessingSecurityScopedResource()  // a file picked in Files
+        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+        let fm = FileManager.default
+        let id = UUID().uuidString.lowercased()
+        let copy = Self.inbox.appendingPathComponent("\(id).\(file.pathExtension.lowercased())")
+        do {
+            try fm.createDirectory(at: Self.inbox, withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: copy)
+            let sidecar: [String: Any] = ["title": title, "addedAt": Date().timeIntervalSince1970 * 1000]
+            try JSONSerialization.data(withJSONObject: sidecar, options: [.sortedKeys])
+                .write(to: Self.inbox.appendingPathComponent("\(id).json"), options: .atomic)
+            message = "Your Mac will prepare “\(title)” the next time it syncs."
+        } catch {
+            try? fm.removeItem(at: copy)
+            message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file has finished downloading, then try again."
+        }
+    }
+
+    #if os(macOS)
+
     /// "You never press generate": carry on with any book that still has work, unless its last run needs something
     /// from the person first (setup, a readable book) or keeps failing (then it backs off).
     func resumeUnfinished() {
@@ -253,13 +330,18 @@ final class Library {
         }
     }
 
-    func add(_ file: URL, practice: Bool = false) {
+    /// A book added on another device, just arrived from the Drive inbox: prepare it like a dropped book. Returns true
+    /// once it's on the shelf (so sync can take it out of the inbox).
+    func addFromInbox(_ file: URL, title: String?) -> Bool { add(file, title: title) }
+
+    @discardableResult
+    func add(_ file: URL, practice: Bool = false, title: String? = nil) -> Bool {
         guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
             message = "Pip can read PDF and EPUB books."
-            return
+            return false
         }
         let taken = Set(entries.map(\.id))
-        let id = BookID.unique(base: BookID.slug(file.deletingPathExtension().lastPathComponent), taken: taken)
+        let id = BookID.unique(base: BookID.slug(title ?? file.deletingPathExtension().lastPathComponent), taken: taken)
         let folder = Self.root.appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Keep our own copy: the book still works if the original moves, and later runs never need to reach into
@@ -267,13 +349,14 @@ final class Library {
         let copy = folder.appendingPathComponent("source.\(file.pathExtension.lowercased())")
         if (try? FileManager.default.copyItem(at: file, to: copy)) == nil {
             message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file isn't still downloading, then try again."
-            return
+            return false
         }
         let meta: [String: Any] = ["path": copy.path, "originalPath": file.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
         prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice))
         reload()
+        return true
     }
 
     /// Podcasts and videos for every chapter, and another try for anything that failed. Remembered, so later automatic
@@ -356,6 +439,7 @@ final class Library {
     private static func saveRecords(_ records: [String: RunRecord]) {
         try? JSONEncoder().encode(records).write(to: recordsFile, options: .atomic)
     }
+    #endif
 
     // MARK: words
 
@@ -390,6 +474,7 @@ final class Library {
     }
 }
 
+#if os(macOS)
 /// Pip's gentle nudges: the settings and history live in UserDefaults; the policy is NeuralLoopCore's `Nudges`.
 @MainActor
 enum Nudger {
@@ -440,3 +525,4 @@ enum Nudger {
         UserDefaults.standard.set(try? JSONEncoder().encode(value), forKey: key)
     }
 }
+#endif

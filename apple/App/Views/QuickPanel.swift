@@ -1,4 +1,5 @@
-// Pip in the menu bar: a small panel that floats under the icon, for the two-minute things.
+// Pip in the menu bar: a small panel that floats under the icon, for the two-minute things (Mac only; the shelf
+// summary is shared with the library on every device).
 
 import NeuralLoopCore
 import SwiftUI
@@ -35,6 +36,7 @@ struct ShelfSummary {
     }
 }
 
+#if os(macOS)
 struct QuickPanel: View {
     @Environment(Library.self) private var library
     @Environment(\.openWindow) private var openWindow
@@ -209,3 +211,4 @@ struct MenuBarPip: View {
         }
     }
 }
+#endif

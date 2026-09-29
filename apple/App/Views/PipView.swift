@@ -1,12 +1,15 @@
-// Pip, drawn natively from the rig (Resources/pip-rig.json, written by design/pip/generate_pip.py): every pose is a
-// stack of vector layers, and each animated part (tail, ears, eyelids, head, arms, stars, hearts…) moves around its
-// own pivot, nested like the artwork (the eyelids ride on the tilting head). Reduce Motion shows Pip resting.
-// On top: every Pip keeps its own rhythm, springs when its pose changes, wiggles when you hover, and pops hearts
-// when you click.
+// Pip, drawn natively from the rig (Resources/pip-rig.json and Resources/PipLayers/*.png, written by
+// design/pip/generate_pip.py): every pose is a stack of transparent layers drawn at 3x, and each animated part (tail,
+// ears, eyelids, head, arms, stars, hearts…) moves around its own pivot, nested like the artwork (the eyelids ride on the
+// tilting head). Reduce Motion shows Pip resting. On top: every Pip keeps its own rhythm, springs when its pose changes,
+// wiggles when you hover (Mac), and pops hearts when you click or tap.
 
-import AppKit
+import ImageIO
 import NeuralLoopCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 enum PipPose: String, CaseIterable { case read, hop, nap, stretch, play, hug, study, proud }
 
@@ -18,36 +21,58 @@ enum PipArt {
         return try? JSONDecoder().decode(PipRig.self, from: data)
     }()
 
-    /// Each pose's layers as vector images, made once.
-    static let layers: [String: [NSImage]] = {
-        guard let rig else { return [:] }
-        return rig.poses.mapValues { pose in pose.layers.map { NSImage(data: Data($0.svg.utf8)) ?? NSImage() } }
-    }()
+    /// A PNG from PipLayers/ as a bitmap, read once and reused (moving bitmaps is cheap; drawing artwork every frame isn't).
+    private static var cache: [String: CGImage] = [:]
 
-    /// Each pose's layers as bitmaps for one pixel width, made once and reused (moving bitmaps is cheap; redrawing
-    /// the vector artwork every frame isn't).
-    private static var bitmaps: [String: [CGImage]] = [:]
+    static func image(_ name: String) -> CGImage? {
+        if let cached = cache[name] { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "PipLayers"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        else { return nil }
+        cache[name] = image
+        return image
+    }
 
-    static func bitmaps(for pose: String, pixelWidth: Int, box: CGSize) -> [CGImage] {
+    /// Each pose's layers, in drawing order, at about `pixelWidth` pixels wide: scaled down once per size and reused, so
+    /// a small Pip never resamples the full 3x pictures on every frame.
+    private static var scaled: [String: [CGImage]] = [:]
+
+    static func layers(for pose: String, pixelWidth: Int) -> [CGImage] {
+        let full = (rig?.poses[pose]?.layers ?? []).compactMap { image($0.image) }
+        guard let first = full.first else { return [] }
         let width = max(32, (pixelWidth + 31) / 32 * 32)  // a few sizes, not one per point
+        guard width < first.width else { return full }
         let key = "\(pose)@\(width)"
-        if let cached = bitmaps[key] { return cached }
-        let height = Int((Double(width) * box.height / box.width).rounded())
-        var rect = CGRect(x: 0, y: 0, width: width, height: height)
-        let made = (layers[pose] ?? []).compactMap { image -> CGImage? in
-            image.size = NSSize(width: width, height: height)
-            return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+        if let cached = scaled[key] { return cached }
+        let height = Int((Double(width) * Double(first.height) / Double(first.width)).rounded())
+        let made = full.map { layer -> CGImage in
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return layer }
+            context.interpolationQuality = .high
+            context.draw(layer, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return context.makeImage() ?? layer
         }
-        bitmaps[key] = made
+        scaled[key] = made
         return made
     }
 
-    /// Pip's head, sized for the menu bar (18 pt tall).
+    /// Pip's head as a bitmap (3x), for avatars on every platform.
+    static var iconImage: CGImage? { rig.flatMap { image($0.iconImage) } }
+
+    #if os(macOS)
+    /// Pip's head for the menu bar (18 pt tall): the vector version when the rig has it, else the 3x PNG.
     static let icon: NSImage? = {
-        guard let svg = rig?.icon, let image = NSImage(data: Data(svg.utf8)) else { return nil }
-        image.size = NSSize(width: 19, height: 18)
-        return image
+        let size = NSSize(width: rig?.iconSize.first ?? 19, height: rig?.iconSize.last ?? 18)
+        if let svg = rig?.icon, let image = NSImage(data: Data(svg.utf8)) {
+            image.size = size
+            return image
+        }
+        guard let bitmap = iconImage else { return nil }
+        return NSImage(cgImage: bitmap, size: size)
     }()
+    #endif
 }
 
 struct PipView: View {
@@ -74,10 +99,12 @@ struct PipView: View {
         .offset(y: hovering && !reduceMotion ? -size * 0.035 : 0)
         .rotationEffect(.degrees(hovering && !reduceMotion ? -3 : 0), anchor: .bottom)
         .overlay { ForEach(hearts) { HeartView(pop: $0, size: size) } }
+        #if os(macOS)
         .onHover { inside in
             guard interactive else { return }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) { hovering = inside }
         }
+        #endif
         .onTapGesture { if interactive { popHeart() } }
         .onChange(of: pose) { springIn() }
         .accessibilityElement(children: .ignore)
@@ -89,7 +116,7 @@ struct PipView: View {
         let box = CGRect(x: rigPose.viewBox[0], y: rigPose.viewBox[1], width: rigPose.viewBox[2], height: rigPose.viewBox[3])
         let scale = min(canvas.width / box.width, canvas.height / box.height)
         // A little headroom so scaled-up parts (hops, puffs) stay sharp.
-        let images = PipArt.bitmaps(for: pose.rawValue, pixelWidth: Int(box.width * scale * displayScale * 1.25), box: box.size)
+        let images = PipArt.layers(for: pose.rawValue, pixelWidth: Int(box.width * scale * displayScale * 1.25))
         context.translateBy(x: (canvas.width - box.width * scale) / 2 - box.minX * scale,
                             y: (canvas.height - box.height * scale) / 2 - box.minY * scale)
         context.scaleBy(x: scale, y: scale)

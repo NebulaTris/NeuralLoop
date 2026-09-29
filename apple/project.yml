@@ -4,20 +4,34 @@ options:
   bundleIdPrefix: app.neuralloop
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
 packages:
   NeuralLoopCore:
     path: .
 targets:
+  # The Mac app: everything in App except the iPad's entry point.
   NeuralLoop:
     type: application
     platform: macOS
     sources:
       - path: App
+        excludes:
+          - "iPad"
+          - "iPad/**"
+          - "Resources/PipLayers"
+          - "Resources/PipLayers/**"
+      - path: App/Resources/PipLayers   # Pip's layers, as one folder in the bundle (PipView loads PipLayers/<name>.png)
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: NeuralLoopCore
+    configFiles:                           # GOOGLE_CLIENT_ID for Drive sync (Config/Google.xcconfig, not committed)
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
     info:
       path: App/Info.plist
       properties:
+        GoogleClientID: "$(GOOGLE_CLIENT_ID)"
         CFBundleDisplayName: NeuralLoop
         CFBundleIconFile: AppIcon          # Resources/AppIcon.icns, made by design/pip/make_app_icon.py
         CFBundleShortVersionString: "0.2.0"
@@ -43,3 +57,59 @@ targets:
           NEURALLOOP_REPO: "$(SRCROOT)/.."
         Release:
           NEURALLOOP_REPO: ""            # a packaged app runs its bundled runtime, never a repo
+  # The iPad app: the same App sources, without the Mac-only parts (the pipeline, the menu bar, moving into
+  # Applications, notifications, the Mac's App struct). Views and services guard AppKit with #if os(macOS).
+  NeuralLoopPad:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App
+        excludes:
+          - "Info.plist"
+          - "NeuralLoopApp.swift"
+          - "Services/PipelineRunner.swift"
+          - "Services/AISettings.swift"
+          - "Services/Notifier.swift"
+          - "Views/MoveInView.swift"
+          - "Resources/AppIcon.icns"
+          - "Resources/PipLayers"
+          - "Resources/PipLayers/**"
+      - path: App/Resources/PipLayers
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: NeuralLoopCore
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    info:
+      path: App/iPad/Info.plist
+      properties:
+        GoogleClientID: "$(GOOGLE_CLIENT_ID)"
+        CFBundleDisplayName: NeuralLoop
+        CFBundleShortVersionString: "0.2.0"
+        LSApplicationCategoryType: public.app-category.education
+        NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
+        UILaunchScreen: {}
+        UIAppFonts: [atkinson-400.ttf, atkinson-700.ttf, fredoka-400.ttf, fredoka-500.ttf, fredoka-600.ttf]
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes: [audio]     # podcasts keep playing with the screen locked
+    settings:
+      base:
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        PRODUCT_BUNDLE_IDENTIFIER: app.neuralloop.books
+        PRODUCT_NAME: NeuralLoop
+        TARGETED_DEVICE_FAMILY: "2"      # iPad
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # App/iPad/Assets.xcassets, made by design/pip/make_app_icon.py
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: NO
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Automatic        # installed from Xcode with your own Apple ID (spec 07)

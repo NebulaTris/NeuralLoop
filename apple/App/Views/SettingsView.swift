@@ -3,6 +3,27 @@
 import NeuralLoopCore
 import SwiftUI
 
+/// A titled card, the building block of every settings page.
+struct SettingsCard<Content: View>: View {
+    let title: String
+    var note: String? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(Theme.display(17)).foregroundStyle(Theme.ink)
+            content
+            if let note { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true) }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+    }
+}
+
+// Everything below is the Mac's Settings window; the iPad has its own sheet (iPad/PadSettingsView.swift).
+#if os(macOS)
 enum SettingsPage: String, CaseIterable, Identifiable {
     case account = "Account", ai = "Your AI", voices = "Voices", nudges = "Nudges"
     var id: String { rawValue }
@@ -90,25 +111,6 @@ struct SettingsView: View {
     }
 }
 
-/// A titled card, the building block of every settings page.
-struct SettingsCard<Content: View>: View {
-    let title: String
-    var note: String? = nil
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(Theme.display(17)).foregroundStyle(Theme.ink)
-            content
-            if let note { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true) }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
-    }
-}
-
 // MARK: Account
 
 struct AccountPage: View {
@@ -134,11 +136,8 @@ struct AccountPage: View {
             }
             if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
         }
+        CardBox { DriveSyncCard() }  // the card has its own title
         UsageCard()
-        SettingsCard(title: "Your library on every device", note: "Needs NeuralLoop's Google sign-in ID, a one-time setup (docs/specs/07-every-device.md).") {
-            Label("Coming next: your books and progress follow your Google account to your iPad and other laptops.", systemImage: "arrow.triangle.2.circlepath")
-                .font(Theme.body(13)).foregroundStyle(Theme.ink2)
-        }
     }
 }
 
@@ -598,3 +597,4 @@ struct Meter: View {
         return weekday ? date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) : date.formatted(date: .omitted, time: .shortened)
     }
 }
+#endif

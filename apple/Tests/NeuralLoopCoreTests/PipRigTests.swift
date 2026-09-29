@@ -50,3 +50,25 @@ private func anim(_ json: String) throws -> PipRig.Anim { try JSONDecoder().deco
     }
     #expect(rig.anims["lids"]?.rest.sy == 0)  // still eyes stay open
 }
+
+@Test func everyLayerHasItsPicture() throws {
+    let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../App/Resources")
+    let rig = try JSONDecoder().decode(PipRig.self, from: Data(contentsOf: resources.appendingPathComponent("pip-rig.json")))
+    #expect(rig.scale == 3 && rig.iconSize == [19, 18])
+    #expect(Set(rig.images).count == rig.images.count)  // no two layers share a file
+    for image in rig.images {
+        let png = resources.appendingPathComponent("PipLayers/\(image).png")
+        let header = try Data(contentsOf: png).prefix(24)
+        #expect(header.starts(with: [0x89, 0x50, 0x4E, 0x47]), "\(image).png is a PNG")
+        // PNG width and height (big-endian, in the IHDR chunk): the viewBox at 3x for poses, the icon's points at 3x.
+        let width = header[16..<20].reduce(0) { $0 << 8 | Int($1) }, height = header[20..<24].reduce(0) { $0 << 8 | Int($1) }
+        if image == rig.iconImage {
+            #expect(width == 57 && height == 54)
+        } else {
+            let pose = rig.poses.values.first { $0.layers.contains { $0.image == image } }!
+            #expect(width == Int(pose.viewBox[2] * rig.scale) && height == Int(pose.viewBox[3] * rig.scale))
+        }
+    }
+    let files = try FileManager.default.contentsOfDirectory(atPath: resources.appendingPathComponent("PipLayers").path).filter { $0.hasSuffix(".png") }
+    #expect(Set(files) == Set(rig.images.map { "\($0).png" }))  // nothing stale left behind
+}

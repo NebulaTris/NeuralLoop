@@ -1,10 +1,12 @@
 // The shelf: Pip's greeting with this week at a glance, where you left off, one cover per book with a dot per
 // chapter, and your year with Pip. Drop a book anywhere on the window.
 
-import AppKit
 import NeuralLoopCore
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct LibraryView: View {
     @Environment(Library.self) private var library
@@ -29,7 +31,9 @@ struct LibraryView: View {
                                     .buttonStyle(LiftStyle())
                                     .contextMenu {
                                         Button("Open") { library.path.append(entry.id) }
+                                        #if os(macOS)
                                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
+                                        #endif
                                     }
                             }
                             addCard
@@ -46,6 +50,7 @@ struct LibraryView: View {
         }
         .background(Theme.paper)
         .overlay { if dropping { dropOverlay } }
+        #if os(macOS)
         .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
@@ -54,8 +59,11 @@ struct LibraryView: View {
             }
             return true
         }
-        .fileImporter(isPresented: $library.isPicking, allowedContentTypes: [.pdf, UTType(filenameExtension: "epub") ?? .data]) { result in
-            if case .success(let url) = result { library.add(url) }
+        #else
+        .onDrop(of: Self.bookTypes, isTargeted: $dropping) { providers in dropped(providers) }
+        #endif
+        .fileImporter(isPresented: $library.isPicking, allowedContentTypes: Self.bookTypes) { result in
+            if case .success(let url) = result { addBook(url) }
         }
         .alert(library.message ?? "", isPresented: Binding(get: { library.message != nil }, set: { if !$0 { library.message = nil } })) {
             Button("OK", role: .cancel) {}
@@ -76,6 +84,7 @@ struct LibraryView: View {
                 HStack(spacing: 10) {
                     Button { library.isPicking = true } label: {
                         Label("Add a book", systemImage: "plus").font(Theme.display(15, .medium)).padding(.horizontal, 6)
+                            .fixedSize()  // one line, even when the hero is narrow (an upright iPad)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     Text("or drop a PDF or EPUB anywhere here").font(Theme.body(12)).foregroundStyle(Theme.ink3)
@@ -145,11 +154,17 @@ struct LibraryView: View {
             VStack(spacing: 14) {
                 PipView(pose: .hug, size: 110)
                 Text("Your shelf is empty, and that's a fine place to start.").font(Theme.display(20))
+                #if os(macOS)
                 Text("Drop a book here, or try the sample book to see how a loop feels.").font(Theme.body()).foregroundStyle(Theme.ink2)
                 HStack {
                     Button("Add a book") { library.isPicking = true }.buttonStyle(.borderedProminent)
                     Button("Try the sample book") { addSample() }
                 }
+                #else
+                Text("Books your Mac prepares appear here. Add one from Files and your Mac will prepare it the next time it syncs.")
+                    .font(Theme.body()).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
+                Button("Add a book") { library.isPicking = true }.buttonStyle(.borderedProminent)
+                #endif
             }
             .frame(maxWidth: .infinity).padding(.vertical, 30)
         }
@@ -181,12 +196,45 @@ struct LibraryView: View {
         .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 3, dash: [10])).padding(18))
     }
 
+    static let bookTypes: [UTType] = [.pdf, UTType(filenameExtension: "epub") ?? .data]
+
+    /// The Mac prepares a book right away; the iPad hands it to the Mac through the inbox.
+    private func addBook(_ url: URL) {
+        #if os(macOS)
+        library.add(url)
+        #else
+        library.addToInbox(url)
+        #endif
+    }
+
+    #if os(iOS)
+    /// A book dragged in from Files or another app: its file only exists during the callback, so keep a copy first.
+    private func dropped(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            guard let type = Self.bookTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) else { continue }
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                guard let url else { return }
+                let kept = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
+                try? FileManager.default.removeItem(at: kept)
+                guard (try? FileManager.default.copyItem(at: url, to: kept)) != nil else { return }
+                Task { @MainActor in
+                    library.addToInbox(kept)
+                    try? FileManager.default.removeItem(at: kept)
+                }
+            }
+        }
+        return true
+    }
+    #endif
+
+    #if os(macOS)
     private func addSample() {
         let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime/pipeline/sample/sample-book.epub")
-        if let bundled, FileManager.default.fileExists(atPath: bundled.path) { return library.add(bundled, practice: true) }
+        if let bundled, FileManager.default.fileExists(atPath: bundled.path) { library.add(bundled, practice: true); return }
         guard let repo = Bundle.main.object(forInfoDictionaryKey: "NeuralLoopRepo") as? String, !repo.isEmpty else { return }
         library.add(URL(fileURLWithPath: repo).appendingPathComponent("pipeline/sample/sample-book.epub").standardizedFileURL, practice: true)
     }
+    #endif
 }
 
 // MARK: Pieces
@@ -350,7 +398,7 @@ struct ResumeCard: View {
                         Label("Continue", systemImage: "arrow.right").font(Theme.display(15, .medium)).padding(.horizontal, 6)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
-                    if let audio = chapter.audio, let url = BookFiles.url(audio, in: entry.folder) {
+                    if let audio = chapter.audio, let url = BookFiles.url(audio, in: entry.folder), FileManager.default.fileExists(atPath: url.path) {
                         PodcastControls(url: url, compact: true).frame(maxWidth: 300)
                     }
                 }

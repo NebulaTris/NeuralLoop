@@ -1,15 +1,28 @@
 // NeuralLoop's colours and type , light and dark.
 
-import AppKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 enum Theme {
     static func color(light: UInt32, dark: UInt32) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-            return NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
-                           blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        func rgb(_ hex: UInt32) -> (CGFloat, CGFloat, CGFloat) {
+            (CGFloat((hex >> 16) & 0xFF) / 255, CGFloat((hex >> 8) & 0xFF) / 255, CGFloat(hex & 0xFF) / 255)
+        }
+        #if os(macOS)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let (r, g, b) = rgb(appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light)
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
         })
+        #else
+        return Color(uiColor: UIColor { traits in
+            let (r, g, b) = rgb(traits.userInterfaceStyle == .dark ? dark : light)
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
+        })
+        #endif
     }
 
     static let paper = color(light: 0xFFF7F2, dark: 0x1D1716)

@@ -1,10 +1,13 @@
 // The five steps of a chapter's loop: Listen & watch, Read, Recall, Map, Remember.
 
-import AppKit
 import AVKit
+import ImageIO
 import NeuralLoopCore
 import PDFKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: Listen & watch
 
@@ -16,13 +19,13 @@ struct ListenStep: View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Watch").font(Theme.display(20))
             if let video = chapter.video, let url = session.file(video) {
-                ChapterVideo(url: url)
+                WhenDownloaded(url: url, what: "the video") { ChapterVideo(url: url) }
             } else {
                 NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id)
             }
             Text("Listen").font(Theme.display(20))
             if let audio = chapter.audio, let url = session.file(audio) {
-                PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file))
+                WhenDownloaded(url: url, what: "the podcast") { PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file)) }
             } else {
                 NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
             }
@@ -41,6 +44,7 @@ struct ChapterVideo: View {
     }
 }
 
+#if os(macOS)
 /// AppKit's player with the system controls (SwiftUI's VideoPlayer aborts while loading on this macOS).
 struct PlayerView: NSViewRepresentable {
     let player: AVPlayer
@@ -63,6 +67,29 @@ struct PlayerView: NSViewRepresentable {
         if view.player !== player { view.player = player }
     }
 }
+#else
+/// The system player with its controls, full screen, and picture in picture.
+struct PlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.allowsPictureInPicturePlayback = true
+        return controller
+    }
+
+    /// Take the width offered and stay 16:9.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: AVPlayerViewController, context: Context) -> CGSize? {
+        let width = proposal.width ?? 480
+        return CGSize(width: width, height: width * 9 / 16)
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player { controller.player = player }
+    }
+}
+#endif
 
 struct TranscriptLine: Decodable, Identifiable {
     let speaker: String
@@ -167,6 +194,35 @@ struct PodcastPlayer: View {
     }
 }
 
+/// Media on an iPad arrives from the Drive when a chapter opens: until the file is here, say so (and then show it).
+struct WhenDownloaded<Content: View>: View {
+    let url: URL
+    let what: String
+    @ViewBuilder var content: () -> Content
+    @State private var ready = false
+
+    var body: some View {
+        Group {
+            if ready || FileManager.default.fileExists(atPath: url.path) {
+                content()
+            } else {
+                CardBox(fill: Theme.sunk) {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Bringing \(what) from your Drive…").font(Theme.body(14)).foregroundStyle(Theme.ink2)
+                    }
+                }
+                .task {
+                    while !FileManager.default.fileExists(atPath: url.path) && !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                    ready = true
+                }
+            }
+        }
+    }
+}
+
 // MARK: Read
 
 struct ReadStep: View {
@@ -230,8 +286,8 @@ struct ReaderText: View {
     private func blockView(_ block: String) -> some View {
         if let m = block.firstMatch(of: /^!\[([^\]]*)\]\((img\/[\w.-]+)\)$/) {
             VStack(spacing: 6) {
-                if let image = NSImage(contentsOf: folder.appendingPathComponent(String(m.2))) {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxHeight: 420)
+                if let image = Self.picture(folder.appendingPathComponent(String(m.2))) {
+                    Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit).frame(maxHeight: 420)
                         .clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityLabel(String(m.1))
                 }
             }
@@ -255,16 +311,36 @@ struct ReaderText: View {
     }
 }
 
+extension ReaderText {
+    /// A figure from the chapter's img/ folder (PNG, JPEG, GIF…), on every platform.
+    static func picture(_ url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+}
+
+#if os(macOS)
 struct PDFReader: NSViewRepresentable {
     let url: URL
-    func makeNSView(context: Context) -> PDFView {
+    func makeNSView(context: Context) -> PDFView { PDFReader.view(url) }
+    func updateNSView(_ view: PDFView, context: Context) {}
+}
+#else
+struct PDFReader: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> PDFView { PDFReader.view(url) }
+    func updateUIView(_ view: PDFView, context: Context) {}
+}
+#endif
+
+extension PDFReader {
+    static func view(_ url: URL) -> PDFView {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.document = PDFDocument(url: url)
         return view
     }
-    func updateNSView(_ view: PDFView, context: Context) {}
 }
 
 // MARK: Recall
@@ -339,12 +415,17 @@ struct RecallStep: View {
 
 extension RecallStep {
     /// The recall model from Settings checks each key point (gemma2:2b on this Mac by default); word matching if it can't.
+    /// The iPad has no pipeline, so it uses word matching until an on-device model arrives (spec 07).
     func check(_ prompt: RecallPrompt) async {
         checking = true
         defer { checking = false }
+        #if os(macOS)
         let request: [String: Any] = ["question": prompt.prompt, "keyPoints": prompt.keyPoints, "answer": answer]
         let input = String(decoding: (try? JSONSerialization.data(withJSONObject: request)) ?? Data(), as: UTF8.self)
         let (_, lines) = await PipelineRunner.once(["--grade-recall"], input: input, timeout: .seconds(240))
+        #else
+        let lines: [String] = []
+        #endif
         if let line = lines.last, let result = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
            let marks = result["covered"] as? [Bool], marks.count == prompt.keyPoints.count {
             covered = marks
@@ -466,10 +547,12 @@ struct NotReady: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(title).font(Theme.display(18))
                     Text(detail).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+                    #if os(macOS)
                     if status == .waiting || status == .failed, let bookId {
                         Button { library.makeWithMyAI(bookId) } label: { Label("Make it with my AI now", systemImage: "bolt.fill") }
                             .buttonStyle(.borderedProminent).padding(.top, 4)
                     }
+                    #endif
                 }
             }
         }
@@ -478,20 +561,30 @@ struct NotReady: View {
     private var title: String {
         switch status {
         case .working: "\(what): Pip is making it right now."
-        case .skipped: "\(what) wasn't chosen for this chapter. Use Prepare more to add it."
+        case .skipped: "\(what) wasn't chosen for this chapter. Use Prepare more\(Self.onMac) to add it."
         case .failed: "\(what) needs another try."
         case .waiting: "\(what) is waiting for NotebookLM."
         default: "\(what) is on Pip's list."
         }
     }
 
+    #if os(macOS)
+    private static let onMac = ""
+    #else
+    private static let onMac = " on your Mac"
+    #endif
+
     private var detail: String {
         guard status == .waiting else { return note ?? "" }
+        #if os(iOS)
+        return "NotebookLM is at its limit for now. Your Mac will try again when it resets, and it'll show up here."
+        #else
         guard let usage = library.usage, usage.known, let window = usage.fiveHour else {
             return "NotebookLM is at its limit for now. Pip will try again when it resets."
         }
         let reset = window.resetDate.map { $0.formatted(date: .omitted, time: .shortened) } ?? "soon"
         return "NotebookLM has \(Int(window.remaining))% of its five-hour allowance left; a podcast or video uses about 44%. "
             + "It resets at \(reset), and Pip will try again then. Or make it with your own AI right now."
+        #endif
     }
 }

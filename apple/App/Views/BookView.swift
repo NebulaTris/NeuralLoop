@@ -18,14 +18,20 @@ struct BookView: View {
 
 struct BookContent: View {
     @Environment(Library.self) private var library
+    #if os(macOS)
     @Environment(\.controlActiveState) private var active
+    private var isFront: Bool { active == .key }
+    #else
+    @Environment(\.scenePhase) private var active
+    private var isFront: Bool { active == .active }
+    #endif
     let session: BookSession
     @State private var selected: Int?
     @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")
 
     var body: some View {
         HStack(spacing: 0) {
-            chapterList.frame(width: 290)
+            chapterList.frame(width: Self.listWidth)
             Divider()
             if showingMap {
                 BookMapView(session: session) { n in showingMap = false; selected = n }
@@ -50,16 +56,18 @@ struct BookContent: View {
                 Label(showingMap ? "Chapters" : "Book map", systemImage: showingMap ? "list.bullet" : "point.3.filled.connected.trianglepath.dotted")
             }
             .help("Your map of the book grows with every chapter you map")
+            #if os(macOS)
             if library.entry(session.entry.id)?.preparing != true {
                 Button("Prepare more") { library.prepareMore(session.entry.id) }
             }
+            #endif
         }
         .onAppear {
             selected = session.progress.last?.n ?? session.book.chapters.first?.n
-            session.isActive = active == .key
+            session.isActive = isFront
             session.startClock()
         }
-        .onChange(of: active) { session.isActive = active == .key }
+        .onChange(of: active) { session.isActive = isFront }
         .onDisappear { session.isActive = false; session.stopClock() }
         // New chapters and items appear while Pip is still preparing the book (the library reads book.json off the main thread).
         .onChange(of: library.entry(session.entry.id)?.book) { _, fresh in if let fresh, fresh != session.book { session.book = fresh } }
@@ -75,7 +83,7 @@ struct BookContent: View {
                             .background(Theme.accentSoft, in: Circle()).foregroundStyle(Theme.accent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(chapter.title).font(Theme.body(14)).lineLimit(2)
-                            Text(caption(chapter, unlocked: unlocked)).font(Theme.body(11)).foregroundStyle(Theme.ink3)
+                            Text(caption(chapter, unlocked: unlocked)).font(Theme.body(11)).foregroundStyle(Self.captionStyle)
                         }
                         Spacer()
                         if !unlocked { Image(systemName: "lock.fill").foregroundStyle(Theme.ink3).font(.caption) }
@@ -89,6 +97,18 @@ struct BookContent: View {
         }
         .listStyle(.sidebar)
     }
+
+    #if os(macOS)
+    private static let listWidth: CGFloat = 290
+    #else
+    private static let listWidth: CGFloat = 260  // leaves the chapter room on an iPad held upright
+    #endif
+
+    #if os(macOS)
+    private static let captionStyle = AnyShapeStyle(Theme.ink3)
+    #else
+    private static let captionStyle = AnyShapeStyle(.secondary)  // stays readable on the iPad's filled selection
+    #endif
 
     private func caption(_ chapter: Chapter, unlocked: Bool) -> String {
         if !unlocked { return "Opens when the chapter before is done" }
@@ -108,7 +128,11 @@ struct ChapterView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
                 Text(chapter.title).font(Theme.display(28)).foregroundStyle(Theme.ink)
+                #if os(macOS)
                 stepBar
+                #else
+                ScrollView(.horizontal, showsIndicators: false) { stepBar.padding(1) }  // an upright iPad is narrower
+                #endif
             }
             .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 14)
             Divider()
@@ -129,6 +153,8 @@ struct ChapterView: View {
         }
         .overlay { if celebrate { closedOverlay } }
         .onAppear {
+            // On an iPad, opening a chapter brings its podcast, video, and pages (and the next chapter's) from the Drive.
+            DriveSync.shared.want(book: session.entry.id, chapter: chapter.n)
             if let forced = UserDefaults.standard.string(forKey: "NLStage").flatMap(Stage.init) { stage = forced; return }
             if let last = session.progress.last, last.n == chapter.n, let s = Stage(rawValue: last.stage) { stage = s }
             else if let next = Loop.nextStage(session.progress, chapter.n) { stage = next }

@@ -33,3 +33,7 @@ jobs:
           brew install xcodegen
           cd apple && xcodegen generate && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoop \
             -configuration Debug CODE_SIGN_IDENTITY=- build
+      - name: Build the iPad app
+        run: |
+          cd apple && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoopPad -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

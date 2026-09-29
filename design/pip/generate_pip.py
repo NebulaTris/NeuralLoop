@@ -1,11 +1,13 @@
 """Pip the red panda: the single source of truth for Pip's artwork and animation.
 
 Run `python design/pip/generate_pip.py` from the repo root to regenerate:
-  - apple/App/Resources/pip-poses.js                 (the Mac app)
+  - apple/App/Resources/pip-rig.json                 (the Mac and iPad apps: layers, pivots, keyframes)
+  - apple/App/Resources/PipLayers/*.png              (every layer as a transparent 3x bitmap, plus the menu-bar icon)
   - pipeline/neuralloop_books/assets/pip-poses.js   (explainer videos)
 Never edit those files by hand. See docs/specs/03-pip-design-system.md.
 """
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -434,7 +436,10 @@ POSES = {
     "proud": pose_proud,
 }
 OUTPUTS = ("pipeline/neuralloop_books/assets/pip-poses.js",)  # explainer videos (CSS animation)
-RIG = "apple/App/Resources/pip-rig.json"  # the Mac app (layers, pivots, keyframes)
+RIG = "apple/App/Resources/pip-rig.json"  # the Mac and iPad apps (layers, pivots, keyframes)
+LAYERS = "apple/App/Resources/PipLayers"  # each layer as a PNG (UIImage can't draw SVG, and bitmaps are cheap to move)
+SCALE = 3  # layers are drawn at 3x the viewBox (720x660 for 240x220): sharp on Retina with room for hops and puffs
+ICON_SIZE = (19, 18)  # the menu-bar icon, in points
 
 
 def build_js() -> str:
@@ -487,16 +492,53 @@ def _layers(svg_text: str) -> tuple[list, list, str]:
     return layers, groups, ET.tostring(root, encoding="unicode")
 
 
-def build_rig() -> dict:
+def _art_hash(svg_text: str) -> str:
+    return hashlib.sha1(svg_text.encode("utf-8")).hexdigest()[:12]
+
+
+def _render_png(page, svg_text: str, width: int, height: int, target: Path) -> None:
+    """One transparent PNG of `svg_text` at width x height pixels."""
+    page.set_viewport_size({"width": width, "height": height})
+    page.set_content(
+        "<html><head><style>html,body{margin:0;background:transparent}svg{display:block}</style></head>"
+        f"<body>{svg_text}</body></html>"
+    )
+    page.screenshot(path=str(target), omit_background=True, clip={"x": 0, "y": 0, "width": width, "height": height})
+
+
+def build_rig(root: Path | None = None) -> dict:
     """pip-rig.json: every pose as layers, each animated group's pivot and frame (measured in Chromium, like CSS
-    transform-box: fill-box), and the keyframes. The app nests transforms like SVG does (eyelids ride on the head)."""
+    transform-box: fill-box), and the keyframes. The app nests transforms like SVG does (eyelids ride on the head).
+    Each layer is also drawn to PipLayers/<pose>-<index>.png. A layer's `art` is a hash of its SVG: a PNG is only
+    redrawn when its art changes, so the same artwork gives the same files on every machine."""
     from playwright.sync_api import sync_playwright
+
+    root = root or Path(__file__).resolve().parents[2]
+    previous: dict = {}
+    try:
+        old = json.loads((root / RIG).read_text(encoding="utf-8"))
+        previous = {layer.get("image"): layer.get("art") for pose in old["poses"].values() for layer in pose["layers"]}
+        previous["icon"] = old.get("iconArt")
+    except (OSError, ValueError, KeyError):  # no rig yet, or an older shape: draw everything
+        pass
+    out_dir = root / LAYERS
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wanted: set[str] = set()
+
+    def draw_png(page, name: str, svg_text: str, width: int, height: int) -> str:
+        art = _art_hash(f"{width}x{height}:{svg_text}")
+        target = out_dir / f"{name}.png"
+        wanted.add(target.name)
+        if previous.get(name) != art or not target.exists():
+            _render_png(page, svg_text, width, height, target)
+        return art
 
     poses = {}
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
         for name, draw in POSES.items():
+            page.set_viewport_size({"width": 480, "height": 440})
             svg_text = draw().replace('width="100%" height="100%"', 'width="480" height="440"')
             layers, groups, measured = _layers(svg_text)
             page.set_content(f"<html><body style='margin:0'>{measured}</body></html>")
@@ -521,17 +563,33 @@ def build_rig() -> dict:
                                    "frame": [round(v, 4) for v in (a_, b_, c_, d_)]})
             label = svg_text.split('aria-label="', 1)[1].split('"', 1)[0]
             view_box = [float(v) for v in svg_text.split('viewBox="', 1)[1].split('"', 1)[0].split()]
-            poses[name] = {"label": label, "viewBox": view_box, "groups": chain_info,
-                           "layers": [{"svg": layer["svg"], "chain": layer["chain"]} for layer in layers]}
+            width, height = round(view_box[2] * SCALE), round(view_box[3] * SCALE)
+            rig_layers = []
+            for index, layer in enumerate(layers):
+                image = f"{name}-{index}"
+                layer_svg = layer["svg"].replace('width="480" height="440"', f'width="{width}" height="{height}"')
+                art = draw_png(page, image, layer_svg, width, height)
+                rig_layers.append({"chain": layer["chain"], "image": image, "art": art})
+            poses[name] = {"label": label, "viewBox": view_box, "groups": chain_info, "layers": rig_layers}
+        icon_w, icon_h = ICON_SIZE
+        icon_svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * SCALE}" '
+                    f'height="{icon_h * SCALE}">{head(0, 0, 1, "happy", cls="")}</svg>')
+        icon_art = draw_png(page, "icon", icon_svg, icon_w * SCALE, icon_h * SCALE)
         browser.close()
+    for stale in out_dir.glob("*.png"):
+        if stale.name not in wanted:
+            stale.unlink()
     anims = {
         name: {"dur": a["dur"], "ease": list(EASE[a["ease"]] if isinstance(a["ease"], str) else a["ease"]),
                "alternate": bool(a.get("alternate")), "reverse": bool(a.get("reverse")), "rest": a.get("rest", {}),
                "keys": [{"t": t, **v} for t, v in a["keys"]]}
         for name, a in ANIM.items()
     }
-    icon = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="38" height="36">{head(0, 0, 1, "happy", cls="")}</svg>'
-    return {"poses": poses, "anims": anims, "icon": icon}
+    # The icon also stays vector (the Mac menu bar draws it crisply at any size); `iconImage` is the PNG for the iPad.
+    icon = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * 2}" '
+            f'height="{icon_h * 2}">{head(0, 0, 1, "happy", cls="")}</svg>')
+    return {"poses": poses, "anims": anims, "icon": icon, "iconImage": "icon", "iconSize": [icon_w, icon_h],
+            "iconArt": icon_art, "scale": SCALE}
 
 
 def main() -> None:
@@ -540,8 +598,8 @@ def main() -> None:
     for relative in OUTPUTS:
         (root / relative).write_text(js, encoding="utf-8")
         print(f"wrote {relative}")
-    (root / RIG).write_text(json.dumps(build_rig(), separators=(",", ":")), encoding="utf-8")
-    print(f"wrote {RIG}")
+    (root / RIG).write_text(json.dumps(build_rig(root), separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {RIG} and {LAYERS}/")
 
 
 if __name__ == "__main__":

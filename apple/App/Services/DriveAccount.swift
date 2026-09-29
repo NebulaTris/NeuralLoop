@@ -1,0 +1,121 @@
+// The Google account that holds the library (spec 07): sign in through the system's browser sheet (PKCE, no password
+// ever touches the app), keep the tokens in the Keychain, refresh them when they expire. Asks only for NeuralLoop's
+// own hidden folder in Drive (drive.appdata) and the email address.
+
+import AuthenticationServices
+import Foundation
+import NeuralLoopCore
+import Observation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+@MainActor @Observable
+final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = DriveAccount()
+
+    private(set) var email: String?
+    private(set) var signingIn = false
+    var note = ""
+    @ObservationIgnored private var tokens: GoogleOAuth.Tokens?
+    @ObservationIgnored private var session: ASWebAuthenticationSession?
+    private static let keychainName = "GOOGLE_DRIVE_TOKENS"
+
+    /// The OAuth client ID from Config/Google.xcconfig (see docs/DEVELOPMENT.md). Empty until the owner sets it up.
+    static var clientID: String? {
+        let value = (Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String) ?? ""
+        return value.hasSuffix(".apps.googleusercontent.com") ? value : nil
+    }
+
+    var isConfigured: Bool { Self.clientID != nil }
+    var isSignedIn: Bool { tokens?.refresh != nil }
+
+    override init() {
+        super.init()
+        if let saved = Keychain.read(Self.keychainName), let data = saved.data(using: .utf8) {
+            tokens = try? JSONDecoder().decode(GoogleOAuth.Tokens.self, from: data)
+            email = tokens?.email
+        }
+    }
+
+    func signIn() async {
+        guard let clientID = Self.clientID else {
+            note = "Google Drive sync needs a one-time setup first (see docs/DEVELOPMENT.md → Google Drive sync)."
+            return
+        }
+        let oauth = GoogleOAuth(clientID: clientID)
+        let attempt = oauth.begin()
+        signingIn = true
+        note = ""
+        defer { signingIn = false }
+        do {
+            let callback: URL = try await withCheckedThrowingContinuation { continuation in
+                let session = ASWebAuthenticationSession(url: attempt.url, callbackURLScheme: oauth.redirectScheme) { url, error in
+                    if let url { continuation.resume(returning: url) } else { continuation.resume(throwing: error ?? DriveError.notSignedIn) }
+                }
+                session.presentationContextProvider = self
+                session.prefersEphemeralWebBrowserSession = false
+                self.session = session
+                session.start()
+            }
+            guard let code = oauth.code(from: callback, for: attempt) else { throw DriveError.notSignedIn }
+            let (data, response) = try await URLSession.shared.data(for: oauth.tokenRequest(code: code, verifier: attempt.verifier))
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let fresh = GoogleOAuth.tokens(from: data) else {
+                throw DriveError.http((response as? HTTPURLResponse)?.statusCode ?? 0, "sign-in")
+            }
+            store(fresh)
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            note = ""
+        } catch {
+            note = "Sign-in didn't finish (\(error.localizedDescription)). You can try again any time."
+        }
+    }
+
+    func signOut() async {
+        if let token = tokens?.refresh ?? tokens?.access,
+           var revoke = URLComponents(string: "https://oauth2.googleapis.com/revoke").map({ URLRequest(url: $0.url!) }) {
+            revoke.httpMethod = "POST"
+            revoke.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            revoke.httpBody = "token=\(token.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "")".data(using: .utf8)
+            _ = try? await URLSession.shared.data(for: revoke)  // best effort: the local tokens go regardless
+        }
+        tokens = nil
+        email = nil
+        Keychain.save(Self.keychainName, "")
+    }
+
+    /// A valid access token, refreshed when needed.
+    func accessToken() async throws -> String {
+        guard let current = tokens, let refresh = current.refresh, let clientID = Self.clientID else { throw DriveError.notSignedIn }
+        if current.isFresh() { return current.access }
+        let (data, response) = try await URLSession.shared.data(for: GoogleOAuth(clientID: clientID).refreshRequest(refreshToken: refresh))
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, let fresh = GoogleOAuth.tokens(from: data, previous: current) else {
+            if status == 400 || status == 401 { await signOut() }  // revoked or expired for good: sign in again
+            throw DriveError.http(status, "token refresh")
+        }
+        store(fresh)
+        return fresh.access
+    }
+
+    private func store(_ fresh: GoogleOAuth.Tokens) {
+        tokens = fresh
+        email = fresh.email
+        if let data = try? JSONEncoder().encode(fresh), let text = String(data: data, encoding: .utf8) {
+            // Readable after the first unlock, so a Mac preparing books overnight can keep syncing.
+            if let problem = Keychain.save(Self.keychainName, text, availableWhileLocked: true) { note = problem }
+        }
+    }
+
+    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        MainActor.assumeIsolated {
+            #if os(macOS)
+            return NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+            #else
+            return UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
+            #endif
+        }
+    }
+}

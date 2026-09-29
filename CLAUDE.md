@@ -24,7 +24,7 @@ Two parts, one repo:
 2. **Logic stays pure and tested; screens stay thin.** Pure logic belongs in `pipeline/neuralloop_books/*.py` and
    `apple/Sources/NeuralLoopCore/*.swift` (tested with Swift Testing in `apple/Tests`). SwiftUI views (`apple/App/Views`) and
    services (`apple/App/Services`) only render, wire events, and do I/O.
-3. **Never hand-edit generated files:** `apple/App/Resources/pip-rig.json` and `pipeline/neuralloop_books/assets/pip-poses.js`
+3. **Never hand-edit generated files:** `apple/App/Resources/pip-rig.json`, `apple/App/Resources/PipLayers/*.png` (each layer at 3x, redrawn only when its art hash changes), and `pipeline/neuralloop_books/assets/pip-poses.js`
    (run `make pip`, i.e. `python design/pip/generate_pip.py`; animations are data in `ANIM` there, feeding both); `apple/App/Resources/AppIcon.icns` (`python design/pip/make_app_icon.py`);
    `design/dmg/background.tiff` (`python design/dmg/make_background.py`); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
 4. **`make check` must pass before every commit.** It runs the linters and all tests (Python and Swift).
@@ -87,7 +87,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/assets/` | Fonts and Pip's artwork for explainer videos |
 | `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account) · `sample/sample-book.epub` |
 
-### `apple` — the Mac app
+### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
 | `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, idempotent merge), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges`, `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
@@ -96,7 +96,8 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
 | `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications |
 | `App/Views/` | `LibraryView` (shelf, resume card, year log), `BookView` (chapters, five steps, book map), `Steps` (Listen, Read, Recall + quiz, Map, Remember), `StudyViews` (quiz, mind map, remake, book map), `GraphExplorer`, `QuickPanel`, `SettingsView` (Account, Your AI, Voices, Nudges), `PipView`, `Theme` |
-| `project.yml` | XcodeGen spec (Debug knows the repo path; Release runs only its bundled runtime) |
+| `App/iPad/` | The iPad's entry point (`NeuralLoopPadApp`: library, book screens), its profile button and Settings sheet (account and sync). Books added on the iPad go to `inbox/` for the Mac (`Library.addToInbox`) |
+| `project.yml` | XcodeGen spec: `NeuralLoop` (macOS; Debug knows the repo path, Release runs only its bundled runtime) and `NeuralLoopPad` (iPadOS 17, same App sources minus the pipeline runner, AI settings, notifications, move-in, and the Mac's App struct); `PipLayers` is a folder resource in both |
 
 ### Other
 `scripts/build-runtime.sh` (self-contained runtime: Python 3.12.14, hash-locked wheels from `scripts/runtime-requirements.txt`

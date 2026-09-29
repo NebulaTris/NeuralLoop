@@ -94,15 +94,32 @@ struct GraphExplorer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            #if os(macOS)
             controls
             HStack(alignment: .top, spacing: 14) {
-                canvas
-                    .frame(minHeight: 520)
-                    .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+                framedCanvas
                 panel.frame(width: 270)
             }
+            #else
+            // An upright iPad is too narrow for the map and its side panel together: the panel moves under the map.
+            ViewThatFits(in: .horizontal) {
+                controls
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) { filters }
+                    HStack(spacing: 10) { Spacer(); actions }.font(Theme.body(13))
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    framedCanvas.frame(minWidth: 480)
+                    panel.frame(width: 270)
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    framedCanvas
+                    panel
+                }
+            }
+            #endif
         }
         .onAppear(perform: layOut)
         .onChange(of: graph.nodes.map(\.id)) { layOut() }
@@ -166,6 +183,14 @@ struct GraphExplorer: View {
     }
 
     // MARK: canvas
+
+    private var framedCanvas: some View {
+        canvas
+            .frame(minHeight: 520)
+            .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
+    }
 
     private var canvas: some View {
         GeometryReader { geo in
@@ -252,36 +277,46 @@ struct GraphExplorer: View {
 
     private var controls: some View {
         HStack(spacing: 10) {
-            Picker("Detail", selection: $detail) { ForEach(Detail.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 250)
-            TextField("Find an idea", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 200)
-            Menu {
-                Section(style.colorBy == .chapter ? "Chapters" : "Themes") {
-                    ForEach(groups, id: \.self) { key in
-                        Toggle(groupLabel(key), isOn: Binding(get: { !hiddenGroups.contains(key) },
-                                                              set: { if $0 { hiddenGroups.remove(key) } else { hiddenGroups.insert(key) } }))
-                    }
-                }
-                Section("Kinds") {
-                    ForEach([("concept", "● Concepts"), ("claim", "◆ Claims"), ("topic", "▢ Topics")], id: \.0) { kind, label in
-                        Toggle(label, isOn: Binding(get: { !hiddenKinds.contains(kind) },
-                                                    set: { if $0 { hiddenKinds.remove(kind) } else { hiddenKinds.insert(kind) } }))
-                    }
-                }
-            } label: { Label("Show", systemImage: "line.3.horizontal.decrease.circle") }
-                .fixedSize()
+            filters
             Spacer()
-            if !graph.tour.isEmpty {
-                Button { (tour, selected, path, memory) = (0, nil, nil, false) } label: { Label("Guided tour", systemImage: "figure.walk") }
-            }
-            Button {
-                memory.toggle()
-                (selected, tour, path) = (nil, -1, nil)
-                revealed = []
-            } label: { Label(memory ? "Show names" : "From memory", systemImage: "brain.head.profile") }
-                .help("Hide the names and rebuild the map from memory")
+            actions
         }
         .font(Theme.body(13))
+    }
+
+    @ViewBuilder private var filters: some View {
+        Picker("Detail", selection: $detail) { ForEach(Detail.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 250)
+        TextField("Find an idea", text: $query).textFieldStyle(.roundedBorder).frame(maxWidth: 200)
+        Menu {
+            Section(style.colorBy == .chapter ? "Chapters" : "Themes") {
+                ForEach(groups, id: \.self) { key in
+                    Toggle(groupLabel(key), isOn: Binding(get: { !hiddenGroups.contains(key) },
+                                                          set: { if $0 { hiddenGroups.remove(key) } else { hiddenGroups.insert(key) } }))
+                }
+            }
+            Section("Kinds") {
+                ForEach([("concept", "● Concepts"), ("claim", "◆ Claims"), ("topic", "▢ Topics")], id: \.0) { kind, label in
+                    Toggle(label, isOn: Binding(get: { !hiddenKinds.contains(kind) },
+                                                set: { if $0 { hiddenKinds.remove(kind) } else { hiddenKinds.insert(kind) } }))
+                }
+            }
+        } label: { Label("Show", systemImage: "line.3.horizontal.decrease.circle") }
+            .fixedSize()
+    }
+
+    @ViewBuilder private var actions: some View {
+        if !graph.tour.isEmpty {
+            Button { (tour, selected, path, memory) = (0, nil, nil, false) } label: { Label("Guided tour", systemImage: "figure.walk") }
+                .fixedSize()
+        }
+        Button {
+            memory.toggle()
+            (selected, tour, path) = (nil, -1, nil)
+            revealed = []
+        } label: { Label(memory ? "Show names" : "From memory", systemImage: "brain.head.profile") }
+            .fixedSize()
+            .help("Hide the names and rebuild the map from memory")
     }
 
     // MARK: side panel

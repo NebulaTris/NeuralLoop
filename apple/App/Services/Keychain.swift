@@ -18,7 +18,7 @@ enum Keychain {
     /// Saves (or, for an empty value, removes) a key. Updates in place, so a refused write never loses the old key.
     /// Returns nil on success, or what went wrong in plain words.
     @discardableResult
-    static func save(_ name: String, _ value: String) -> String? {
+    static func save(_ name: String, _ value: String, availableWhileLocked: Bool = false) -> String? {
         let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                    kSecAttrAccount as String: name]
         var status: OSStatus
@@ -27,7 +27,8 @@ enum Keychain {
             if status == errSecItemNotFound { status = errSecSuccess }
         } else {
             let fields: [String: Any] = [kSecValueData as String: Data(value.utf8),
-                                         kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+                                         kSecAttrAccessible as String: availableWhileLocked
+                                             ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly : kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
             status = SecItemUpdate(base as CFDictionary, fields as CFDictionary)
             if status == errSecItemNotFound { status = SecItemAdd(base.merging(fields) { $1 } as CFDictionary, nil) }
         }

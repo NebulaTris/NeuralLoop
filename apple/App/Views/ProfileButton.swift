@@ -3,6 +3,7 @@
 
 import SwiftUI
 
+#if os(macOS)
 struct ProfileButton: View {
     @Environment(AISettings.self) private var settings
     @Environment(\.openSettings) private var openSettings
@@ -79,6 +80,8 @@ private struct ProfileRowStyle: ButtonStyle {
     }
 }
 
+#endif
+
 /// A round avatar: the account's first letter on a warm colour, or Pip's head when nobody is signed in.
 struct Avatar: View {
     let email: String?
@@ -90,13 +93,22 @@ struct Avatar: View {
                 Text(String(first).uppercased()).font(Theme.display(size * 0.48)).foregroundStyle(.white)
                     .frame(width: size, height: size)
                     .background(LinearGradient(colors: [Theme.accent, Theme.rose], startPoint: .topLeading, endPoint: .bottomTrailing), in: Circle())
-            } else if let icon = PipArt.icon {
-                Image(nsImage: icon).resizable().scaledToFit().padding(size * 0.14)
+            } else if let icon = Self.pip {
+                icon.resizable().scaledToFit().padding(size * 0.14)
                     .frame(width: size, height: size).background(Theme.accentSoft, in: Circle())
             } else {
                 Image(systemName: "person.crop.circle.fill").font(.system(size: size)).foregroundStyle(Theme.accent)
             }
         }
         .overlay(Circle().stroke(Theme.line))
+    }
+
+    /// Pip's head: the vector icon on the Mac, the 3x picture elsewhere.
+    @MainActor private static var pip: Image? {
+        #if os(macOS)
+        PipArt.icon.map { Image(nsImage: $0) }
+        #else
+        PipArt.iconImage.map { Image(decorative: $0, scale: 3) }
+        #endif
     }
 }

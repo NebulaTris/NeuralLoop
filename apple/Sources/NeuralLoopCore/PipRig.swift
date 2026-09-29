@@ -1,5 +1,6 @@
-// Pip's rig (pip-rig.json, written by design/pip/generate_pip.py): every pose as ordered layers, each animated group's
-// pivot and frame, and the keyframes. This file plays them: the same timing, easing, and nesting CSS gives the videos.
+// Pip's rig (pip-rig.json, written by design/pip/generate_pip.py): every pose as ordered layers (each a transparent PNG
+// in PipLayers/, drawn at `scale` times the viewBox), each animated group's pivot and frame, and the keyframes. This file
+// plays them: the same timing, easing, and nesting CSS gives the videos.
 
 import Foundation
 
@@ -12,7 +13,7 @@ public struct PipRig: Decodable, Sendable {
     }
 
     public struct Layer: Decodable, Sendable {
-        public let svg: String
+        public let image: String     // the layer's PNG in PipLayers/, without the extension ("read-0")
         public let chain: [Int]      // animated groups this layer sits in, outermost first
     }
 
@@ -84,7 +85,15 @@ public struct PipRig: Decodable, Sendable {
 
     public let poses: [String: Pose]
     public let anims: [String: Anim]
-    public let icon: String
+    /// Pip's head for the menu bar, as SVG (the Mac draws it as a vector) and as a PNG in PipLayers/ (`iconImage`).
+    public let icon: String?
+    public let iconImage: String
+    public let iconSize: [Double]   // in points
+    /// How many pixels per viewBox unit the layer PNGs have.
+    public let scale: Double
+
+    /// Every PNG the rig needs from PipLayers/.
+    public var images: [String] { poses.keys.sorted().flatMap { poses[$0]!.layers.map(\.image) } + [iconImage] }
 
     /// CSS cubic-bezier timing: solve x(u) = t for u, return y(u).
     public static func ease(_ curve: [Double], _ t: Double) -> Double {
