@@ -41,10 +41,19 @@ final class Library {
             .sorted { added($0) > added($1) }
             .map { folder in
                 let id = folder.lastPathComponent
-                let previous = entry(id)
-                return BookEntry(id: id, folder: folder, book: Self.loadBook(folder), preparing: runs[id] != nil,
-                                 lastLine: previous?.lastLine ?? "")
+                let book = Self.loadBook(folder)
+                let working = Self.working(book)  // also shows runs started elsewhere (command line, the iPad's queue)
+                let line = runs[id] != nil ? (entry(id)?.lastLine ?? "") : working.map { "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
+                return BookEntry(id: id, folder: folder, book: book, preparing: runs[id] != nil || working != nil, lastLine: line)
             }
+    }
+
+    /// The first item Pip is making right now, if any.
+    static func working(_ book: Book?) -> (n: Int, item: String)? {
+        for chapter in book?.chapters ?? [] {
+            if let item = chapter.status.first(where: { $0.value == .working })?.key { return (chapter.n, item) }
+        }
+        return nil
     }
 
     /// book.json, or book-data.js from books made before the app existed.
