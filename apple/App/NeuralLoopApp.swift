@@ -8,12 +8,14 @@ struct NeuralLoopApp: App {
     @State private var settings = AISettings()
 
     var body: some Scene {
-        WindowGroup("NeuralLoop") {
+        WindowGroup("NeuralLoop", id: "main") {
             RootView()
                 .environment(library)
                 .environment(settings)
                 .frame(minWidth: 900, minHeight: 620)
                 .task {
+                    Notifier.shared.start()
+                    Notifier.shared.openBook = { id in library.path = [id] }
                     library.reload()
                     library.resumeUnfinished()
                     // Books can be prepared outside this window (a run from the command line, later the iPad's queue):
@@ -33,12 +35,24 @@ struct NeuralLoopApp: App {
         Settings {
             SettingsView().environment(settings)
         }
+        // Development: `-NLPreviewPanel YES` shows the menu-bar panel in a window, for screenshots.
+        Window("Quick panel", id: "panel-preview") {
+            QuickPanel().environment(library).environment(settings)
+        }
+        .windowResizability(.contentSize)
+        MenuBarExtra {
+            QuickPanel().environment(library).environment(settings)
+        } label: {
+            MenuBarPip()
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
 struct RootView: View {
     @Environment(Library.self) private var library
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("welcomed") private var welcomed = false
 
     var body: some View {
@@ -53,6 +67,9 @@ struct RootView: View {
         .tint(Theme.accent)
         .sheet(isPresented: Binding(get: { !welcomed }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
         // Development: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
-        .task { if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() } }
+        .task {
+            if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
+            if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
+        }
     }
 }

@@ -23,6 +23,7 @@ final class Library {
     var isPicking = false
     var message: String?
     private var runs: [String: PipelineRunner] = [:]
+    private var loadedOnce = false
 
     /// Same folder as the earlier desktop app, so existing books and progress carry over.
     static let root: URL = {
@@ -36,7 +37,8 @@ final class Library {
 
     func reload() {
         let folders = (try? FileManager.default.contentsOfDirectory(at: Self.root, includingPropertiesForKeys: [.creationDateKey])) ?? []
-        entries = folders
+        let previous = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0.book) })
+        let fresh: [BookEntry] = folders
             .filter { BookID.isValid($0.lastPathComponent) && $0.hasDirectoryPath }
             .sorted { added($0) > added($1) }
             .map { folder in
@@ -44,9 +46,27 @@ final class Library {
                 let book = Self.loadBook(folder)
                 // A run started elsewhere (the command line, later the iPad's queue) holds the book's lock.
                 let working = Self.runningElsewhere(folder) ? Self.working(book) ?? (0, "study") : nil
-                let line = runs[id] != nil ? (entry(id)?.lastLine ?? "") : working.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
+                let fromLog = working == nil ? nil : LogFollower.lastProgress(in: folder.appendingPathComponent("pipeline.log")).flatMap(Self.describe)
+                let line = runs[id] != nil ? (entry(id)?.lastLine ?? "")
+                    : fromLog ?? working.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
                 return BookEntry(id: id, folder: folder, book: book, preparing: runs[id] != nil || working != nil, lastLine: line)
             }
+        // Tell the person when a chapter becomes studyable and when a whole book is done (only for changes seen while open).
+        if loadedOnce {
+            for entry in fresh {
+                guard let before = previous[entry.id] else { continue }
+                let news = Notifier.news(before: before, after: entry.book)
+                for chapter in news.chapters {
+                    Notifier.shared.post(title: "Chapter \(chapter.n) is ready to study",
+                                         body: "“\(chapter.title)” in \(entry.title). Pip saved you a spot.", bookId: entry.id)
+                }
+                if news.finished {
+                    Notifier.shared.post(title: "“\(entry.title)” is ready", body: "Every chapter's loop is prepared. Come take a look!", bookId: entry.id)
+                }
+            }
+        }
+        entries = fresh
+        loadedOnce = true
     }
 
     /// Books added before the app kept copies still point at the original file: copy it in once and remember that.
@@ -168,7 +188,8 @@ final class Library {
     private func finished(_ id: String, code: Int32, tail: [String]) {
         runs[id] = nil
         reload()
-        message = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
+        let outcome = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
+        message = code == 0 ? nil : outcome  // success is announced by a notification, not an alert
     }
 
     /// What to tell the person when a run ends: nothing alarming when another run already has the book, the pipeline's

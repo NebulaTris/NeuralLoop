@@ -3,6 +3,7 @@
 // NEURALLOOP_PIPELINE (a folder with nl_book.py) with NEURALLOOP_PYTHON, then (development) the repo this app was built from.
 
 import Foundation
+import NeuralLoopCore
 
 final class PipelineRunner: @unchecked Sendable {
     enum Failure: LocalizedError {
@@ -30,36 +31,31 @@ final class PipelineRunner: @unchecked Sendable {
         return nil
     }
 
-    /// Runs the pipeline, streaming stdout lines to `onLine`. Everything it prints (stdout and stderr) is also appended
-    /// to `log` (the book's pipeline.log), and `onExit` gets the exit code plus the last lines, to say what happened.
-    func start(arguments: [String], log: URL? = nil, onLine: @escaping @Sendable (String) -> Void,
+    /// Runs the pipeline with its output going straight to the book's pipeline.log, so preparation keeps going if the
+    /// app quits (a pipe would break and stop it). While the app is open it follows the log: every new line goes to
+    /// `onLine`, and `onExit` gets the exit code plus the last lines, to say what happened.
+    func start(arguments: [String], log: URL, onLine: @escaping @Sendable (String) -> Void,
                onExit: @escaping @Sendable (Int32, [String]) -> Void) throws {
         guard let (executable, prefix) = Self.command() else { throw Failure.notFound }
+        if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
+        let output = try FileHandle(forWritingTo: log)
+        output.seekToEndOfFile()
+        output.write(Data("\n— \(Date().formatted()) —\n".utf8))
+        let startOffset = output.offsetInFile
         let process = Process()
         process.executableURL = executable
         process.arguments = prefix + arguments
         process.environment = Self.environment()
-        let pipe = Pipe()
-        let errors = Pipe()
-        process.standardOutput = pipe
-        process.standardError = errors
-        let recorder = Recorder(log: log)
-        let buffer = LineBuffer { line in recorder.add(line); onLine(line) }
-        let errorBuffer = LineBuffer { line in recorder.add(line) }
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil } else { buffer.append(data) }
-        }
-        errors.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil } else { errorBuffer.append(data) }
-        }
+        process.standardOutput = output
+        process.standardError = output
+        process.standardInput = FileHandle.nullDevice
+        let follower = LogFollower(url: log, from: startOffset, onLine: onLine)
         process.terminationHandler = { finished in
-            buffer.flush()
-            errorBuffer.flush()
-            onExit(finished.terminationStatus, recorder.tail)
+            follower.stop()
+            onExit(finished.terminationStatus, follower.tail)
         }
         try process.run()
+        follower.start()
         self.process = process
     }
 
@@ -107,33 +103,70 @@ final class PipelineRunner: @unchecked Sendable {
     }
 }
 
-/// Keeps the last lines of a run and appends everything to the book's pipeline.log.
-private final class Recorder: @unchecked Sendable {
+/// Follows a growing log file: reads new bytes every half second, hands out whole lines, keeps the last few.
+final class LogFollower: @unchecked Sendable {
+    private let url: URL
+    private var offset: UInt64
     private let lock = NSLock()
     private var lines: [String] = []
-    private let handle: FileHandle?
+    private var timer: DispatchSourceTimer?
+    private let buffer: LineBuffer
 
-    init(log: URL?) {
-        if let log {
-            if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
-            handle = try? FileHandle(forWritingTo: log)
-            handle?.seekToEndOfFile()
-            handle?.write(Data("\n— \(Date().formatted()) —\n".utf8))
-        } else {
-            handle = nil
-        }
+    init(url: URL, from offset: UInt64, onLine: @escaping @Sendable (String) -> Void) {
+        self.url = url
+        self.offset = offset
+        var keep: ((String) -> Void)?
+        buffer = LineBuffer { line in keep?(line); onLine(line) }
+        keep = { [weak self] line in self?.remember(line) }
     }
 
-    func add(_ line: String) {
-        lock.lock(); defer { lock.unlock() }
-        handle?.write(Data((line + "\n").utf8))
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now(), repeating: .milliseconds(500))
+        timer.setEventHandler { [weak self] in self?.read() }
+        timer.resume()
+        self.timer = timer
+    }
+
+    func stop() {
+        read()
+        timer?.cancel()
+        buffer.flush()
+    }
+
+    private func read() {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        lock.lock(); let from = offset; lock.unlock()
+        try? handle.seek(toOffset: from)
+        let data = handle.readDataToEndOfFile()
+        guard !data.isEmpty else { return }
+        lock.lock(); offset = from + UInt64(data.count); lock.unlock()
+        buffer.append(data)
+    }
+
+    private func remember(_ line: String) {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty, !trimmed.hasPrefix("Fetching"), !trimmed.contains("HF_TOKEN") else { return }
+        lock.lock(); defer { lock.unlock() }
         lines.append(trimmed)
         if lines.count > 30 { lines.removeFirst() }
     }
 
     var tail: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+
+    /// The last progress line in a log, for books being prepared by a run this app didn't start (or before a relaunch).
+    static func lastProgress(in url: URL) -> PipelineLine? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        for raw in text.split(separator: "\n").suffix(200).reversed() {
+            let line = PipelineLine.parse(String(raw))
+            switch line {
+            case .made, .added, .fellBack, .waiting, .failed, .setup: return line
+            default: continue
+            }
+        }
+        return nil
+    }
 }
 
 /// Splits streamed bytes into lines.

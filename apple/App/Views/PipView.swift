@@ -8,6 +8,20 @@ enum PipPose: String, CaseIterable { case read, hop, nap, stretch, play, hug, st
 
 @MainActor
 enum PipArt {
+    /// Pip's head, sized for the menu bar (18 pt tall).
+    static let icon: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "pip-poses", withExtension: "js"),
+              let text = try? String(contentsOf: url, encoding: .utf8),
+              let start = text.range(of: "window.PIP="), let end = text.range(of: ";\nwindow.PIP_CSS="),
+              let poses = try? JSONSerialization.jsonObject(with: Data(text[start.upperBound..<end.lowerBound].utf8)) as? [String: String],
+              let svg = poses["icon"]
+        else { return nil }
+        let sized = svg.replacingOccurrences(of: "width=\"100%\"", with: "width=\"38\" height=\"36\"")
+        guard let image = NSImage(data: Data(sized.utf8)) else { return nil }
+        image.size = NSSize(width: 19, height: 18)
+        return image
+    }()
+
     static let images: [String: NSImage] = {
         guard let url = Bundle.main.url(forResource: "pip-poses", withExtension: "js"),
               let text = try? String(contentsOf: url, encoding: .utf8),

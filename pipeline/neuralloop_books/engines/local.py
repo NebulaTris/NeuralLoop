@@ -32,6 +32,7 @@ _PLACEHOLDER = re.compile(
 # JSON structure inside a string value: a curly quote ended the string early and the rest leaked in.
 _LEAKED_STRUCTURE = re.compile(r'[”"]\s*[}\]]|[}\]]\s*,\s*[{\["“]|["”]\s*,\s*["“]')
 LINE_PAUSE = 0.35
+LOCAL_SERVER_CHARS = 12_000  # ~3k tokens of chapter, leaving room for the prompt and the answer
 # Fewer than this many items means the model skimped: ask again, saying so. (Prompts ask for more.)
 MINIMUMS = {
     "study": ("recall prompts", lambda r: len(r["recall"]), 1),
@@ -75,6 +76,10 @@ class LocalEngine:
         cls, opts, model, speech, task_models: dict | None = None, before_start=None
     ) -> "LocalEngine":
         budget = opts.context or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
+        if getattr(model, "local", False):
+            budget = min(
+                budget, LOCAL_SERVER_CHARS
+            )  # LM Studio and friends often run with a ~4k-token context
         return cls(
             model,
             speech,

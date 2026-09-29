@@ -1,152 +1,361 @@
-// Settings (⌘,): Account (Google), Your AI (engine, models, keys, Save and test), and Voices.
+// Settings (⌘,): a warm, NeuralLoop-styled window with a sidebar — Account, Your AI, Voices.
 
 import NeuralLoopCore
 import SwiftUI
 
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case account = "Account", ai = "Your AI", voices = "Voices"
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .account: "person.crop.circle.fill"
+        case .ai: "sparkles"
+        case .voices: "waveform"
+        }
+    }
+    var blurb: String {
+        switch self {
+        case .account: "Google sign-in for NotebookLM"
+        case .ai: "Engine, models, and keys"
+        case .voices: "Rumik's podcast voices"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(AISettings.self) private var settings
+    @State private var page: SettingsPage = .ai
 
     var body: some View {
-        TabView {
-            AccountTab().tabItem { Label("Account", systemImage: "person.crop.circle") }
-            AITab().tabItem { Label("Your AI", systemImage: "cpu") }
-            VoicesTab().tabItem { Label("Voices", systemImage: "waveform") }
+        HStack(spacing: 0) {
+            sidebar
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(page.rawValue).font(Theme.display(28)).foregroundStyle(Theme.ink)
+                        Text(page.blurb).font(Theme.body(14)).foregroundStyle(Theme.ink2)
+                    }
+                    switch page {
+                    case .account: AccountPage()
+                    case .ai: AIPage()
+                    case .voices: VoicesPage()
+                    }
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Theme.paper)
         }
-        .frame(width: 720, height: 640)
+        .frame(width: 860, height: 680)
         .tint(Theme.accent)
         .task { await settings.refreshAccount() }
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                PipView(pose: .study, size: 54)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("NeuralLoop").font(Theme.display(16))
+                    Text("Settings").font(Theme.body(12)).foregroundStyle(Theme.ink3)
+                }
+            }
+            .padding(.bottom, 14)
+            ForEach(SettingsPage.allCases) { item in
+                Button { page = item } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: item.icon).frame(width: 22)
+                        Text(item.rawValue).font(Theme.display(15, .medium))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .foregroundStyle(page == item ? Theme.accent : Theme.ink2)
+                    .background(page == item ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            Text("Keys stay in your Mac's Keychain. Only the chapter being prepared is ever sent to an AI.")
+                .font(Theme.body(11)).foregroundStyle(Theme.ink3)
+        }
+        .padding(18)
+        .frame(width: 220)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.sunk)
+    }
+}
+
+/// A titled card, the building block of every settings page.
+struct SettingsCard<Content: View>: View {
+    let title: String
+    var note: String? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(Theme.display(17)).foregroundStyle(Theme.ink)
+            content
+            if let note { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true) }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.line))
     }
 }
 
 // MARK: Account
 
-struct AccountTab: View {
+struct AccountPage: View {
     @Environment(AISettings.self) private var settings
 
     var body: some View {
-        Form {
-            Section {
-                HStack(spacing: 14) {
-                    PipView(pose: settings.account.signedIn ? .proud : .read, size: 80)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(settings.account.signedIn ? "Signed in with Google" : "Not signed in").font(Theme.display(18))
-                        Text(settings.account.signedIn ? settings.account.email : "Sign in so NotebookLM can prepare your books. Without it, Pip uses your own AI.")
-                            .font(Theme.body(13)).foregroundStyle(Theme.ink2)
-                    }
-                    Spacer()
-                    if settings.account.signedIn {
-                        Button("Sign out") { Task { await settings.signOut() } }
-                    } else {
-                        Button("Sign in with Google") { Task { await settings.signIn() } }
-                            .buttonStyle(.borderedProminent).disabled(settings.signingIn)
-                    }
+        SettingsCard(title: "Google", note: "Sign-in happens in a real browser window (Chrome when you have it). That session is what NotebookLM uses; Pip never sees your password.") {
+            HStack(spacing: 14) {
+                Image(systemName: settings.account.signedIn ? "checkmark.seal.fill" : "person.crop.circle.badge.questionmark")
+                    .font(.system(size: 34)).foregroundStyle(settings.account.signedIn ? Theme.mint : Theme.ink3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(settings.account.signedIn ? "Signed in" : "Not signed in").font(Theme.display(16, .medium))
+                    Text(settings.account.signedIn ? settings.account.email : "NotebookLM needs this. Without it, Pip uses your own AI.")
+                        .font(Theme.body(13)).foregroundStyle(Theme.ink2)
                 }
-                if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
-            } header: { Text("Google") } footer: {
-                Text("Sign-in happens in a real browser window (Chrome when you have it). That same session is what NotebookLM uses; Pip never sees your password.")
+                Spacer()
+                if settings.account.signedIn {
+                    Button("Sign out") { Task { await settings.signOut() } }
+                } else {
+                    Button("Sign in with Google") { Task { await settings.signIn() } }
+                        .buttonStyle(.borderedProminent).controlSize(.large).disabled(settings.signingIn)
+                }
             }
-            Section("Your library on every device") {
-                Label("Syncing your library through your Google Drive comes next. It needs NeuralLoop's Google sign-in ID, a one-time setup (docs/specs/07-every-device.md).",
-                      systemImage: "icloud.and.arrow.up").font(Theme.body(13)).foregroundStyle(Theme.ink2)
-            }
+            if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
         }
-        .formStyle(.grouped)
+        SettingsCard(title: "Your library on every device", note: "Needs NeuralLoop's Google sign-in ID, a one-time setup (docs/specs/07-every-device.md).") {
+            Label("Coming next: your books and progress follow your Google account to your iPad and other laptops.", systemImage: "arrow.triangle.2.circlepath")
+                .font(Theme.body(13)).foregroundStyle(Theme.ink2)
+        }
     }
 }
 
 // MARK: Your AI
 
-struct AITab: View {
+struct AIPage: View {
     @Environment(AISettings.self) private var settings
     @State private var showItems = false
 
     var body: some View {
         @Bindable var settings = settings
-        Form {
-            Section {
-                Picker("Who prepares your books", selection: $settings.config.engine) {
-                    ForEach(Engine.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-            } header: { Text("Engine") } footer: {
-                Text("NotebookLM makes wonderful podcasts. When it's not signed in, busy, or out of daily uses, your AI makes that item instead, so a book always gets finished.")
-            }
-
-            ModelSection(title: "Your AI", footer: "Writes reading guides, quizzes, flashcards, maps, podcast scripts, and explainers.",
-                         choice: $settings.config.make, keys: $settings.keys)
-
-            Section {
-                DisclosureGroup("Use a different model for some items", isExpanded: $showItems) {
-                    ForEach(AISettings.items, id: \.id) { item in
-                        ItemOverride(name: item.name, id: item.id)
+        SettingsCard(title: "Who prepares your books",
+                     note: "NotebookLM makes wonderful podcasts. When it isn't signed in, is busy, or runs out of daily uses, your AI makes that item instead, so a book always gets finished.") {
+            HStack(spacing: 10) {
+                ForEach(Engine.allCases, id: \.self) { engine in
+                    ChoiceCard(icon: icon(engine), title: short(engine), detail: detail(engine), selected: settings.config.engine == engine) {
+                        settings.config.engine = engine
                     }
                 }
             }
+        }
 
-            ModelSection(title: "Recall checker", footer: "Checks your own-words answers, one key point at a time. A small open model on your Mac is quick and private.",
-                         choice: $settings.config.recall, keys: $settings.keys)
+        ModelPicker(title: "Your AI", note: "Writes reading guides, quizzes, flashcards, maps, podcast scripts, and explainers.",
+                    choice: $settings.config.make, keys: $settings.keys, allowAutomatic: true)
 
-            Section {
-                HStack {
-                    Button(settings.checking ? "Testing…" : "Save and test") { Task { await settings.saveAndTest() } }
-                        .buttonStyle(.borderedProminent).disabled(settings.checking)
-                    if settings.checking { ProgressView().controlSize(.small) }
-                    Spacer()
-                    Button("Save") { settings.save() }
+        SettingsCard(title: "Different models for some items", note: "For example, quizzes from Claude and everything else from Ollama.") {
+            DisclosureGroup(isExpanded: $showItems) {
+                VStack(spacing: 8) {
+                    ForEach(AISettings.items, id: \.id) { item in ItemOverride(name: item.name, id: item.id) }
                 }
-                ForEach(settings.check.keys.sorted(), id: \.self) { role in
-                    if let result = settings.check[role] { CheckRow(role: role, result: result) }
-                }
-                if !settings.checkNote.isEmpty { Text(settings.checkNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
+                .padding(.top, 8)
+            } label: {
+                Text(settings.config.tasks.isEmpty ? "Every item uses Your AI" : "\(settings.config.tasks.count) item\(settings.config.tasks.count == 1 ? "" : "s") use a different model")
+                    .font(Theme.body(14))
             }
         }
-        .formStyle(.grouped)
+
+        ModelPicker(title: "Recall checker", note: "Checks your own-words answers, one key point at a time. A small open model on your Mac is quick and private.",
+                    choice: $settings.config.recall, keys: $settings.keys, allowAutomatic: false)
+
+        SettingsCard(title: "Save and test", note: "Pip tries each model once with a tiny request, so you know it works before your next book.") {
+            HStack {
+                Button { Task { await settings.saveAndTest() } } label: {
+                    Label(settings.checking ? "Testing…" : "Save and test", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large).disabled(settings.checking)
+                if settings.checking { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Save without testing") { settings.save() }
+            }
+            ForEach(settings.check.keys.sorted(), id: \.self) { role in
+                if let result = settings.check[role] { CheckRow(role: role, result: result) }
+            }
+            if !settings.checkNote.isEmpty { Text(settings.checkNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
+        }
+    }
+
+    private func icon(_ e: Engine) -> String {
+        switch e {
+        case .auto: "sparkles"
+        case .notebooklm: "book.pages"
+        case .local: "desktopcomputer"
+        }
+    }
+
+    private func detail(_ e: Engine) -> String {
+        switch e {
+        case .auto: "Your AI steps in whenever NotebookLM can't, so books always finish."
+        case .notebooklm: "Wait for NotebookLM, even when it's busy or out of daily uses."
+        case .local: "Free and private with Ollama, or the models and keys you choose."
+        }
+    }
+
+    private func short(_ e: Engine) -> String {
+        switch e {
+        case .auto: "NotebookLM first"
+        case .notebooklm: "Only NotebookLM"
+        case .local: "Only my AI"
+        }
     }
 }
 
-/// Provider, model, address, and key for one role.
-struct ModelSection: View {
+struct ChoiceCard: View {
+    let icon: String
     let title: String
-    let footer: String
-    @Binding var choice: ModelChoice
-    @Binding var keys: [String: String]
+    let detail: String
+    let selected: Bool
+    let action: () -> Void
 
     var body: some View {
-        let preset = ProviderPreset.matching(choice) ?? ProviderPreset.named("ollama")!
-        Section {
-            Picker("Provider", selection: Binding(
-                get: { choice.provider == "auto" ? "auto" : preset.id },
-                set: { id in
-                    if id == "auto" { choice = ModelChoice(provider: "auto") }
-                    else if let p = ProviderPreset.named(id) { choice = p.choice(model: nil) }
-                })) {
-                Text("Automatic (your key if you add one, otherwise Ollama)").tag("auto")
-                ForEach(ProviderPreset.all) { Text($0.title).tag($0.id) }
-            }
-            if choice.provider != "auto" {
-                Text(preset.detail).font(Theme.body(12)).foregroundStyle(Theme.ink2)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    TextField("Model", text: Binding(get: { choice.model ?? "" }, set: { choice.model = $0.isEmpty ? nil : $0 }),
-                              prompt: Text(preset.defaultModel.isEmpty ? "the one NeuralLoop set up" : preset.defaultModel))
-                    if !preset.suggestions.isEmpty {
-                        Menu("Suggestions") {
-                            ForEach(preset.suggestions, id: \.self) { m in Button(m) { choice.model = m } }
-                        }
-                        .fixedSize()
+                    Image(systemName: icon).font(.system(size: 18))
+                    Spacer()
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Theme.accent : Theme.ink3)
+                }
+                Text(title).font(Theme.display(14, .medium)).foregroundStyle(Theme.ink)
+                Text(detail).font(Theme.body(11)).foregroundStyle(Theme.ink2).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+            .foregroundStyle(selected ? Theme.accent : Theme.ink2)
+            .background(selected ? Theme.accentSoft : Theme.paper, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 1.5 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Provider cards, then the model, address, and key for the chosen one.
+struct ModelPicker: View {
+    let title: String
+    let note: String
+    @Binding var choice: ModelChoice
+    @Binding var keys: [String: String]
+    let allowAutomatic: Bool
+
+    private let columns = [GridItem(.adaptive(minimum: 136), spacing: 10)]
+
+    var body: some View {
+        let preset = choice.provider == "auto" ? nil : ProviderPreset.matching(choice)
+        SettingsCard(title: title, note: note) {
+            LazyVGrid(columns: columns, spacing: 10) {
+                if allowAutomatic {
+                    ProviderTile(icon: "wand.and.stars", title: "Automatic", status: "Your key, else Ollama", selected: choice.provider == "auto") {
+                        choice = ModelChoice(provider: "auto")
                     }
                 }
-                if preset.provider == "custom" {
-                    TextField("Address", text: Binding(get: { choice.baseUrl ?? "" }, set: { choice.baseUrl = $0.isEmpty ? nil : $0 }),
-                              prompt: Text("https://…/v1"))
-                }
-                if let variable = preset.keyVariable {
-                    SecureField(preset.keyOptional ? "API key (if it needs one)" : "API key", text: Binding(
-                        get: { keys[variable] ?? "" }, set: { keys[variable] = $0 }))
-                    Text("Stored in your Mac's Keychain. It's only ever passed to Pip's engine, never saved in a file.")
-                        .font(Theme.body(11)).foregroundStyle(Theme.ink3)
+                ForEach(ProviderPreset.all) { p in
+                    ProviderTile(icon: Self.icon(p.id), title: p.title, status: status(p), selected: preset?.id == p.id) {
+                        choice = p.choice(model: nil)
+                    }
                 }
             }
-        } header: { Text(title) } footer: { Text(footer) }
+            if let preset {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(preset.detail).font(Theme.body(12)).foregroundStyle(Theme.ink2)
+                    Field(label: "Model") {
+                        HStack {
+                            TextField("", text: Binding(get: { choice.model ?? "" }, set: { choice.model = $0.isEmpty ? nil : $0 }),
+                                      prompt: Text(preset.defaultModel.isEmpty ? "the one you've set up" : preset.defaultModel))
+                                .textFieldStyle(.roundedBorder)
+                            if !preset.suggestions.isEmpty {
+                                Menu("Suggestions") { ForEach(preset.suggestions, id: \.self) { m in Button(m) { choice.model = m } } }
+                                    .fixedSize()
+                            }
+                        }
+                    }
+                    if preset.provider == "custom" {
+                        Field(label: "Address") {
+                            TextField("", text: Binding(get: { choice.baseUrl ?? "" }, set: { choice.baseUrl = $0.isEmpty ? nil : $0 }),
+                                      prompt: Text("https://…/v1")).textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    if let variable = preset.keyVariable {
+                        Field(label: preset.keyOptional ? "Key (optional)" : "Key") {
+                            SecureField("", text: Binding(get: { keys[variable] ?? "" }, set: { keys[variable] = $0 }),
+                                        prompt: Text("Paste your key")).textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                .padding(14)
+                .background(Theme.paper, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
+    }
+
+    private func status(_ p: ProviderPreset) -> String {
+        guard let variable = p.keyVariable else { return p.id == "ollama" ? "Free, on this Mac" : "Uses its own setup" }
+        if !(keys[variable] ?? "").isEmpty { return "Key saved" }
+        if p.id == "lmstudio" { return "Free, on this Mac" }
+        return p.keyOptional ? "Your own address" : "Needs a key"
+    }
+
+    static func icon(_ id: String) -> String {
+        switch id {
+        case "ollama": "laptopcomputer"
+        case "lmstudio": "cube.transparent"
+        case "anthropic": "asterisk"
+        case "openai": "circle.hexagongrid"
+        case "openrouter": "arrow.triangle.branch"
+        case "opencode": "chevron.left.forwardslash.chevron.right"
+        case "hermes": "bolt.horizontal"
+        default: "network"
+        }
+    }
+}
+
+struct ProviderTile: View {
+    let icon: String
+    let title: String
+    let status: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 5) {
+                Image(systemName: icon).font(.system(size: 17)).foregroundStyle(selected ? Theme.accent : Theme.ink2)
+                Text(title).font(Theme.display(13, .medium)).foregroundStyle(Theme.ink).lineLimit(2)
+                Text(status).font(Theme.body(10)).foregroundStyle(status == "Key saved" ? Theme.mint : Theme.ink3).lineLimit(1)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+            .background(selected ? Theme.accentSoft : Theme.paper, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.accent : Theme.line, lineWidth: selected ? 1.5 : 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct Field<Content: View>: View {
+    let label: String
+    @ViewBuilder var content: Content
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).font(Theme.body(13)).foregroundStyle(Theme.ink2).frame(width: 96, alignment: .leading)
+            content
+        }
     }
 }
 
@@ -158,18 +367,18 @@ struct ItemOverride: View {
     var body: some View {
         @Bindable var settings = settings
         HStack {
-            Text(name).frame(width: 220, alignment: .leading)
+            Text(name).font(Theme.body(13)).frame(width: 230, alignment: .leading)
             Picker("", selection: Binding(
                 get: { settings.config.tasks[id].flatMap(ProviderPreset.matching)?.id ?? "same" },
                 set: { value in settings.config.tasks[id] = value == "same" ? nil : ProviderPreset.named(value)?.choice(model: nil) })) {
-                Text("Same as your AI").tag("same")
+                Text("Same as Your AI").tag("same")
                 ForEach(ProviderPreset.all) { Text($0.title).tag($0.id) }
             }
             .labelsHidden()
             if settings.config.tasks[id] != nil {
                 TextField("Model", text: Binding(get: { settings.config.tasks[id]?.model ?? "" },
                                                  set: { settings.config.tasks[id]?.model = $0.isEmpty ? nil : $0 }))
-                    .frame(width: 180)
+                    .textFieldStyle(.roundedBorder).frame(width: 170)
             }
         }
     }
@@ -181,15 +390,18 @@ struct CheckRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: result.ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .foregroundStyle(result.ok ? Theme.mint : Theme.accent)
+            Image(systemName: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(result.ok ? Theme.mint : Theme.accent).font(.system(size: 18))
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(Theme.body(13)).bold()
+                Text(label).font(Theme.display(14, .medium))
                 Text(result.ok ? "\(result.name ?? "") \(result.model ?? "") answered in \(String(format: "%.1f", result.seconds ?? 0)) s"
                                 : (result.message ?? "Didn't answer."))
-                    .font(Theme.body(12)).foregroundStyle(Theme.ink2)
+                    .font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(result.ok ? Theme.mintSoft : Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var label: String {
@@ -202,33 +414,36 @@ struct CheckRow: View {
 
 // MARK: Voices
 
-struct VoicesTab: View {
+struct VoicesPage: View {
     @Environment(AISettings.self) private var settings
     private let voices = ["Ira", "Aisha", "Siya", "Zoya"]
 
     var body: some View {
         @Bindable var settings = settings
-        Form {
-            Section {
-                Picker("Voice quality", selection: $settings.config.voiceQuality) {
-                    Text("Fast (about twice as quick)").tag(VoiceQuality.fast)
-                    Text("Best").tag(VoiceQuality.best)
-                }
-                .pickerStyle(.segmented)
-            } header: { Text("Rumik voices") } footer: {
-                Text("Rumik OSS-1 runs on your Mac. Its license allows personal, non-commercial use.")
+        SettingsCard(title: "Voice quality", note: "Rumik OSS-1 runs on your Mac. Its license allows personal, non-commercial use.") {
+            HStack(spacing: 10) {
+                ChoiceCard(icon: "hare", title: "Fast", detail: "About twice as quick. A podcast is ready in half the time.",
+                           selected: settings.config.voiceQuality == .fast) { settings.config.voiceQuality = .fast }
+                ChoiceCard(icon: "sparkles", title: "Best", detail: "The richest voice, for when you're not in a hurry.",
+                           selected: settings.config.voiceQuality == .best) { settings.config.voiceQuality = .best }
             }
-            Section("Podcast hosts") {
-                Picker("Host who asks", selection: Binding(get: { settings.config.voices[0] }, set: { settings.config.voices[0] = $0 })) {
-                    ForEach(voices, id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Host who explains (and narrates explainers)", selection: Binding(get: { settings.config.voices[1] }, set: { settings.config.voices[1] = $0 })) {
-                    ForEach(voices, id: \.self) { Text($0).tag($0) }
-                }
-            }
-            Section { Button("Save") { settings.save() }.buttonStyle(.borderedProminent) }
         }
-        .formStyle(.grouped)
+        SettingsCard(title: "Podcast hosts") {
+            Field(label: "Asks") {
+                Picker("", selection: Binding(get: { settings.config.voices[0] }, set: { settings.config.voices[0] = $0 })) {
+                    ForEach(voices, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+            Field(label: "Explains") {
+                Picker("", selection: Binding(get: { settings.config.voices[1] }, set: { settings.config.voices[1] = $0 })) {
+                    ForEach(voices, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+            Text("The host who explains also narrates the explainer videos.").font(Theme.body(12)).foregroundStyle(Theme.ink3)
+        }
+        HStack { Spacer(); Button("Save") { settings.save() }.buttonStyle(.borderedProminent).controlSize(.large) }
     }
 }
 

@@ -264,3 +264,18 @@ def test_the_explainer_also_becomes_a_real_video(tmp_path, chapter, monkeypatch)
 def test_without_rendering_the_slideshow_still_arrives(tmp_path, chapter):
     result = make(engine_for(tmp_path), "video", chapter)
     assert "video" not in result and result["explainer"]["slides"]
+
+
+def test_a_local_openai_compatible_server_gets_a_small_context_budget(tmp_path):
+    """LM Studio (and Ollama's OpenAI endpoint) often run with ~4k tokens; long chapters get condensed."""
+    from types import SimpleNamespace
+
+    from neuralloop_books.models.openai_compat import OpenAICompatModel
+
+    opts = SimpleNamespace(
+        out=tmp_path, context=None, audio="brief", video="short", language="en", instructions=""
+    )
+    local = OpenAICompatModel("custom", "m", api_key="none", base_url="http://localhost:1234/v1")
+    remote = OpenAICompatModel("custom", "m", api_key="k", base_url="https://api.together.xyz/v1")
+    assert LocalEngine.from_options(opts, local, FakeSpeech()).budget <= 12_000
+    assert LocalEngine.from_options(opts, remote, FakeSpeech()).budget >= 100_000
