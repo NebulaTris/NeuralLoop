@@ -133,7 +133,8 @@ class ChapterMaker:
         )
         target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
         saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), status.task_id)
-        return {"audio": f"media/{Path(saved or target).name}"}
+        # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches the audio.
+        return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
 
     async def _video(self, chapter, sources):
         status = await self.client.artifacts.generate_video(
@@ -151,4 +152,4 @@ class ChapterMaker:
         saved = await self.client.artifacts.download_video(self.notebook_id, str(target), status.task_id)
         if not saved or not Path(saved).exists():
             raise UnusableAnswer("No video was produced")
-        return {"video": f"media/{Path(saved).name}"}
+        return {"video": f"media/{Path(saved).name}", "explainer": None}

@@ -58,6 +58,9 @@ struct QuickPanel: View {
                     open(resume.entry.id)
                 }
             }
+            if let resume = summary.resume, resume.chapter.audio != nil || resume.chapter.video != nil {
+                PanelMedia(folder: resume.entry.folder, chapter: resume.chapter)
+            }
             if summary.dueCards > 0 {
                 PanelButton(icon: "rectangle.stack.fill", title: "Review \(summary.dueCards) card\(summary.dueCards == 1 ? "" : "s")",
                             detail: "About \(max(1, summary.dueCards * 15 / 60)) min", tint: Theme.mint) {
@@ -122,6 +125,28 @@ struct QuickPanel: View {
         if !s.preparing.isEmpty { return "You can start on ready chapters while Pip works." }
         if s.dueCards > 0 { return "A two-minute review, then you're done for today." }
         return s.resume == nil ? "I'll turn it into small learning loops." : "You're doing great. Rest counts too."
+    }
+}
+
+/// The chapter's video and podcast, playable right from the menu bar. Playback carries on when the panel closes.
+struct PanelMedia: View {
+    let folder: URL
+    let chapter: Chapter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Listen & watch · \(chapter.title)", systemImage: "headphones")
+                .font(Theme.display(13, .medium)).foregroundStyle(Theme.ink2).lineLimit(1)
+            if let video = chapter.video {
+                ChapterVideo(url: folder.appendingPathComponent(video), corner: 10)
+            }
+            if let audio = chapter.audio {
+                PodcastControls(url: folder.appendingPathComponent(audio), compact: true)
+            }
+        }
+        .padding(10)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
     }
 }
 

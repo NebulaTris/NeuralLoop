@@ -14,20 +14,30 @@ struct ListenStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            Text("Watch").font(Theme.display(20))
             if let video = chapter.video {
-                Text("Watch").font(Theme.display(20))
-                VideoPlayer(player: AVPlayer(url: session.file(video)))
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                ChapterVideo(url: session.file(video))
+            } else {
+                NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id)
             }
+            Text("Listen").font(Theme.display(20))
             if let audio = chapter.audio {
-                Text("Listen").font(Theme.display(20))
                 PodcastPlayer(url: session.file(audio), transcript: chapter.transcript.map(session.file))
-            }
-            if chapter.video == nil && chapter.audio == nil {
-                NotReady(what: "The podcast and video", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
+            } else {
+                NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
             }
         }
+    }
+}
+
+struct ChapterVideo: View {
+    let url: URL
+    var corner: CGFloat = 16
+
+    var body: some View {
+        VideoPlayer(player: MediaCenter.shared.player(for: url))
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: corner))
     }
 }
 
@@ -37,73 +47,97 @@ struct TranscriptLine: Decodable, Identifiable {
     let text: String
     let start: Double
     var id: Double { start }
+
+    /// Lines from the transcript file next to a podcast our own voices made. NotebookLM's podcasts have none.
+    static func load(_ url: URL?) -> [TranscriptLine] {
+        guard let url, let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = object["lines"], let linesData = try? JSONSerialization.data(withJSONObject: raw)
+        else { return [] }
+        return (try? JSONDecoder().decode([TranscriptLine].self, from: linesData)) ?? []
+    }
 }
 
-@MainActor @Observable
-final class PodcastModel {
-    let player: AVPlayer
-    var lines: [TranscriptLine] = []
-    var time: Double = 0
-    var playing = false
-    private var observer: Any?
+/// Play/pause, where you are, and a bar to jump around. Used on the chapter screen and in the menu-bar panel.
+struct PodcastControls: View {
+    let url: URL
+    var compact = false
+    private var media: MediaCenter { .shared }
 
-    init(url: URL, transcript: URL?) {
-        player = AVPlayer(url: url)
-        if let transcript, let data = try? Data(contentsOf: transcript),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let raw = object["lines"], let linesData = try? JSONSerialization.data(withJSONObject: raw) {
-            lines = (try? JSONDecoder().decode([TranscriptLine].self, from: linesData)) ?? []
+    var body: some View {
+        let duration = media.duration(url)
+        HStack(spacing: compact ? 10 : 14) {
+            Button { media.toggle(url) } label: {
+                Image(systemName: media.isPlaying(url) ? "pause.fill" : "play.fill")
+                    .font(.system(size: compact ? 14 : 18, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: compact ? 34 : 46, height: compact ? 34 : 46)
+                    .background(Theme.accent, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help(media.isPlaying(url) ? "Pause" : "Play")
+            .accessibilityLabel(media.isPlaying(url) ? "Pause the podcast" : "Play the podcast")
+            VStack(alignment: .leading, spacing: 2) {
+                Slider(value: Binding(get: { min(media.time(url), max(duration, 1)) },
+                                      set: { media.seek(url, to: $0, play: media.isPlaying(url)) }),
+                       in: 0...max(duration, 1))
+                    .controlSize(compact ? .mini : .small)
+                    .accessibilityLabel("Podcast position")
+                HStack {
+                    Text(MediaCenter.clock(media.time(url)))
+                    Spacer()
+                    Text(duration > 0 ? MediaCenter.clock(duration) : "")
+                }
+                .font(Theme.body(11)).monospacedDigit().foregroundStyle(Theme.ink3)
+            }
         }
-        observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
-            MainActor.assumeIsolated { self?.time = t.seconds }
-        }
-    }
-
-    var current: Double? { lines.last(where: { $0.start <= time + 0.05 })?.start }
-
-    func toggle() { playing ? player.pause() : player.play(); playing.toggle() }
-
-    func seek(_ seconds: Double) {
-        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
-        player.play()
-        playing = true
+        .onAppear { _ = media.player(for: url) }
     }
 }
 
 struct PodcastPlayer: View {
-    @State private var model: PodcastModel
+    let url: URL
+    let lines: [TranscriptLine]
+    private var media: MediaCenter { .shared }
 
-    init(url: URL, transcript: URL?) { _model = State(initialValue: PodcastModel(url: url, transcript: transcript)) }
+    init(url: URL, transcript: URL?) {
+        self.url = url
+        self.lines = TranscriptLine.load(transcript)
+    }
+
+    private var current: Double? {
+        let time = media.time(url)
+        return lines.last(where: { $0.start <= time + 0.05 })?.start
+    }
 
     var body: some View {
         CardBox {
             VStack(alignment: .leading, spacing: 12) {
-                Button { model.toggle() } label: {
-                    Label(model.playing ? "Pause" : "Play", systemImage: model.playing ? "pause.fill" : "play.fill")
-                        .font(Theme.display(15))
-                }
-                .buttonStyle(.borderedProminent)
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.lines) { line in
-                                Button { model.seek(line.start) } label: {
-                                    HStack(alignment: .top, spacing: 10) {
-                                        Text(line.voice).font(Theme.display(13)).frame(width: 50, alignment: .leading)
-                                            .foregroundStyle(line.speaker == "A" ? Theme.accent : Theme.sky)
-                                        Text(line.text).font(Theme.body(14)).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
+                PodcastControls(url: url)
+                if !lines.isEmpty {
+                    Divider()
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(lines) { line in
+                                    Button { media.seek(url, to: line.start) } label: {
+                                        HStack(alignment: .top, spacing: 10) {
+                                            Text(line.voice).font(Theme.display(13)).frame(width: 50, alignment: .leading)
+                                                .foregroundStyle(line.speaker == "A" ? Theme.accent : Theme.sky)
+                                            Text(line.text).font(Theme.body(14)).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
+                                        }
+                                        .padding(8)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(current == line.start ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
                                     }
-                                    .padding(8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(model.current == line.start ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                                    .buttonStyle(.plain)
+                                    .id(line.start)
                                 }
-                                .buttonStyle(.plain)
-                                .id(line.start)
                             }
                         }
+                        .frame(maxHeight: 320)
+                        .onChange(of: current) { _, now in if let now { withAnimation { proxy.scrollTo(now, anchor: .center) } } }
                     }
-                    .frame(maxHeight: 320)
-                    .onChange(of: model.current) { _, now in if let now { withAnimation { proxy.scrollTo(now, anchor: .center) } } }
                 }
             }
         }

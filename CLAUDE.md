@@ -168,7 +168,8 @@ permissions across rebuilds; `make mac` uses it) · `design/pip/generate_pip.py`
   status:{study,graph,quiz,cards,mindmap,audio,video}, notes:{…}, graph, quiz, cards, mindmap, audio, video, guide, recall,
   explainer:{slides:[{title,points,narration,pose,audio,duration}]}, transcript}], graph, engine, provider, model}`.
   `transcript` points at `media/NN-podcast.json`: `{title, complete, lines:[{speaker,voice,text,start,clip}]}`, rewritten
-  after every voiced line (`complete: false`, each line's `clip` in `media/NN-podcast-lines/`), so playback can start early.
+  after every voiced line (`complete: false`, each line's `clip` in `media/NN-podcast-lines/`), so playback can start early. A NotebookLM podcast has no `transcript` and a NotebookLM video no
+  `explainer`; making one clears what an earlier engine left.
 - **Study progress** (`store`, saved as localStorage `nlbook:<title>` and `progress.json`): `{cards:{"n:i":{s,d,reps,last,due}},
   quiz, loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake, mapPos:{id:[x,y]}, mapSeen:[n], last:{n,stage},
   log:{"YYYY-MM-DD": seconds}}` (`log`: study time per local day, counted in 15 s ticks while the page is visible and in use).

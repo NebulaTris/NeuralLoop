@@ -216,3 +216,17 @@ def test_notebooklm_uses_the_client_its_context_opens(options):
     context = OpenedLikeTheRealLibrary()
     state = asyncio.run(run(options, NotebookLMEngine(context, ENUMS, options)))
     assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and context.closed
+
+
+def test_notebooklm_media_replaces_what_an_earlier_engine_left(options):
+    """NotebookLM media has no transcript or slides: drop old ones so they never mismatch."""
+    run_local(options)
+    path = options.out / "state.json"
+    saved = json.loads(path.read_text())
+    for task in ("audio", "video"):
+        saved["chapters"][0]["tasks"][task]["status"] = "todo"
+    path.write_text(json.dumps(saved))
+    run_with(options, FakeClient(delay=0))
+    first = book_data(options.out)["chapters"][0]
+    assert first["audio"] and first["video"]
+    assert first.get("transcript") is None and first.get("explainer") is None
