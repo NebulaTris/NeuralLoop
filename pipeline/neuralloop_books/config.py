@@ -51,8 +51,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",
     "openai": "gpt-6-sol",
     "openrouter": "deepseek/deepseek-v4.1-flash",
-    "opencode": "deepseek/deepseek-v4-pro",
-    # hermes: whatever Hermes Agent is set up to use; custom: you name it
+    # opencode and hermes: whatever the person set up in them; custom: you name it
     # ollama: the first model already installed
 }
 # How much chapter text (characters) goes to a model at once; longer chapters are condensed into notes first.

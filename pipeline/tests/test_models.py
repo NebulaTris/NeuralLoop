@@ -240,3 +240,58 @@ def test_ollama_prefers_the_default_model_and_can_be_started(monkeypatch):
     model = ollama.OllamaModel(None)
     asyncio.run(model.check())
     assert model.model == "qwen3:8b"
+
+
+def test_opencode_uses_the_persons_own_default_model(monkeypatch):
+    seen = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b'> build \xc2\xb7 longcat\n{"ok": true}\n', b""
+
+    async def fake_exec(*argv, **kwargs):
+        seen["argv"] = argv
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    model = models.make_model("opencode", None, env={})
+    model.executable = "/bin/opencode"
+    assert model.model is None
+    asyncio.run(model.complete("check", "", "", "P"))
+    assert "-m" not in seen["argv"]
+
+
+def test_opencode_errors_read_as_plain_text(monkeypatch):
+    class Process:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"\x1b[91m\x1b[1mError: \x1b[0mModel unavailable: x/y"
+
+    async def fake_exec(*argv, **kwargs):
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    with pytest.raises(RuntimeError) as error:
+        asyncio.run(OpencodeModel("x/y", executable="/bin/opencode").complete("quiz", "", "", ""))
+    assert "\x1b" not in str(error.value) and "Model unavailable: x/y" in str(error.value)
+
+
+def test_a_local_server_that_is_not_running_says_so():
+    from neuralloop_books.models.openai_compat import OpenAICompatModel
+
+    model = OpenAICompatModel("custom", "any", api_key="none", base_url="http://localhost:1234/v1")
+    with pytest.raises(SetupError, match="Nothing is answering at http://localhost:1234/v1"):
+        asyncio.run(model.check())
+
+
+def test_openrouter_checks_by_asking_not_by_looking_up_the_model(monkeypatch):
+    model = models.make_model("openrouter", None, env={"OPENROUTER_API_KEY": "k"})
+
+    async def no_lookup(*args, **kwargs):
+        raise AssertionError("OpenRouter has no single-model lookup")
+
+    monkeypatch.setattr(model.client.models, "retrieve", no_lookup)
+    asyncio.run(model.check())  # nothing to look up; the test request that follows checks key and model

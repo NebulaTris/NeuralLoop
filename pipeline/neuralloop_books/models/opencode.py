@@ -35,7 +35,7 @@ class OpencodeModel:
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), TIMEOUT)
         if process.returncode != 0:
-            detail = stderr.decode(errors="replace").strip()
+            detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):
                 raise QuotaError(detail[:200])
             raise RuntimeError(f"opencode failed: {detail[:200]}")

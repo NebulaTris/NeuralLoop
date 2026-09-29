@@ -1,11 +1,13 @@
 """Any model Hermes Agent (Nous Research) is set up for, through its one-shot mode: `hermes -z PROMPT`."""
 
 import asyncio
+import re
 import shutil
 
 from . import QuotaError, SetupError
 
 TIMEOUT = 1800.0
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _QUOTA_HINTS = ("rate limit", "ratelimit", "quota", "429", "insufficient", "credit")
 
 
@@ -35,7 +37,7 @@ class HermesModel:
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), TIMEOUT)
         if process.returncode != 0:
-            detail = stderr.decode(errors="replace").strip()
+            detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):
                 raise QuotaError(detail[:200])
             raise RuntimeError(f"Hermes Agent failed: {detail[:200]}")
