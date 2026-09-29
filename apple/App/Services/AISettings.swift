@@ -84,6 +84,12 @@ final class AISettings {
         await refreshAccount()
     }
 
+    /// Sign out, then sign in again, maybe with a different Google account (a browser window opens).
+    func switchAccount() async {
+        _ = await PipelineRunner.once(["--signout"])
+        await signIn()
+    }
+
     func signOut() async {
         _ = await PipelineRunner.once(["--signout"])
         await refreshAccount()

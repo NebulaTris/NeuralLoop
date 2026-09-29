@@ -82,7 +82,7 @@ def eyes(expr):
     if expr in ("open", "proud"):
         s = ""
         for x in (-21, 21):
-            s += f'<ellipse cx="{x}" cy="-2" rx="9" ry="10.5" fill="{EYE}"/><ellipse cx="{x}" cy="2.5" rx="6.2" ry="5" fill="{IRIS}" opacity=".9"/><circle cx="{x + 3}" cy="-6" r="3.4" fill="#FFFFFF"/><circle cx="{x - 3}" cy="3" r="1.6" fill="#FFFFFF"/><circle cx="{x + 4}" cy="3.5" r=".9" fill="#FFFFFF"/>'
+            s += f'<ellipse cx="{x}" cy="-2" rx="9" ry="10.5" fill="{EYE}"/><ellipse cx="{x}" cy="2.5" rx="6.2" ry="5" fill="{IRIS}" opacity=".9"/><circle cx="{x + 3}" cy="-6" r="3.9" fill="#FFFFFF"/><circle cx="{x - 3.5}" cy="3.5" r="1.8" fill="#FFFFFF"/><circle cx="{x + 4}" cy="3.5" r=".9" fill="#FFFFFF"/>'
         s += f'<g class="lids"><ellipse cx="-21" cy="-2" rx="10.5" ry="12" fill="{FUR}"/><ellipse cx="21" cy="-2" rx="10.5" ry="12" fill="{FUR}"/><path d="M-30,1 Q-21,6 -12,1 M12,1 Q21,6 30,1" fill="none" stroke="{EYE}" stroke-width="3" stroke-linecap="round"/></g>'
         return s
     if expr == "happy":
@@ -93,15 +93,16 @@ def eyes(expr):
 def head(cx, cy, s=1, expr="open", rot=0, glasses=False, cls="tilt"):
     g = [
         f'<g transform="translate({cx},{cy}) rotate({rot}) scale({s})"><g class="{cls}">',
-        ear(1),
-        ear(-1),
+        f'<g class="twitch-l">{ear(1)}</g>',
+        f'<g class="twitch-r">{ear(-1)}</g>',
         f'<path d="{HEAD_D}" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/>',
         f'<path d="M-30,-30 Q0,-44 30,-30" fill="none" stroke="{FUR2}" stroke-width="7" stroke-linecap="round" opacity=".7"/>',
         f'<path d="M-4,-40 Q0,-50 5,-41" fill="none" stroke="{OUT}" stroke-width="2.6" stroke-linecap="round"/>',
+        f'<ellipse cx="-24" cy="-33" rx="9" ry="4" transform="rotate(-18 -24 -33)" fill="#FFFFFF" opacity=".22"/>',
         f'<g transform="translate(-36,12)"><path d="{CHEEK_L}" fill="{CREAM}"/></g><g transform="translate(36,12) scale(-1,1)"><path d="{CHEEK_L}" fill="{CREAM}"/></g>',
         f'<ellipse cx="0" cy="18" rx="27" ry="18" fill="{CREAM}"/>',
         f'<ellipse cx="-21" cy="-20" rx="10" ry="6.5" fill="{CREAM}"/><ellipse cx="21" cy="-20" rx="10" ry="6.5" fill="{CREAM}"/>',
-        f'<path d="M-22,8 Q-26,19 -19,29 M22,8 Q26,19 19,29" fill="none" stroke="{FUR}" stroke-width="6" stroke-linecap="round"/>',
+        f'<path d="M-22,8 Q-26,19 -19,29 M22,8 Q26,19 19,29" fill="none" stroke="{SHADE}" stroke-width="6.5" stroke-linecap="round" opacity=".85"/>',
         eyes(expr),
     ]
     if glasses:
@@ -127,7 +128,8 @@ def head(cx, cy, s=1, expr="open", rot=0, glasses=False, cls="tilt"):
             f'<path d="M-7,22 Q-3.5,26 0,22 Q3.5,26 7,22" fill="none" stroke="{EYE}" stroke-width="2.2" stroke-linecap="round"/>'
         )
     g.append(
-        f'<ellipse cx="-38" cy="22" rx="7.5" ry="4.5" fill="{PINK}" opacity=".75"/><ellipse cx="38" cy="22" rx="7.5" ry="4.5" fill="{PINK}" opacity=".75"/>'
+        f'<ellipse cx="-38" cy="22" rx="10" ry="6" fill="{PINK}" opacity=".32"/><ellipse cx="38" cy="22" rx="10" ry="6" fill="{PINK}" opacity=".32"/>'
+        f'<ellipse cx="-38" cy="22" rx="6.5" ry="3.8" fill="{PINK}" opacity=".7"/><ellipse cx="38" cy="22" rx="6.5" ry="3.8" fill="{PINK}" opacity=".7"/>'
     )
     g.append("</g></g>")
     return "".join(g)
@@ -138,7 +140,11 @@ def tail(d, cls="tail"):
 
 
 def body(cx, cy, rx=38, ry=33):
-    return f'<path d="{fluffy(rx, ry, [(200, 340)], 6, 10)}" transform="translate({cx},{cy})" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><ellipse cx="{cx}" cy="{cy + 9}" rx="{rx * 0.58:.0f}" ry="{ry * 0.6:.0f}" fill="{DARK}"/><ellipse cx="{cx}" cy="{cy - ry + 10}" rx="{rx * 0.7:.0f}" ry="9" fill="{SHADE}" opacity=".35"/>'
+    shine = (
+        f'<path d="M{cx - rx * 0.7:.0f},{cy - ry * 0.35:.0f} Q{cx - rx * 0.55:.0f},{cy - ry * 0.75:.0f} {cx - rx * 0.2:.0f},{cy - ry * 0.82:.0f}" '
+        f'fill="none" stroke="{FUR2}" stroke-width="4.5" stroke-linecap="round" opacity=".65"/>'
+    )
+    return f'<path d="{fluffy(rx, ry, [(200, 340)], 6, 10)}" transform="translate({cx},{cy})" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><ellipse cx="{cx}" cy="{cy + 9}" rx="{rx * 0.58:.0f}" ry="{ry * 0.6:.0f}" fill="{DARK}"/><ellipse cx="{cx}" cy="{cy - ry + 10}" rx="{rx * 0.7:.0f}" ry="9" fill="{SHADE}" opacity=".35"/>{shine}'
 
 
 def feet(cx, cy):
@@ -158,7 +164,9 @@ def arm(x, y, rot, ry=15, beans=False):
 
 
 def shadow(cx, cy, rx=60, cls=""):
-    return f'<ellipse class="{cls}" cx="{cx}" cy="{cy}" rx="{rx}" ry="7" fill="{OUT}" opacity=".12"/>'
+    soft = f'<ellipse cx="{cx}" cy="{cy}" rx="{rx}" ry="8" fill="{OUT}" opacity=".07"/>'
+    core = f'<ellipse cx="{cx}" cy="{cy}" rx="{rx * 0.7:.0f}" ry="5" fill="{OUT}" opacity=".09"/>'
+    return f'<g class="{cls}">{soft}{core}</g>' if cls else soft + core
 
 
 def star(x, y, r, col="#F2B640", cls="twinkle"):
@@ -212,7 +220,10 @@ def pose_happy():
 
 def pose_nap():
     cx, cy = (128, 150)
-    z = '<g class="zz"><text x="184" y="72" font-family="Fredoka, sans-serif" font-size="22" font-weight="600" fill="#8A7D76">z</text></g><g class="zz t2"><text x="202" y="50" font-family="Fredoka, sans-serif" font-size="16" font-weight="600" fill="#B3A8A2">z</text></g>'
+    def zed(x, y, size, col):
+        return f'<path d="M{x},{y} L{x + size},{y} L{x},{y + size} L{x + size},{y + size}" fill="none" stroke="{col}" stroke-width="{size * 0.24:.1f}" stroke-linecap="round" stroke-linejoin="round"/>'
+
+    z = f'<g class="zz">{zed(186, 56, 14, "#8A7D76")}</g><g class="zz t2">{zed(204, 38, 10, "#B3A8A2")}</g>'
     bod = f'<g class="breathe-deep"><path d="{fluffy(66, 30, [(190, 350)], 6, 10)}" transform="translate({cx + 6},{cy + 18})" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/></g>'
     return svg(
         shadow(cx, 200, 78)
@@ -329,7 +340,88 @@ def pose_proud():
     )
 
 
-CSS = ".pip .tail,.pip .tail-soft,.pip .tilt,.pip .nod,.pip .watch,.pip .bob,.pip .lids,.pip .breathe,.pip .breathe-deep,.pip .puff,.pip .hop,.pip .rock,.pip .shadow-hop,.pip .wave-l,.pip .wave-r,.pip .twinkle,.pip .spin,.pip .roll,.pip .stretch,.pip .yawn,.pip .swipe,.pip .swing,.pip .page,.pip .type-l,.pip .type-r,.pip .zz,.pip .heart{transform-box:fill-box}\n.pip .tail{transform-origin:0% 100%}.pip .tail-soft{transform-origin:100% 20%}\n.pip .tilt,.pip .nod,.pip .watch,.pip .bob{transform-origin:50% 90%}\n.pip .lids{transform-origin:50% 50%;transform:scaleY(0)}\n.pip .breathe,.pip .breathe-deep,.pip .puff{transform-origin:50% 100%}\n.pip .hop,.pip .rock{transform-origin:50% 100%}.pip .shadow-hop{transform-origin:50% 50%}\n.pip .wave-l{transform-origin:80% 100%}.pip .wave-r{transform-origin:20% 100%}\n.pip .twinkle,.pip .spin,.pip .roll{transform-origin:50% 50%}\n.pip .stretch{transform-origin:100% 100%}.pip .yawn{transform-origin:50% 0%}\n.pip .swipe{transform-origin:100% 0%}.pip .swing{transform-origin:50% 0%}.pip .page{transform-origin:0% 50%}\n.pip .type-l,.pip .type-r{transform-origin:50% 0%}\n@media (prefers-reduced-motion:no-preference){\n.moving .tail{animation:nlSway 3.2s ease-in-out infinite}\n.moving .tail-soft{animation:nlSoft 4.4s ease-in-out infinite}\n.moving .lids{animation:nlBlink 5.2s infinite}\n.moving .tilt{animation:nlTilt 5.5s ease-in-out infinite}\n.moving .nod{animation:nlNod 4.4s ease-in-out infinite}\n.moving .watch{animation:nlWatch 1.4s ease-in-out infinite}\n.moving .bob{animation:nlBob 1.8s ease-in-out infinite}\n.moving .breathe{animation:nlBreathe 3.6s ease-in-out infinite}\n.moving .breathe-deep{animation:nlBreatheDeep 4.4s ease-in-out infinite}\n.moving .puff{animation:nlPuff 2.2s ease-in-out infinite}\n.moving .hop{animation:nlHop 1.1s cubic-bezier(.3,0,.4,1) infinite}\n.moving .shadow-hop{animation:nlShadow 1.1s cubic-bezier(.3,0,.4,1) infinite}\n.moving .wave-l{animation:nlWaveL .55s ease-in-out infinite alternate}\n.moving .wave-r{animation:nlWaveR .55s ease-in-out infinite alternate}\n.moving .twinkle{animation:nlTwinkle 1.8s ease-in-out infinite}\n.moving .t2{animation-delay:-.6s}.moving .t3{animation-delay:-1.2s}\n.moving .zz{animation:nlFloat 2.8s ease-in-out infinite}\n.moving .stretch{animation:nlStretch 3.4s ease-in-out infinite}\n.moving .yawn{animation:nlYawn 3.4s ease-in-out infinite}\n.moving .swipe{animation:nlSwipe 1.5s ease-in-out infinite}\n.moving .roll{animation:nlRoll 1.5s ease-in-out infinite}\n.moving .rock{animation:nlRock 2.6s ease-in-out infinite}\n.moving .heart{animation:nlRise 2.6s ease-in infinite}\n.moving .spin{animation:nlSpin 1.1s linear infinite}\n.moving .type-l{animation:nlType .36s ease-in-out infinite alternate}\n.moving .type-r{animation:nlType .36s ease-in-out infinite alternate-reverse}\n.moving .swing{animation:nlSwing 1.8s ease-in-out infinite}\n.moving .page{animation:nlPage 4.8s ease-in-out infinite}\n}\n@keyframes nlSway{0%,100%{transform:rotate(0)}50%{transform:rotate(8deg)}}\n@keyframes nlSoft{0%,100%{transform:rotate(0)}50%{transform:rotate(-3deg)}}\n@keyframes nlBlink{0%,92%,100%{transform:scaleY(0)}95%{transform:scaleY(1)}}\n@keyframes nlTilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-4deg)}65%{transform:rotate(3deg)}}\n@keyframes nlNod{0%,100%{transform:translateY(0)}50%{transform:translateY(2px) rotate(-2deg)}}\n@keyframes nlWatch{0%,100%{transform:rotate(0)}35%{transform:rotate(-6deg)}}\n@keyframes nlBob{0%,100%{transform:translateY(0)}50%{transform:translateY(2.5px)}}\n@keyframes nlBreathe{0%,100%{transform:scale(1)}50%{transform:scale(1.025,1.04)}}\n@keyframes nlBreatheDeep{0%,100%{transform:scale(1)}50%{transform:scale(1.03,1.07)}}\n@keyframes nlPuff{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}\n@keyframes nlHop{0%,100%{transform:translateY(0) scale(1.04,.96)}15%{transform:translateY(0) scale(1)}50%{transform:translateY(-16px) scale(.98,1.03)}85%{transform:translateY(0) scale(1)}}\n@keyframes nlShadow{0%,100%{transform:scale(1);opacity:.12}50%{transform:scale(.72);opacity:.07}}\n@keyframes nlWaveL{from{transform:rotate(-8deg)}to{transform:rotate(10deg)}}\n@keyframes nlWaveR{from{transform:rotate(8deg)}to{transform:rotate(-10deg)}}\n@keyframes nlTwinkle{0%,100%{transform:scale(.6);opacity:.4}50%{transform:scale(1.15);opacity:1}}\n@keyframes nlFloat{0%{transform:translate(0,0);opacity:0}25%{opacity:1}100%{transform:translate(6px,-16px);opacity:0}}\n@keyframes nlStretch{0%,100%{transform:scaleX(1)}50%{transform:scaleX(1.05) translateY(2px)}}\n@keyframes nlYawn{0%,20%,100%{transform:scaleY(.35)}50%,70%{transform:scaleY(1.1)}}\n@keyframes nlSwipe{0%,100%{transform:rotate(0)}30%{transform:rotate(-22deg)}45%{transform:rotate(4deg)}}\n@keyframes nlRoll{0%,28%,100%{transform:translateX(0) rotate(0)}55%{transform:translateX(-7px) rotate(-40deg)}}\n@keyframes nlRock{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}\n@keyframes nlRise{0%{transform:translateY(8px) scale(.6);opacity:0}30%{opacity:1}100%{transform:translateY(-22px) scale(1);opacity:0}}\n@keyframes nlSpin{to{transform:rotate(360deg)}}\n@keyframes nlType{from{transform:translateY(0)}to{transform:translateY(-3px)}}\n@keyframes nlSwing{0%,100%{transform:rotate(-9deg)}50%{transform:rotate(9deg)}}\n@keyframes nlPage{0%,70%,100%{transform:scaleX(1)}80%{transform:scaleX(.2)}90%{transform:scaleX(1)}}"
+# Every animation, as data: the CSS (explainer videos) and pip-rig.json (the Mac app) are both made from this.
+# Each key is (percent, {tx, ty (px), r (deg), sx, sy, o (opacity)}); missing values are identity.
+# origin: the pivot as a percentage of the animated group's own box (CSS transform-origin with transform-box: fill-box).
+EASE = {"ease": (0.25, 0.1, 0.25, 1), "ease-in-out": (0.42, 0, 0.58, 1), "ease-in": (0.42, 0, 1, 1), "linear": (0, 0, 1, 1)}
+ANIM = {
+    # A soft sway with a little follow-through at the top.
+    "tail": dict(origin=(0, 100), dur=3.4, ease="ease-in-out", keys=[(0, {}), (42, {"r": 9}), (58, {"r": 7}), (100, {})]),
+    "tail-soft": dict(origin=(100, 20), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"r": -3}), (100, {})]),
+    # Eyes open most of the time; one blink, then a double blink, over eight seconds.
+    "lids": dict(origin=(50, 50), dur=8, ease="ease", rest={"sy": 0}, keys=[
+        (0, {"sy": 0}), (41, {"sy": 0}), (43, {"sy": 1}), (45.5, {"sy": 0}), (86, {"sy": 0}), (88, {"sy": 1}),
+        (90, {"sy": 0}), (91.5, {"sy": 1}), (93.5, {"sy": 0}), (100, {"sy": 0})]),
+    # Ears twitch now and then (different periods, so they never move together).
+    "twitch-l": dict(origin=(85, 100), dur=6.7, ease="ease-in-out", keys=[
+        (0, {}), (86, {}), (89, {"r": -13}), (92, {}), (94, {"r": -6}), (97, {}), (100, {})]),
+    "twitch-r": dict(origin=(15, 100), dur=9.1, ease="ease-in-out", keys=[
+        (0, {}), (78, {}), (81, {"r": 13}), (84, {}), (100, {})]),
+    "tilt": dict(origin=(50, 90), dur=5.5, ease="ease-in-out", keys=[(0, {}), (30, {"r": -4}), (65, {"r": 3}), (100, {})]),
+    "nod": dict(origin=(50, 90), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 2, "r": -2}), (100, {})]),
+    "watch": dict(origin=(50, 90), dur=1.4, ease="ease-in-out", keys=[(0, {}), (35, {"r": -6}), (100, {})]),
+    "bob": dict(origin=(50, 90), dur=1.8, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 2.5}), (100, {})]),
+    "breathe": dict(origin=(50, 100), dur=3.6, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.025, "sy": 1.04}), (100, {})]),
+    "breathe-deep": dict(origin=(50, 100), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.03, "sy": 1.07}), (100, {})]),
+    "puff": dict(origin=(50, 100), dur=2.2, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.05, "sy": 1.05}), (100, {})]),
+    # Squash, leap, stretch, land.
+    "hop": dict(origin=(50, 100), dur=1.1, ease=(0.3, 0, 0.4, 1), keys=[
+        (0, {"sx": 1.06, "sy": 0.94}), (15, {}), (50, {"ty": -18, "sx": 0.97, "sy": 1.04}), (85, {}), (100, {"sx": 1.06, "sy": 0.94})]),
+    "shadow-hop": dict(origin=(50, 50), dur=1.1, ease=(0.3, 0, 0.4, 1), rest={"o": 1}, keys=[
+        (0, {}), (50, {"sx": 0.7, "sy": 0.7, "o": 0.55}), (100, {})]),
+    "rock": dict(origin=(50, 100), dur=2.6, ease="ease-in-out", rest={"r": 0}, keys=[(0, {"r": -3}), (50, {"r": 3}), (100, {"r": -3})]),
+    "wave-l": dict(origin=(80, 100), dur=0.55, ease="ease-in-out", alternate=True, keys=[(0, {"r": -8}), (100, {"r": 10})]),
+    "wave-r": dict(origin=(20, 100), dur=0.55, ease="ease-in-out", alternate=True, keys=[(0, {"r": 8}), (100, {"r": -10})]),
+    "twinkle": dict(origin=(50, 50), dur=1.8, ease="ease-in-out", keys=[
+        (0, {"sx": 0.6, "sy": 0.6, "o": 0.4}), (50, {"sx": 1.15, "sy": 1.15, "o": 1}), (100, {"sx": 0.6, "sy": 0.6, "o": 0.4})]),
+    "zz": dict(origin=(50, 50), dur=2.8, ease="ease-in-out", keys=[(0, {"o": 0}), (25, {"tx": 1.5, "ty": -4, "o": 1}), (100, {"tx": 6, "ty": -16, "o": 0})]),
+    "stretch": dict(origin=(100, 100), dur=3.4, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.05, "ty": 2}), (100, {})]),
+    "yawn": dict(origin=(50, 0), dur=3.4, ease="ease-in-out", rest={"sy": 0.35}, keys=[
+        (0, {"sy": 0.35}), (20, {"sy": 0.35}), (50, {"sy": 1.1}), (70, {"sy": 1.1}), (100, {"sy": 0.35})]),
+    "swipe": dict(origin=(100, 0), dur=1.5, ease="ease-in-out", keys=[(0, {}), (30, {"r": -22}), (45, {"r": 4}), (100, {})]),
+    "roll": dict(origin=(50, 50), dur=1.5, ease="ease-in-out", keys=[(0, {}), (28, {}), (55, {"tx": -7, "r": -40}), (100, {})]),
+    "heart": dict(origin=(50, 50), dur=2.6, ease="ease-in", keys=[
+        (0, {"ty": 8, "sx": 0.6, "sy": 0.6, "o": 0}), (30, {"ty": -1, "sx": 0.85, "sy": 0.85, "o": 1}), (100, {"ty": -22, "o": 0})]),
+    "spin": dict(origin=(50, 50), dur=1.1, ease="linear", keys=[(0, {}), (100, {"r": 360})]),
+    "type-l": dict(origin=(50, 0), dur=0.36, ease="ease-in-out", alternate=True, keys=[(0, {}), (100, {"ty": -3})]),
+    "type-r": dict(origin=(50, 0), dur=0.36, ease="ease-in-out", alternate=True, reverse=True, keys=[(0, {}), (100, {"ty": -3})]),
+    "swing": dict(origin=(50, 0), dur=1.8, ease="ease-in-out", keys=[(0, {"r": -9}), (50, {"r": 9}), (100, {"r": -9})]),
+    "page": dict(origin=(0, 50), dur=4.8, ease="ease-in-out", keys=[(0, {}), (70, {}), (80, {"sx": 0.2}), (90, {}), (100, {})]),
+}
+DELAYS = {"t2": -0.6, "t3": -1.2}
+
+
+def _transform(v: dict) -> str:
+    return (f"translate({v.get('tx', 0)}px,{v.get('ty', 0)}px) rotate({v.get('r', 0)}deg) "
+            f"scale({v.get('sx', 1)},{v.get('sy', 1)})")
+
+
+def _ease(e) -> str:
+    return e if isinstance(e, str) else "cubic-bezier({},{},{},{})".format(*e)
+
+
+def build_css() -> str:
+    boxes = ",".join(f".pip .{name}" for name in ANIM)
+    out = [boxes + "{transform-box:fill-box}"]
+    for name, a in ANIM.items():
+        rest = f";transform:{_transform(a['rest'])}" if "rest" in a and set(a["rest"]) - {"o"} else ""
+        opacity = f";opacity:{a['rest']['o']}" if "o" in a.get("rest", {}) and name != "shadow-hop" else ""
+        out.append(f".pip .{name}{{transform-origin:{a['origin'][0]}% {a['origin'][1]}%{rest}{opacity}}}")
+    out.append("@media (prefers-reduced-motion:no-preference){")
+    for name, a in ANIM.items():
+        direction = " alternate-reverse" if a.get("reverse") else " alternate" if a.get("alternate") else ""
+        out.append(f".moving .{name}{{animation:nl-{name} {a['dur']}s {_ease(a['ease'])} infinite{direction}}}")
+    out.append("".join(f".moving .{k}{{animation-delay:{v}s}}" for k, v in DELAYS.items()))
+    out.append("}")
+    for name, a in ANIM.items():
+        frames = "".join(
+            f"{t}%{{transform:{_transform(v)}" + (f";opacity:{v['o']}" if "o" in v else "") + "}" for t, v in a["keys"]
+        )
+        out.append(f"@keyframes nl-{name}{{{frames}}}")
+    return "\n".join(out)
+
+
+CSS = build_css()
 
 POSES = {
     "read": pose_read,
@@ -341,7 +433,8 @@ POSES = {
     "study": pose_focus,
     "proud": pose_proud,
 }
-OUTPUTS = ("apple/App/Resources/pip-poses.js", "pipeline/neuralloop_books/assets/pip-poses.js")
+OUTPUTS = ("pipeline/neuralloop_books/assets/pip-poses.js",)  # explainer videos (CSS animation)
+RIG = "apple/App/Resources/pip-rig.json"  # the Mac app (layers, pivots, keyframes)
 
 
 def build_js() -> str:
@@ -355,12 +448,100 @@ def build_js() -> str:
     return f"window.PIP={json.dumps(poses)};\nwindow.PIP_CSS={json.dumps(CSS)};\n"
 
 
+def _layers(svg_text: str) -> tuple[list, list, str]:
+    """Split a pose into ordered layers: runs of drawing that share the same chain of animated groups.
+    Returns (layers, animated groups in document order, the pose with measuring ids)."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(svg_text)
+    groups: list[dict] = []
+    leaves: list[tuple[tuple, list, ET.Element]] = []
+
+    def visit(node, chain, wrappers):
+        for child in node:
+            if child.tag == "g":
+                classes = (child.get("class") or "").split()
+                name = next((c for c in classes if c in ANIM), None)
+                attrs = {k: v for k, v in child.attrib.items() if k != "class"}
+                if name:
+                    delay = sum(DELAYS.get(c, 0) for c in classes)
+                    groups.append({"id": len(groups), "anim": name, "delay": delay})
+                    child.set("data-rig", str(len(groups) - 1))
+                    visit(child, (*chain, len(groups) - 1), [*wrappers, attrs])
+                else:
+                    visit(child, chain, [*wrappers, attrs])
+            else:
+                leaves.append((chain, wrappers, child))
+
+    visit(root, (), [])
+    layers: list[dict] = []
+    for chain, wrappers, leaf in leaves:
+        if not layers or tuple(layers[-1]["chain"]) != chain:
+            layers.append({"chain": list(chain), "parts": []})
+        opened = "".join("<g " + " ".join(f'{k}="{v}"' for k, v in w.items()) + ">" for w in wrappers)
+        layers[-1]["parts"].append(opened + ET.tostring(leaf, encoding="unicode") + "</g>" * len(wrappers))
+    view_box = root.get("viewBox")
+    for layer in layers:
+        layer["svg"] = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="480" height="440">'
+                        + "".join(layer.pop("parts")) + "</svg>")
+    return layers, groups, ET.tostring(root, encoding="unicode")
+
+
+def build_rig() -> dict:
+    """pip-rig.json: every pose as layers, each animated group's pivot and frame (measured in Chromium, like CSS
+    transform-box: fill-box), and the keyframes. The app nests transforms like SVG does (eyelids ride on the head)."""
+    from playwright.sync_api import sync_playwright
+
+    poses = {}
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        for name, draw in POSES.items():
+            svg_text = draw().replace('width="100%" height="100%"', 'width="480" height="440"')
+            layers, groups, measured = _layers(svg_text)
+            page.set_content(f"<html><body style='margin:0'>{measured}</body></html>")
+            boxes = page.evaluate("""() => {
+                const svg = document.querySelector('svg');
+                const toRoot = svg.getCTM().inverse();
+                return [...document.querySelectorAll('[data-rig]')].map(el => {
+                    const b = el.getBBox(); const m = toRoot.multiply(el.getCTM());
+                    return {id: +el.dataset.rig, box: [b.x, b.y, b.width, b.height], m: [m.a, m.b, m.c, m.d, m.e, m.f]};
+                });
+            }""")
+            by_id = {b["id"]: b for b in boxes}
+            chain_info = []
+            for g in groups:
+                b = by_id[g["id"]]
+                ox, oy = ANIM[g["anim"]]["origin"]
+                x, y, w, h = b["box"]
+                lx, ly = x + w * ox / 100, y + h * oy / 100
+                a_, b_, c_, d_, e_, f_ = b["m"]
+                pivot = [round(a_ * lx + c_ * ly + e_, 2), round(b_ * lx + d_ * ly + f_, 2)]
+                chain_info.append({"anim": g["anim"], "delay": g["delay"], "pivot": pivot,
+                                   "frame": [round(v, 4) for v in (a_, b_, c_, d_)]})
+            label = svg_text.split('aria-label="', 1)[1].split('"', 1)[0]
+            view_box = [float(v) for v in svg_text.split('viewBox="', 1)[1].split('"', 1)[0].split()]
+            poses[name] = {"label": label, "viewBox": view_box, "groups": chain_info,
+                           "layers": [{"svg": layer["svg"], "chain": layer["chain"]} for layer in layers]}
+        browser.close()
+    anims = {
+        name: {"dur": a["dur"], "ease": list(EASE[a["ease"]] if isinstance(a["ease"], str) else a["ease"]),
+               "alternate": bool(a.get("alternate")), "reverse": bool(a.get("reverse")), "rest": a.get("rest", {}),
+               "keys": [{"t": t, **v} for t, v in a["keys"]]}
+        for name, a in ANIM.items()
+    }
+    icon = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="38" height="36">{head(0, 0, 1, "happy", cls="")}</svg>'
+    return {"poses": poses, "anims": anims, "icon": icon}
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[2]
     js = build_js()
     for relative in OUTPUTS:
         (root / relative).write_text(js, encoding="utf-8")
         print(f"wrote {relative}")
+    (root / RIG).write_text(json.dumps(build_rig(), separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {RIG}")
 
 
 if __name__ == "__main__":

@@ -61,6 +61,7 @@ struct LibraryView: View {
             Button("OK", role: .cancel) {}
         }
         .navigationTitle("Library")
+        .toolbar { ToolbarItem(placement: .primaryAction) { ProfileButton() } }
     }
 
     // MARK: Hero
@@ -258,7 +259,7 @@ struct CoverArt: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, compact ? 16 : 20).padding(.trailing, pip ? 70 : 12).padding(.bottom, compact ? 12 : 14)
             if pip {
-                PipView(pose: .study, size: 70).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(6)
+                PipView(pose: .study, size: 70, interactive: false).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(6)
             }
         }
         .frame(height: height)

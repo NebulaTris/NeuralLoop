@@ -24,8 +24,8 @@ Two parts, one repo:
 2. **Logic stays pure and tested; screens stay thin.** Pure logic belongs in `pipeline/neuralloop_books/*.py` and
    `apple/Sources/NeuralLoopCore/*.swift` (tested with Swift Testing in `apple/Tests`). SwiftUI views (`apple/App/Views`) and
    services (`apple/App/Services`) only render, wire events, and do I/O.
-3. **Never hand-edit generated files:** `apple/App/Resources/pip-poses.js` and `pipeline/neuralloop_books/assets/pip-poses.js`
-   (run `make pip`, i.e. `python design/pip/generate_pip.py`); `apple/App/Resources/AppIcon.icns` (`python design/pip/make_app_icon.py`);
+3. **Never hand-edit generated files:** `apple/App/Resources/pip-rig.json` and `pipeline/neuralloop_books/assets/pip-poses.js`
+   (run `make pip`, i.e. `python design/pip/generate_pip.py`; animations are data in `ANIM` there, feeding both); `apple/App/Resources/AppIcon.icns` (`python design/pip/make_app_icon.py`);
    `design/dmg/background.tiff` (`python design/dmg/make_background.py`); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
 4. **`make check` must pass before every commit.** It runs the linters and all tests (Python and Swift).
 5. **Small commits** with imperative messages (`Add book import preview`, `Fix EPUB nav with nested lists`).
@@ -52,7 +52,7 @@ Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
 For development the app runs the pipeline from the repo's `.venv` (a Python 3.12 venv: `make setup PY=$PWD/.venv/bin/python`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
-`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLMoveIn YES` (the
+`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLProfile YES`, `-NLMoveIn YES` (the
 "move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
 
 ## File map

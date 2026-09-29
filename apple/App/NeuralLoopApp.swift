@@ -29,6 +29,20 @@ struct NeuralLoopApp: App {
         Settings {
             SettingsView().environment(settings).environment(library)
         }
+        // Development: `-NLPipSheet YES` shows every pose, animated, for checking Pip's artwork and motion.
+        Window("Pip", id: "pip-sheet") {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(200), spacing: 16), count: 4), spacing: 16) {
+                ForEach(PipPose.allCases, id: \.self) { pose in
+                    VStack(spacing: 4) {
+                        PipView(pose: pose, size: 190)
+                        Text(pose.rawValue).font(Theme.body(12)).foregroundStyle(Theme.ink3)
+                    }
+                }
+            }
+            .padding(24)
+            .background(Theme.paper)
+        }
+        .windowResizability(.contentSize)
         // Development: `-NLPreviewPanel YES` shows the menu-bar panel in a window, for screenshots.
         Window("Quick panel", id: "panel-preview") {
             QuickPanel().environment(library).environment(settings)
@@ -67,6 +81,7 @@ struct RootView: View {
         .task {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
+            if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
             // `-NLOpenBook <id> [-NLStage map] [-NLBookMap YES]` opens a book (for screenshots and checks).
             if let id = UserDefaults.standard.string(forKey: "NLOpenBook") {
                 try? await Task.sleep(for: .seconds(1))
