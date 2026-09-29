@@ -1,6 +1,8 @@
 """Run the whole book pipeline: split, prepare the engine, make every item, and keep the site up to date."""
 
 import asyncio
+import contextlib
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -63,6 +65,7 @@ def prepare_state(opts: Options) -> BookState:
             dry_run=opts.dry_run,
         )
     state.ensure_tasks()
+    state.reset_interrupted()  # safe: the book's lock means no other run is working on it
     count = len(state.chapters)
     chosen, media = parse_selection(opts.chapters, count), parse_selection(opts.media, count)
     state.apply_selection(
@@ -86,6 +89,31 @@ def site_options(opts: Options) -> dict:
 
 
 async def run(opts: Options, engine) -> BookState:
+    opts.out.mkdir(parents=True, exist_ok=True)
+    with _book_lock(opts.out):
+        return await _run(opts, engine)
+
+
+@contextlib.contextmanager
+def _book_lock(out: Path):
+    """One run per book: a second run stops instead of racing the first on state.json."""
+    lock = out / ".running"
+    if lock.exists():
+        try:
+            pid = int(lock.read_text().strip() or 0)
+            os.kill(pid, 0)  # raises if that run is gone
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass  # a stale lock from a run that crashed or was quit
+        else:
+            raise ValueError("This book is already being prepared. Pip will keep going with that run.")
+    lock.write_text(str(os.getpid()))
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+async def _run(opts: Options, engine) -> BookState:
     state = prepare_state(opts)
     site.build(opts.out, state, site_options(opts))
     async with engine:

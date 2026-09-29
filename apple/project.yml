@@ -24,7 +24,7 @@ targets:
         NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
         # Development only: where the repo is, so the app can run the pipeline from source.
         NeuralLoopRepo: "$(SRCROOT)/.."
-        ATSApplicationFontsPath: Fonts
+        ATSApplicationFontsPath: "."   # the fonts are copied into Resources itself
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.neuralloop.books

@@ -55,3 +55,10 @@ def test_old_states_gain_new_tasks_and_survive_reload(tmp_path):
     reloaded = BookState.load(tmp_path / "state.json")
     reloaded.ensure_tasks()
     assert reloaded.chapters[0]["tasks"]["study"] == {"status": TODO}
+
+
+def test_items_left_working_by_an_interrupted_run_are_picked_up_again(tmp_path):
+    state = make_state(tmp_path, 1)
+    state.chapters[0]["tasks"]["quiz"]["status"] = "working"
+    assert state.reset_interrupted() == 1
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == "todo"

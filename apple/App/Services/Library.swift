@@ -42,10 +42,31 @@ final class Library {
             .map { folder in
                 let id = folder.lastPathComponent
                 let book = Self.loadBook(folder)
-                let working = Self.working(book)  // also shows runs started elsewhere (command line, the iPad's queue)
-                let line = runs[id] != nil ? (entry(id)?.lastLine ?? "") : working.map { "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
+                // A run started elsewhere (the command line, later the iPad's queue) holds the book's lock.
+                let working = Self.runningElsewhere(folder) ? Self.working(book) ?? (0, "study") : nil
+                let line = runs[id] != nil ? (entry(id)?.lastLine ?? "") : working.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
                 return BookEntry(id: id, folder: folder, book: book, preparing: runs[id] != nil || working != nil, lastLine: line)
             }
+    }
+
+    /// Books added before the app kept copies still point at the original file: copy it in once and remember that.
+    static func keepCopy(of path: String, in folder: URL, meta: [String: Any]) -> String? {
+        guard !path.hasPrefix(folder.path) else { return nil }
+        let original = URL(fileURLWithPath: path)
+        let copy = folder.appendingPathComponent("source.\(original.pathExtension.lowercased())")
+        guard FileManager.default.fileExists(atPath: copy.path) || (try? FileManager.default.copyItem(at: original, to: copy)) != nil else { return nil }
+        var updated = meta
+        updated["path"] = copy.path
+        updated["originalPath"] = path
+        try? JSONSerialization.data(withJSONObject: updated).write(to: folder.appendingPathComponent("meta.json"), options: .atomic)
+        return copy.path
+    }
+
+    /// True while another pipeline run holds this book's lock (`.running` with a live process id).
+    static func runningElsewhere(_ folder: URL) -> Bool {
+        guard let text = try? String(contentsOf: folder.appendingPathComponent(".running"), encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else { return false }
+        return kill(pid, 0) == 0
     }
 
     /// The first item Pip is making right now, if any.
@@ -76,6 +97,22 @@ final class Library {
 
     // MARK: adding and preparing
 
+    /// "You never press generate": on launch, carry on with any book that still has items to make.
+    /// A book already being prepared elsewhere keeps its run (the pipeline's lock turns a second run away).
+    func resumeUnfinished() {
+        for entry in entries where runs[entry.id] == nil && !entry.preparing {
+            guard let book = entry.book,
+                  book.chapters.contains(where: { $0.status.values.contains { $0 == .todo || $0 == .working } }),
+                  let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: entry.folder.appendingPathComponent("meta.json"))) as? [String: Any],
+                  var path = meta["path"] as? String, FileManager.default.fileExists(atPath: path)
+            else { continue }
+            path = Self.keepCopy(of: path, in: entry.folder, meta: meta) ?? path
+            let options = meta["options"] as? [String: Any]
+            prepare(id: entry.id, book: URL(fileURLWithPath: path),
+                    options: .init(media: options?["media"] as? String ?? "1-2", dryRun: options?["dryRun"] as? Bool ?? false))
+        }
+    }
+
     func add(_ file: URL, practice: Bool = false) {
         guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
             message = "Pip can read PDF and EPUB books."
@@ -85,10 +122,17 @@ final class Library {
         let id = BookID.unique(base: BookID.slug(file.deletingPathExtension().lastPathComponent), taken: taken)
         let folder = Self.root.appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let meta: [String: Any] = ["path": file.path, "addedAt": Date().timeIntervalSince1970 * 1000,
+        // Keep our own copy: the book still works if the original moves, and later runs never need to reach into
+        // Desktop or Documents (which macOS guards with a permission prompt).
+        let copy = folder.appendingPathComponent("source.\(file.pathExtension.lowercased())")
+        if (try? FileManager.default.copyItem(at: file, to: copy)) == nil {
+            message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file isn't still downloading, then try again."
+            return
+        }
+        let meta: [String: Any] = ["path": copy.path, "originalPath": file.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
-        prepare(id: id, book: file, options: .init(media: "1-2", dryRun: practice))
+        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice))
         reload()
     }
 

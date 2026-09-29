@@ -68,6 +68,16 @@ class BookState:
                 elif not excluded and entry["status"] == SKIPPED:
                     entry["status"] = TODO
 
+    def reset_interrupted(self) -> int:
+        """Items a crashed or quit run left "working" go back to the queue. Returns how many."""
+        count = 0
+        for chapter in self.chapters:
+            for entry in chapter["tasks"].values():
+                if entry["status"] == WORKING:
+                    entry["status"] = TODO
+                    count += 1
+        return count
+
     def pending(self) -> list[tuple[dict, str]]:
         """(chapter, task) pairs still to make, in reading order: chapter 1 is finished first, then 2, …"""
         return [(c, t) for c in self.chapters for t in TASKS if c["tasks"][t]["status"] == TODO]

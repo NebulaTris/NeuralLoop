@@ -29,11 +29,13 @@ enum Theme {
     static let rose = color(light: 0xE2577E, dark: 0xF07E9E)
     static let roseSoft = color(light: 0xFDE2EA, dark: 0x462330)
 
+    /// Fredoka's static faces are named "FredokaLight-…" inside the font files; pick the face by its PostScript name.
     static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
-        .custom("Fredoka", size: size).weight(weight)
+        let face = weight == .medium ? "FredokaLight-Medium" : weight == .regular ? "FredokaLight-Regular" : "FredokaLight-SemiBold"
+        return .custom(face, size: size)
     }
 
-    static func body(_ size: CGFloat = 15) -> Font { .custom("Atkinson Hyperlegible", size: size) }
+    static func body(_ size: CGFloat = 15) -> Font { .custom("AtkinsonHyperlegible-Regular", size: size) }
 }
 
 /// A rounded card on the paper ground.

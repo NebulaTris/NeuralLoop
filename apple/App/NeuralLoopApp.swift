@@ -12,6 +12,8 @@ struct NeuralLoopApp: App {
                 .environment(library)
                 .frame(minWidth: 900, minHeight: 620)
                 .task {
+                    library.reload()
+                    library.resumeUnfinished()
                     // Books can be prepared outside this window (a run from the command line, later the iPad's queue):
                     // look at the shelf again every few seconds while the app is open.
                     while !Task.isCancelled {

@@ -157,6 +157,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
   `  … chapter N task: {Engine} limit reached…`, `  ✗ chapter N task: …`, final `Study site: PATH`. Exit 3 = setup needed.
 - **Book folder** (`<app data>/books/<id>/`): `state.json` (pipeline state), `meta.json` (`path`, `addedAt`, `options`),
   `progress.json` (study progress from the site), `book-data.js`, `index.html`, `styles.css`, `app.js`, `pip-poses.js`,
+  `.running` (the process id of the run preparing the book; a second run stops, a stale lock is ignored; interrupted
+  `working` items go back to `todo` on the next run), `source.{pdf,epub}` (the app's own copy of the book), `book.json` (the app's data),
   `chapters/NN.{pdf,md}` (EPUB Markdown keeps figures as `![alt](img/NN-KK.ext)` with files in `chapters/img/`, captions as
   `*…*`, emphasis, lists), `media/`, `raw/`, `knowledge-graph.json`. `state.json` tasks record `by` (which engine made them).
 - **`book-data.js`**: `window.BOOK = {title, source, made, dryRun, options, chapters:[{n, title, pages, read:{kind:"pdf",file}|{kind:"text",text},

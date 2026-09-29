@@ -171,3 +171,27 @@ def test_the_shared_fixture_still_has_every_field_the_pipeline_writes(options):
     assert set(made) == set(fixture)
     assert set(made["chapters"][0]) == set(fixture["chapters"][0])
     assert set(made["graph"]) == set(fixture["graph"])
+
+
+def test_a_crashed_run_is_resumed_and_its_working_items_finished(options):
+    run_local(options)
+    state = json.loads((options.out / "state.json").read_text())
+    state["chapters"][0]["tasks"]["quiz"]["status"] = "working"
+    (options.out / "state.json").write_text(json.dumps(state))
+    assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
+
+
+def test_two_runs_never_prepare_the_same_book_at_once(options):
+    import os
+
+    options.out.mkdir(parents=True)
+    (options.out / ".running").write_text(str(os.getpid()))  # this test process is alive: a run "in progress"
+    with pytest.raises(ValueError, match="already being prepared"):
+        run_local(options)
+
+
+def test_a_stale_lock_from_a_dead_run_does_not_block(options):
+    options.out.mkdir(parents=True)
+    (options.out / ".running").write_text("999999")  # no such process
+    assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
+    assert not (options.out / ".running").exists()

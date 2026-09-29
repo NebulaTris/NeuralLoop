@@ -16,7 +16,11 @@ struct BookView: View {
             chapterList.frame(width: 290)
             Divider()
             if let n = selected, let chapter = session.book.chapters.first(where: { $0.n == n }) {
-                ChapterView(session: session, chapter: chapter).id(n)
+                if Loop.isUnlocked(session.progress, session.book.chapters, n) {
+                    ChapterView(session: session, chapter: chapter).id(n)
+                } else {
+                    LockedChapter(chapter: chapter, previous: session.book.chapters.last(where: { $0.n < n }))
+                }
             } else {
                 VStack(spacing: 12) {
                     PipView(pose: .read, size: 160)
@@ -169,5 +173,21 @@ struct ChapterView: View {
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 28))
         .shadow(color: .black.opacity(0.12), radius: 30, y: 10)
         .transition(.scale(scale: 0.85).combined(with: .opacity))
+    }
+}
+
+/// A chapter that opens once the one before it is closed. Pip keeps it safe; nothing to feel bad about.
+struct LockedChapter: View {
+    let chapter: Chapter
+    let previous: Chapter?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            PipView(pose: .nap, size: 150)
+            Text("“\(chapter.title)” is waiting for you").font(Theme.display(22))
+            Text("It opens when you finish the loop for “\(previous?.title ?? "the chapter before")”. One chapter at a time is how it sticks.")
+                .font(Theme.body(15)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 440)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
