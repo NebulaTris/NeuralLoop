@@ -25,3 +25,7 @@ apple/Config/Google.xcconfig
 apple/NeuralLoop.xcodeproj/
 apple/build/
 dist/
+
+# never commit secrets or generated audio
+.env
+*.wav

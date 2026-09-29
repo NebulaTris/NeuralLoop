@@ -4,24 +4,21 @@ PY ?= python3
 CLT := /Library/Developer/CommandLineTools/Library/Developer
 SWIFT_FLAGS := $(if $(findstring CommandLineTools,$(shell xcode-select -p 2>/dev/null)),-Xswiftc -F$(CLT)/Frameworks -Xlinker -F$(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/usr/lib,)
 
-.PHONY: setup test check lint site runtime mac package
+.PHONY: setup test check lint runtime mac package pip
 
 setup:            ## install dev tools for every part
 	cd pipeline && $(PY) -m pip install -e ".[dev]" playwright && $(PY) -m playwright install chromium
-	cd pipeline/site && npm install
 
-site:             ## rebuild the study site bundle (pipeline/site/app.js)
-	cd pipeline/site && npm run build
+pip:              ## regenerate Pip's artwork (apple/App/Resources and the pipeline's assets)
+	$(PY) design/pip/generate_pip.py
 
-test: site        ## all tests: Python, JavaScript, and Swift
+test:             ## all tests: Python and Swift
 	cd pipeline && $(PY) -m pytest -q
-	cd pipeline/site && npm test
 	@if command -v swift >/dev/null; then cd apple && swift test $(SWIFT_FLAGS); \
 	else echo "Swift tests skipped: no swift here (CI runs them on macOS)"; fi
 
 lint:             ## formatting and linters
 	cd pipeline && ruff check . && ruff format --check .
-	cd pipeline/site && npx prettier --check src test
 
 check: lint test  ## what CI runs
 
