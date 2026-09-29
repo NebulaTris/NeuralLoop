@@ -77,6 +77,13 @@ struct QuickPanel: View {
                 .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 12))
             }
 
+            if let usage = library.usage, usage.known, let window = usage.fiveHour {
+                HStack(spacing: 6) {
+                    Image(systemName: "gauge.with.dots.needle.50percent").foregroundStyle(window.remaining > 44 ? Theme.mint : Theme.accent)
+                    Text("NotebookLM: \(Int(window.remaining))% left · resets \(window.resetDate?.formatted(date: .omitted, time: .shortened) ?? "soon")")
+                        .font(Theme.body(11)).foregroundStyle(Theme.ink2)
+                }
+            }
             HStack(spacing: 10) {
                 WeekStat(value: Activity.formatDuration(summary.weekSeconds), label: "studied this week")
                 WeekStat(value: "\(summary.loopsClosedThisWeek)", label: summary.loopsClosedThisWeek == 1 ? "loop closed" : "loops closed")

@@ -71,3 +71,45 @@ def test_sign_out_clears_the_saved_session(monkeypatch):
     monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
     assert account.sign_out() == 0
     assert calls[0][-2:] == ["auth", "logout"]
+
+
+USAGE = {
+    "status": "ready",
+    "available": True,
+    "is_exhausted": False,
+    "windows": [
+        {
+            "kind": "five_hour",
+            "used_percent": 40.0,
+            "remaining_percent": 60.0,
+            "resets_at": "2026-09-29T10:21:40+00:00",
+        },
+        {
+            "kind": "weekly",
+            "used_percent": 7.7,
+            "remaining_percent": 92.3,
+            "resets_at": "2026-10-04T13:21:40+00:00",
+        },
+    ],
+    "actions": [
+        {"kind": "audio_overview", "has_sufficient_quota": True, "estimated_cost_percent": 44.1},
+        {"kind": "video_overview", "has_sufficient_quota": False, "estimated_cost_percent": 43.7},
+    ],
+}
+
+
+def test_usage_summarises_notebooklms_windows_and_what_it_can_still_make(monkeypatch):
+    calls = []
+    monkeypatch.setattr(account.subprocess, "run", fake_run([(0, json.dumps(USAGE))], calls))
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    usage = account.usage()
+    assert calls[0][-2:] == ["usage", "--json"]
+    assert usage["fiveHour"] == {"remaining": 60.0, "resetsAt": "2026-09-29T10:21:40+00:00"}
+    assert usage["weekly"]["remaining"] == 92.3 and usage["podcast"] is True and usage["video"] is False
+    assert usage["available"] is True
+
+
+def test_usage_when_signed_out_or_unknown(monkeypatch):
+    monkeypatch.setattr(account.subprocess, "run", fake_run([(1, "")], []))
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.usage() == {"known": False}

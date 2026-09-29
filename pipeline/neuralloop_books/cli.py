@@ -69,6 +69,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--account", action="store_true", help="print the signed-in Google account as JSON")
     parser.add_argument("--signout", action="store_true", help="forget the saved Google sign-in")
     parser.add_argument(
+        "--usage", action="store_true", help="NotebookLM's remaining usage and reset times, as JSON"
+    )
+    parser.add_argument(
         "--check-ai", action="store_true", help="test every model in ai.json (Settings → Save and test)"
     )
     parser.add_argument(
@@ -94,7 +97,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.provider, args.model = args.config.make.provider, args.model or args.config.make.model
         args.base_url = args.base_url or args.config.make.base_url
     args.voices = args.voices or ",".join(args.config.voices)
-    if args.setup or args.signin or args.account or args.signout or args.check_ai:
+    if args.setup or args.signin or args.account or args.signout or args.check_ai or args.usage:
         return args
     if args.dry_run and not args.book:
         args.book = str(SAMPLE_BOOK)
@@ -266,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         from . import account
 
         return account.sign_out()
+    if args.usage:
+        from . import account
+
+        print("NotebookLM usage: " + json.dumps(account.usage()))
+        return 0
     if args.check_ai:
         report = asyncio.run(_check_ai(args.config))
         print("AI check: " + json.dumps(report, ensure_ascii=False))

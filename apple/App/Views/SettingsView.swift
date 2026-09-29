@@ -24,7 +24,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Environment(AISettings.self) private var settings
-    @State private var page: SettingsPage = .ai
+    // Development: `-NLSettingsPage Account` opens on that page.
+    @State private var page: SettingsPage = SettingsPage(rawValue: UserDefaults.standard.string(forKey: "NLSettingsPage") ?? "") ?? .ai
 
     var body: some View {
         HStack(spacing: 0) {
@@ -130,6 +131,7 @@ struct AccountPage: View {
             }
             if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
         }
+        UsageCard()
         SettingsCard(title: "Your library on every device", note: "Needs NeuralLoop's Google sign-in ID, a one-time setup (docs/specs/07-every-device.md).") {
             Label("Coming next: your books and progress follow your Google account to your iPad and other laptops.", systemImage: "arrow.triangle.2.circlepath")
                 .font(Theme.body(13)).foregroundStyle(Theme.ink2)
@@ -479,5 +481,57 @@ struct WelcomeView: View {
         .frame(width: 520)
         .tint(Theme.accent)
         .task { await settings.refreshAccount() }
+    }
+}
+
+
+/// NotebookLM's live allowance: five-hour and weekly windows, when they reset, and what it can make right now.
+struct UsageCard: View {
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        SettingsCard(title: "NotebookLM usage", note: "A podcast or video uses about 44% of the five-hour allowance, so NotebookLM makes about two every five hours. With “NotebookLM first”, your AI makes whatever doesn't fit.") {
+            if let usage = library.usage, usage.known {
+                HStack(spacing: 12) {
+                    if let w = usage.fiveHour { Meter(label: "Next five hours", window: w) }
+                    if let w = usage.weekly { Meter(label: "This week", window: w, weekday: true) }
+                }
+                HStack(spacing: 14) {
+                    Label(usage.podcast ? "Can make a podcast now" : "Podcasts after the reset", systemImage: usage.podcast ? "checkmark.circle.fill" : "clock")
+                        .foregroundStyle(usage.podcast ? Theme.mint : Theme.ink2)
+                    Label(usage.video ? "Can make a video now" : "Videos after the reset", systemImage: usage.video ? "checkmark.circle.fill" : "clock")
+                        .foregroundStyle(usage.video ? Theme.mint : Theme.ink2)
+                }
+                .font(Theme.body(12))
+            } else {
+                Text("Sign in with Google to see how much NotebookLM can still make.").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+            }
+            Button("Refresh") { Task { await library.refreshUsage(force: true) } }.controlSize(.small)
+        }
+    }
+}
+
+struct Meter: View {
+    let label: String
+    let window: NotebookLMUsage.Window
+    var weekday = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(Int(window.remaining))%").font(Theme.display(22))
+                Text("left").font(Theme.body(12)).foregroundStyle(Theme.ink3)
+            }
+            ProgressView(value: window.remaining, total: 100).tint(window.remaining > 44 ? Theme.mint : Theme.accent)
+            Text("\(label) · resets \(reset)").font(Theme.body(11)).foregroundStyle(Theme.ink3)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.paper, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var reset: String {
+        guard let date = window.resetDate else { return "soon" }
+        return weekday ? date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) : date.formatted(date: .omitted, time: .shortened)
     }
 }

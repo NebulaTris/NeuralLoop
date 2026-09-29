@@ -38,5 +38,7 @@ runtime:          ## self-contained runtime for the Mac app (build/runtime): Pyt
 	scripts/build-runtime.sh
 
 mac:              ## build and open the SwiftUI Mac app (needs Xcode and XcodeGen: brew install xcodegen)
-	cd apple && xcodegen generate --quiet && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoop -configuration Debug -derivedDataPath build/dd build -quiet
+	scripts/dev-signing-identity.sh
+	cd apple && xcodegen generate --quiet && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoop -configuration Debug \
+		-derivedDataPath build/dd CODE_SIGN_IDENTITY="NeuralLoop Development" build -quiet
 	open apple/build/dd/Build/Products/Debug/NeuralLoop.app

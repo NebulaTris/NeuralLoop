@@ -27,9 +27,10 @@ targets:
         ATSApplicationFontsPath: "."   # the fonts are copied into Resources itself
     settings:
       base:
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         PRODUCT_BUNDLE_IDENTIFIER: app.neuralloop.books
         PRODUCT_NAME: NeuralLoop
-        CODE_SIGN_IDENTITY: "-"          # ad-hoc: no Apple account needed ("Open Anyway" once)
+        CODE_SIGN_IDENTITY: "-"          # ad-hoc; `make mac` signs with "NeuralLoop Development" so permissions stick
         CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO           # the app runs the book pipeline, which a sandbox forbids

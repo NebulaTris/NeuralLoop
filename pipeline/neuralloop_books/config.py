@@ -33,11 +33,11 @@ LIGHT_TIMEOUT = 900.0
 AUDIO_TIMEOUT = 2400.0
 VIDEO_TIMEOUT = 3600.0
 
-QUOTA_MESSAGE = "NotebookLM's limit was reached. Run the same command again later."
+QUOTA_MESSAGE = "NotebookLM is at its limit for now. Pip will try again when it resets."
 
 
 def quota_message(engine_name: str) -> str:
-    return f"{engine_name}'s limit was reached. Run the same command again later."
+    return f"{engine_name} is at its limit for now. Pip will try again when it resets."
 
 
 # The local engine's text models. Keys are read from these environment variables only.

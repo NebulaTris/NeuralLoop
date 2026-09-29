@@ -75,3 +75,36 @@ def sign_out() -> int:
         return 0
     result = subprocess.run([*cli, "auth", "logout"], capture_output=True, text=True, timeout=60)
     return 0 if result.returncode == 0 else 3
+
+
+def usage() -> dict:
+    """NotebookLM's live usage: how much of the five-hour and weekly windows is left, when each resets, and
+    whether it can make a podcast or video right now. {"known": False} when it can't be read."""
+    cli = _cli()
+    if not cli:
+        return {"known": False}
+    try:
+        result = subprocess.run([*cli, "usage", "--json"], capture_output=True, text=True, timeout=60)
+        report = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        report = {}
+    if not report.get("windows"):
+        return {"known": False}
+    windows = {w.get("kind"): w for w in report["windows"]}
+    actions = {a.get("kind"): a for a in report.get("actions", [])}
+
+    def window(kind: str) -> dict:
+        w = windows.get(kind, {})
+        return {
+            "remaining": round(float(w.get("remaining_percent", 0)), 1),
+            "resetsAt": w.get("resets_at", ""),
+        }
+
+    return {
+        "known": True,
+        "available": bool(report.get("available")) and not report.get("is_exhausted"),
+        "fiveHour": window("five_hour"),
+        "weekly": window("weekly"),
+        "podcast": bool(actions.get("audio_overview", {}).get("has_sufficient_quota")),
+        "video": bool(actions.get("video_overview", {}).get("has_sufficient_quota")),
+    }

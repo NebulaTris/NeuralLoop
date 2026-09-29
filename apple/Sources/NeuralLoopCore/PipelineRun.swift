@@ -58,8 +58,10 @@ public enum PipelineCommand {
         public var media: String
         public var dryRun: Bool
         public var retry: Bool
-        public init(media: String = "1-2", dryRun: Bool = false, retry: Bool = false) {
-            (self.media, self.dryRun, self.retry) = (media, dryRun, retry)
+        /// Override the engine from ai.json for this run ("local" = make waiting items with your own AI now).
+        public var engine: String?
+        public init(media: String = "1-2", dryRun: Bool = false, retry: Bool = false, engine: String? = nil) {
+            (self.media, self.dryRun, self.retry, self.engine) = (media, dryRun, retry, engine)
         }
     }
 
@@ -69,6 +71,7 @@ public enum PipelineCommand {
         var args = [book, "--out", out, "--no-open", "--media", options.media]
         if options.dryRun { args.append("--dry-run") }
         if options.retry { args.append("--retry") }
+        if let engine = options.engine { args += ["--engine", engine] }
         return args
     }
 }

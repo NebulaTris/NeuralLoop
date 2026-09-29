@@ -25,7 +25,7 @@ struct ListenStep: View {
                 PodcastPlayer(url: session.file(audio), transcript: chapter.transcript.map(session.file))
             }
             if chapter.video == nil && chapter.audio == nil {
-                NotReady(what: "The podcast and video", status: chapter.status["audio"], note: chapter.notes["audio"])
+                NotReady(what: "The podcast and video", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
             }
         }
     }
@@ -224,7 +224,7 @@ struct RecallStep: View {
 
     var body: some View {
         if chapter.recall.isEmpty {
-            NotReady(what: "Recall questions", status: chapter.status["study"], note: chapter.notes["study"])
+            NotReady(what: "Recall questions", status: chapter.status["study"], note: chapter.notes["study"], bookId: session.entry.id)
         } else {
             let prompt = chapter.recall[min(index, chapter.recall.count - 1)]
             VStack(alignment: .leading, spacing: 14) {
@@ -326,7 +326,7 @@ struct RememberStep: View {
     var body: some View {
         let due = Cards.due([chapter], session.progress, now: session.now)
         if chapter.cards.isEmpty {
-            NotReady(what: "Flashcards", status: chapter.status["cards"], note: chapter.notes["cards"])
+            NotReady(what: "Flashcards", status: chapter.status["cards"], note: chapter.notes["cards"], bookId: session.entry.id)
         } else if let card = due.first {
             VStack(spacing: 18) {
                 Text("\(due.count) card\(due.count == 1 ? "" : "s") to go").font(Theme.body(13)).foregroundStyle(Theme.ink3)
@@ -364,17 +364,23 @@ struct RememberStep: View {
 // MARK: Shared
 
 struct NotReady: View {
+    @Environment(Library.self) private var library
     let what: String
     let status: ItemStatus?
     let note: String?
+    var bookId: String? = nil
 
     var body: some View {
         CardBox(fill: Theme.sunk) {
-            HStack(spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
                 PipView(pose: status == .working ? .study : .nap, size: 90)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(title).font(Theme.display(18))
-                    if let note, !note.isEmpty { Text(note).font(Theme.body(13)).foregroundStyle(Theme.ink2) }
+                    Text(detail).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+                    if status == .waiting || status == .failed, let bookId {
+                        Button { library.makeWithMyAI(bookId) } label: { Label("Make it with my AI now", systemImage: "bolt.fill") }
+                            .buttonStyle(.borderedProminent).padding(.top, 4)
+                    }
                 }
             }
         }
@@ -384,9 +390,19 @@ struct NotReady: View {
         switch status {
         case .working: "\(what): Pip is making it right now."
         case .skipped: "\(what) wasn't chosen for this chapter. Use Prepare more to add it."
-        case .failed: "\(what) needs another try. Use Prepare more."
-        case .waiting: "\(what) will be made after the AI's limit resets."
+        case .failed: "\(what) needs another try."
+        case .waiting: "\(what) is waiting for NotebookLM."
         default: "\(what) is on Pip's list."
         }
+    }
+
+    private var detail: String {
+        guard status == .waiting else { return note ?? "" }
+        guard let usage = library.usage, usage.known, let window = usage.fiveHour else {
+            return "NotebookLM is at its limit for now. Pip will try again when it resets."
+        }
+        let reset = window.resetDate.map { $0.formatted(date: .omitted, time: .shortened) } ?? "soon"
+        return "NotebookLM has \(Int(window.remaining))% of its five-hour allowance left; a podcast or video uses about 44%. "
+            + "It resets at \(reset), and Pip will try again then. Or make it with your own AI right now."
     }
 }

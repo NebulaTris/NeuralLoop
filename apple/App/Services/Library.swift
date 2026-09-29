@@ -24,6 +24,26 @@ final class Library {
     var message: String?
     private var runs: [String: PipelineRunner] = [:]
     private var loadedOnce = false
+    /// NotebookLM's live usage (five-hour and weekly windows), refreshed every few minutes.
+    var usage: NotebookLMUsage?
+    private var usageCheckedAt = Date.distantPast
+
+    func refreshUsage(force: Bool = false) async {
+        guard force || Date().timeIntervalSince(usageCheckedAt) > 300 else { return }
+        usageCheckedAt = Date()
+        let (_, lines) = await PipelineRunner.once(["--usage"])
+        usage = lines.compactMap(NotebookLMUsage.parse).first
+    }
+
+    /// Make a book's waiting items right now with your own AI instead of waiting for NotebookLM.
+    func makeWithMyAI(_ id: String) {
+        guard let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: Self.root.appendingPathComponent("\(id)/meta.json"))) as? [String: Any],
+              let path = meta["path"] as? String else { return }
+        let options = meta["options"] as? [String: Any]
+        prepare(id: id, book: URL(fileURLWithPath: path),
+                options: .init(media: options?["media"] as? String ?? "1-2", retry: true, engine: "local"))
+        reload()
+    }
 
     /// Same folder as the earlier desktop app, so existing books and progress carry over.
     static let root: URL = {
@@ -69,10 +89,13 @@ final class Library {
         loadedOnce = true
     }
 
-    /// Items still to make, or items that waited on an AI's daily limit at least six hours ago (limits reset daily).
-    static func hasWork(_ book: Book, folder: URL) -> Bool {
+    /// Items still to make, or items waiting on a limit that has lifted: NotebookLM's live usage says it can make them
+    /// again, or (for other AIs) six hours have passed.
+    static func hasWork(_ book: Book, folder: URL, usage: NotebookLMUsage?) -> Bool {
         if book.chapters.contains(where: { $0.status.values.contains { $0 == .todo || $0 == .working } }) { return true }
-        guard book.chapters.contains(where: { $0.status.values.contains(.waiting) }) else { return false }
+        let waiting = book.chapters.flatMap { c in c.status.filter { $0.value == .waiting }.map(\.key) }
+        guard !waiting.isEmpty else { return false }
+        if book.engine != "local", let usage, usage.known { return waiting.contains { usage.canMake($0) } }
         let log = folder.appendingPathComponent("pipeline.log")
         let modified = (try? log.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
         return Date().timeIntervalSince(modified) > 6 * 3600
@@ -131,7 +154,7 @@ final class Library {
     func resumeUnfinished() {
         for entry in entries where runs[entry.id] == nil && !entry.preparing {
             guard let book = entry.book,
-                  Self.hasWork(book, folder: entry.folder),
+                  Self.hasWork(book, folder: entry.folder, usage: usage),
                   let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: entry.folder.appendingPathComponent("meta.json"))) as? [String: Any],
                   var path = meta["path"] as? String, FileManager.default.fileExists(atPath: path)
             else { continue }

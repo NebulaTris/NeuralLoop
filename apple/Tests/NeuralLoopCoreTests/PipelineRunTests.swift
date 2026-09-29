@@ -24,3 +24,8 @@ import Testing
     #expect(args == ["/b/Caching.epub", "--out", "/lib/caching", "--no-open", "--media", "1-2", "--dry-run"])
     #expect(!args.joined(separator: " ").contains("KEY"))
 }
+
+@Test func aRunCanBeToldToUseMyAIForItemsThatAreWaiting() {
+    let args = PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init(media: "1", retry: true, engine: "local"))
+    #expect(args == ["/b.pdf", "--out", "/lib/b", "--no-open", "--media", "1", "--retry", "--engine", "local"])
+}

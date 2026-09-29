@@ -20,8 +20,15 @@ struct NeuralLoopApp: App {
                     library.resumeUnfinished()
                     // Books can be prepared outside this window (a run from the command line, later the iPad's queue):
                     // look at the shelf again every few seconds while the app is open.
+                    await library.refreshUsage(force: true)
+                    var ticks = 0
                     while !Task.isCancelled {
                         library.reload()
+                        ticks += 1
+                        if ticks % 75 == 0 {  // every ~5 minutes: NotebookLM's usage, and retry anything whose limit lifted
+                            await library.refreshUsage()
+                            library.resumeUnfinished()
+                        }
                         try? await Task.sleep(for: .seconds(4))
                     }
                 }
@@ -33,7 +40,7 @@ struct NeuralLoopApp: App {
             }
         }
         Settings {
-            SettingsView().environment(settings)
+            SettingsView().environment(settings).environment(library)
         }
         // Development: `-NLPreviewPanel YES` shows the menu-bar panel in a window, for screenshots.
         Window("Quick panel", id: "panel-preview") {

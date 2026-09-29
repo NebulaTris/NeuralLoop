@@ -136,7 +136,8 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 
 ### Other
 `scripts/build-runtime.sh` (self-contained runtime: relocatable Python + pipeline + every provider + Rumik + NotebookLM +
-Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
+Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `scripts/dev-signing-identity.sh` (one stable self-signed identity so macOS remembers the app's
+permissions across rebuilds; `make mac` uses it) · `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
 `tests/test_desktop_ui.py` (desktop screens in Chromium with a simulated backend) · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
@@ -148,7 +149,8 @@ Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `design/pip/gen
   per item when NotebookLM fails or hits its limit. Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
   `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup` (start Ollama, download
   the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in in a real browser; the
-  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`, `--check-ai` (tries every model in ai.json: prints
+  session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`, `--usage` (`NotebookLM usage: {known, available, fiveHour:{remaining, resetsAt}, weekly:{…}, podcast, video}`),
+  `--check-ai` (tries every model in ai.json: prints
   `AI check: {role: {ok, provider, name, model, seconds} | {ok: false, provider, message}}` for `make`, `task:<item>`, `recall`; exit 3 if any fail), `--grade-recall` (stdin `{question, keyPoints, answer}`,
   stdout `{covered:[bool], score, feedback, missing, by}`; one parallel check per key point, word matching as fallback).
   `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider, model, baseUrl},

@@ -235,7 +235,7 @@
     if (status === "skipped" && (kind === "video" || kind === "audio")) {
       detail = chapter.notes[kind] || `Add it with <code>--media ${chapter.n}</code> next time you run the pipeline.`;
     } else if (status === "waiting_quota") {
-      detail = "Run the same command again later and Pip will pick up here.";
+      detail = "Pip will try again when the limit resets and pick up right here.";
     } else if (status === "failed") {
       detail = `${esc(chapter.notes[kind])}<br>Run again with <code>--retry</code>.`;
     } else if (status === "working") {
