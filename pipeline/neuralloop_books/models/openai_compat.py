@@ -7,6 +7,11 @@ import openai
 
 from . import QuotaError, SetupError
 
+# A "thinking" model behind an OpenAI-compatible server can't be told to skip thinking; don't let one request
+# hang for half an hour (the SDK's default is 10 minutes, retried twice).
+REQUEST_TIMEOUT = 300.0
+MAX_OUTPUT_TOKENS = 8_192
+
 BASE_URLS = {"openai": None, "openrouter": "https://openrouter.ai/api/v1"}
 NAMES = {"openai": "OpenAI", "openrouter": "OpenRouter"}
 
@@ -16,7 +21,9 @@ class OpenAICompatModel:
         self.provider, self.model = provider, model
         self.base_url = base_url or BASE_URLS.get(provider)
         self.name = NAMES.get(provider) or urlparse(self.base_url or "").hostname or "your AI service"
-        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=self.base_url)
+        self.client = openai.AsyncOpenAI(
+            api_key=api_key, base_url=self.base_url, timeout=REQUEST_TIMEOUT, max_retries=1
+        )
 
     @property
     def local(self) -> bool:
@@ -50,13 +57,18 @@ class OpenAICompatModel:
         ]
         try:
             response = await self.client.chat.completions.create(
-                model=self.model, messages=messages, response_format={"type": "json_object"}
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
         except openai.RateLimitError as error:
             raise QuotaError(f"rate limit: {error}") from error
         except openai.BadRequestError:
             # Some OpenRouter models don't support JSON mode; our converters parse loose JSON anyway.
-            response = await self.client.chat.completions.create(model=self.model, messages=messages)
+            response = await self.client.chat.completions.create(
+                model=self.model, messages=messages, max_tokens=MAX_OUTPUT_TOKENS
+            )
         except openai.AuthenticationError as error:
             raise SetupError(f"{self.name} didn't accept your key. Check it in Settings.") from error
         except openai.NotFoundError as error:

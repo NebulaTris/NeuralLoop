@@ -295,3 +295,10 @@ def test_openrouter_checks_by_asking_not_by_looking_up_the_model(monkeypatch):
 
     monkeypatch.setattr(model.client.models, "retrieve", no_lookup)
     asyncio.run(model.check())  # nothing to look up; the test request that follows checks key and model
+
+
+def test_openai_compatible_requests_never_hang_for_long():
+    from neuralloop_books.models.openai_compat import REQUEST_TIMEOUT, OpenAICompatModel
+
+    model = OpenAICompatModel("custom", "m", api_key="none", base_url="http://localhost:1234/v1")
+    assert model.client.timeout == REQUEST_TIMEOUT <= 300 and model.client.max_retries <= 1

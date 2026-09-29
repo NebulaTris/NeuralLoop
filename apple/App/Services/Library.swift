@@ -69,6 +69,15 @@ final class Library {
         loadedOnce = true
     }
 
+    /// Items still to make, or items that waited on an AI's daily limit at least six hours ago (limits reset daily).
+    static func hasWork(_ book: Book, folder: URL) -> Bool {
+        if book.chapters.contains(where: { $0.status.values.contains { $0 == .todo || $0 == .working } }) { return true }
+        guard book.chapters.contains(where: { $0.status.values.contains(.waiting) }) else { return false }
+        let log = folder.appendingPathComponent("pipeline.log")
+        let modified = (try? log.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        return Date().timeIntervalSince(modified) > 6 * 3600
+    }
+
     /// Books added before the app kept copies still point at the original file: copy it in once and remember that.
     static func keepCopy(of path: String, in folder: URL, meta: [String: Any]) -> String? {
         guard !path.hasPrefix(folder.path) else { return nil }
@@ -122,14 +131,15 @@ final class Library {
     func resumeUnfinished() {
         for entry in entries where runs[entry.id] == nil && !entry.preparing {
             guard let book = entry.book,
-                  book.chapters.contains(where: { $0.status.values.contains { $0 == .todo || $0 == .working } }),
+                  Self.hasWork(book, folder: entry.folder),
                   let meta = try? JSONSerialization.jsonObject(with: Data(contentsOf: entry.folder.appendingPathComponent("meta.json"))) as? [String: Any],
                   var path = meta["path"] as? String, FileManager.default.fileExists(atPath: path)
             else { continue }
             path = Self.keepCopy(of: path, in: entry.folder, meta: meta) ?? path
             let options = meta["options"] as? [String: Any]
+            let retry = book.chapters.contains { $0.status.values.contains(.waiting) }
             prepare(id: entry.id, book: URL(fileURLWithPath: path),
-                    options: .init(media: options?["media"] as? String ?? "1-2", dryRun: options?["dryRun"] as? Bool ?? false))
+                    options: .init(media: options?["media"] as? String ?? "1-2", dryRun: options?["dryRun"] as? Bool ?? false, retry: retry))
         }
     }
 
