@@ -29,12 +29,23 @@ func progress(_ json: String) throws -> StudyProgress {
     #expect(StudyProgress.merged([mac, ipad]).loop["1"] == ["prime": 10, "read": 40, "recall": 50])
 }
 
-@Test func mergingAgainNeverInflatesStudyTime() throws {
+@Test func studyTimeAddsUpAcrossDevices() throws {
     let mac = try progress(#"{"log":{"2026-09-28":600,"2026-09-27":60}}"#)
     let ipad = try progress(#"{"log":{"2026-09-28":300}}"#)
-    let merged = StudyProgress.merged([mac, ipad])
-    #expect(merged.log == ["2026-09-28": 600, "2026-09-27": 60])
-    #expect(StudyProgress.merged([merged, mac, ipad]).log == merged.log)
+    #expect(StudyProgress.merged([mac, ipad]).log == ["2026-09-28": 900, "2026-09-27": 60])
+}
+
+@Test func aDeviceSavesTheMergedViewButOnlyItsOwnStudyTime() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try Data(#"{"log":{"2026-09-28":600},"loop":{"1":{"prime":5}}}"#.utf8).write(to: folder.appendingPathComponent("progress.json"))
+    try Data(#"{"log":{"2026-09-28":300},"loop":{"1":{"read":9}}}"#.utf8).write(to: folder.appendingPathComponent("devices/ipad1.json"))
+    let (own, merged) = ProgressFile.loadMerged(from: folder)
+    #expect(merged.log == ["2026-09-28": 900] && merged.loop["1"] == ["prime": 5, "read": 9])
+    ProgressFile.save(merged, ownLog: own.log, to: folder)
+    let again = ProgressFile.loadMerged(from: folder)
+    #expect(again.own.log == ["2026-09-28": 600] && again.merged.log == ["2026-09-28": 900])  // syncing again never inflates it
 }
 
 @Test func oneOddEntryDoesNotLoseTheRest() throws {

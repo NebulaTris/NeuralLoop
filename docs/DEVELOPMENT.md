@@ -36,3 +36,32 @@ make package   # dist/NeuralLoop-<version>.dmg
 
 The rules: pure logic lives in `NeuralLoopCore` and `neuralloop_books`, with tests; screens stay thin. Write the failing test
 first, then the change. `CLAUDE.md` has the contracts between the app and the pipeline.
+
+## Google Drive sync (one-time setup, about 10 minutes)
+
+Your library follows you to your iPad through a private folder in your own Google Drive that only NeuralLoop can see
+(the `drive.appdata` scope: it can't read any of your other files). Google needs to know about the app once:
+
+1. Open <https://console.cloud.google.com/> and create a project called **NeuralLoop**.
+2. **APIs & Services → Library**: search for **Google Drive API** and choose **Enable**.
+3. **APIs & Services → OAuth consent screen** (Google Auth Platform): choose **External**, app name **NeuralLoop**, your
+   email as support and developer contact. Under **Audience**, keep it in **Testing** and add your own Google account as a
+   **test user**. Under **Data access**, add the scopes `openid`, `.../auth/userinfo.email`, and
+   `.../auth/drive.appdata`.
+4. **Credentials → Create credentials → OAuth client ID**, application type **iOS**, bundle ID `app.neuralloop.books`.
+   Copy the **Client ID** (it ends in `.apps.googleusercontent.com`). There's no secret for this kind of client.
+5. In the repo: `cp apple/Config/Google.xcconfig.example apple/Config/Google.xcconfig` and paste your client ID there.
+   The file is in `.gitignore`, so it never gets committed.
+6. Rebuild (`make mac`, `make package`, and the iPad app from Xcode). In NeuralLoop: **Settings → Account → Sign in with
+   Google** (or the profile button). Do the same on the iPad.
+
+While the app is in Testing, only the test users you added can sign in, and Google asks you to sign in again about once a
+week. That's fine for personal use; publishing the consent screen removes both limits later.
+
+## Installing on your iPad
+
+1. Xcode → **Settings → Accounts → +** → add your Apple ID (free is fine).
+2. Plug in the iPad, trust the Mac, and turn on **Developer Mode** on the iPad (Settings → Privacy & Security).
+3. `cd apple && xcodegen generate && open NeuralLoop.xcodeproj`, choose the **NeuralLoopPad** scheme and your iPad, set
+   your team under Signing & Capabilities, and press **Run**. With a free Apple ID the install lasts 7 days; run again to
+   refresh it.

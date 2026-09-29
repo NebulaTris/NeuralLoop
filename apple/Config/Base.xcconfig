@@ -1,0 +1,4 @@
+// Shared build settings for both apps. The Google OAuth client ID (for Drive sync) comes from Google.xcconfig, which
+// isn't committed: copy Google.xcconfig.example to Google.xcconfig and fill it in (docs/DEVELOPMENT.md → Google Drive sync).
+GOOGLE_CLIENT_ID =
+#include? "Google.xcconfig"

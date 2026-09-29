@@ -71,7 +71,7 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     }
 
     /// Merge every device's progress. Cards: the latest review wins. Loop steps: done anywhere is done (earliest time).
-    /// Study log: the most seconds any copy has for a day (so merging a merged copy again never inflates it). Quiz, recall, remake, map positions, and where you left off: the most
+    /// Study log: seconds add up across devices (each device's own file holds only its own study time). Quiz, recall, remake, map positions, and where you left off: the most
     /// recently updated device wins.
     public static func merged(_ devices: [StudyProgress]) -> StudyProgress {
         var out = StudyProgress()
@@ -80,7 +80,7 @@ public struct StudyProgress: Codable, Equatable, Sendable {
             for (chapter, steps) in device.loop {
                 out.loop[chapter, default: [:]].merge(steps) { min($0, $1) }
             }
-            for (day, seconds) in device.log { out.log[day] = max(out.log[day] ?? 0, seconds) }
+            for (day, seconds) in device.log { out.log[day, default: 0] += seconds }
             out.quiz.merge(device.quiz) { $1 }
             out.recall.merge(device.recall) { $1 }
             out.remake.merge(device.remake) { $1 }
@@ -118,6 +118,25 @@ public enum ProgressFile {
         let aside = folder.appendingPathComponent("progress.json.unreadable-\(Int(now.timeIntervalSince1970))")
         try? FileManager.default.moveItem(at: file, to: aside)
         return StudyProgress()
+    }
+
+    /// This device's own progress and the view with every other device's merged in (their files, downloaded by sync,
+    /// sit in `devices/<id>.json`). Show `merged`; save changes with `save(merged, ownLog:)` so another device's study
+    /// time never ends up in this device's file.
+    public static func loadMerged(from folder: URL) -> (own: StudyProgress, merged: StudyProgress) {
+        let own = load(from: folder)
+        let devices = folder.appendingPathComponent("devices", isDirectory: true)
+        let others = ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }
+            .compactMap { (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } }
+        return (own, others.isEmpty ? own : StudyProgress.merged([own] + others))
+    }
+
+    /// Saves the merged view as this device's file, but with only this device's own study time.
+    public static func save(_ merged: StudyProgress, ownLog: [String: Double], to folder: URL) {
+        var mine = merged
+        mine.log = ownLog
+        save(mine, to: folder)
     }
 
     public static func save(_ progress: StudyProgress, to folder: URL) {
