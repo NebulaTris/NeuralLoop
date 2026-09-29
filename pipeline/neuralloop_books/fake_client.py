@@ -48,6 +48,9 @@ class FakeClient:
     async def __aenter__(self):
         return self
 
+    async def refresh_auth(self, **kwargs):
+        self.refreshes = getattr(self, "refreshes", 0) + 1
+
     async def __aexit__(self, *exc):
         return False
 
@@ -122,6 +125,18 @@ class FakeClient:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(b"placeholder video for tests")
         return path
+
+
+class FakeStaleSessionClient(FakeClient):
+    """Like FakeClient, but its session goes stale after the first item until `refresh_auth` is called,
+    the way NotebookLM's does during a long podcast."""
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if ("audio_format" in kwargs or "video_format" in kwargs) and not getattr(self, "refreshes", 0):
+            error = RuntimeError("The server rejected this request (unauthenticated).")
+            error.rpc_code = 16
+            raise error
+        return await super()._generate(notebook_id, source_ids, **kwargs)
 
 
 class FakeQuotaClient(FakeClient):

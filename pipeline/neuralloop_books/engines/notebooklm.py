@@ -3,7 +3,7 @@
 from types import ModuleType
 
 from ..config import SOURCE_TIMEOUT
-from ..notebook import ChapterMaker, MediaOptions
+from ..notebook import ChapterMaker, MediaOptions, is_auth_error
 from ..state import SKIPPED, BookState
 
 
@@ -60,4 +60,11 @@ class NotebookLMEngine:
         self.maker = ChapterMaker(client, self.enums, notebook_id, opts.out, media)
 
     async def make(self, task: str, chapter: dict) -> dict:
+        try:
+            return await self.maker.make(task, chapter)
+        except Exception as error:  # only a stale session is handled here; anything else goes to the caller
+            if not is_auth_error(error) or not hasattr(self.client, "refresh_auth"):
+                raise
+        # The session goes stale during long items: fetch fresh tokens and try once more with NotebookLM.
+        await self.client.refresh_auth()
         return await self.maker.make(task, chapter)

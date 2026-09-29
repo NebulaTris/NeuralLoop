@@ -26,3 +26,4 @@ apple/.build/
 apple/Config/Google.xcconfig
 apple/NeuralLoop.xcodeproj/
 apple/build/
+dist/

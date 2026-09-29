@@ -6,7 +6,7 @@ import pytest
 
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import ENUMS, FakeClient, FakeQuotaClient
+from neuralloop_books.fake_client import ENUMS, FakeClient, FakeQuotaClient, FakeStaleSessionClient
 from neuralloop_books.models import QuotaError
 from neuralloop_books.models.fake import FakeModel
 from neuralloop_books.pipeline import Options, run
@@ -230,3 +230,11 @@ def test_notebooklm_media_replaces_what_an_earlier_engine_left(options):
     first = book_data(options.out)["chapters"][0]
     assert first["audio"] and first["video"]
     assert first.get("transcript") is None and first.get("explainer") is None
+
+
+def test_a_stale_notebooklm_session_is_refreshed_and_the_item_made_by_notebooklm(options):
+    client = FakeStaleSessionClient(delay=0)
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert first["audio"]["status"] == DONE and first["video"]["status"] == DONE
+    assert client.refreshes >= 1

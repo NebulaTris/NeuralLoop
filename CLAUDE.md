@@ -137,7 +137,8 @@ For development, a Python 3.12 venv at `.venv` works: `make setup PY=$PWD/.venv/
 ### Other
 `scripts/build-runtime.sh` (self-contained runtime: relocatable Python + pipeline + every provider + Rumik + NotebookLM +
 Ollama, launched by `runtime/bin/neuralloop`; `make runtime`) · `scripts/dev-signing-identity.sh` (one stable self-signed identity so macOS remembers the app's
-permissions across rebuilds; `make mac` uses it) · `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
+permissions across rebuilds; `make mac` uses it) · `scripts/package-mac.sh` (`make package`: Release app with the runtime in
+`Contents/Resources/runtime`, ad-hoc signed, `dist/NeuralLoop-<version>.dmg`; people choose "Open Anyway" once) · `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `experiments/notebooklm` (POCs, not shipped) ·
 `tests/test_desktop_ui.py` (desktop screens in Chromium with a simulated backend) · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
@@ -146,7 +147,8 @@ permissions across rebuilds; `make mac` uses it) · `design/pip/generate_pip.py`
   --video V --language L [--engine auto|local|notebooklm] [--provider auto|anthropic|openai|openrouter|custom|ollama|opencode|hermes|fake]
   [--model M] [--base-url URL] [--context CHARS] [--speech auto|rumik|fake] [--voices A,B] [--dry-run] [--retry]`.
   `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless a key is set) for the whole run when not, and
-  per item when NotebookLM fails or hits its limit. Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+  per item when NotebookLM fails or hits its limit (a stale NotebookLM session is refreshed and the item
+  retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
   `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup` (start Ollama, download
   the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in in a real browser; the
   session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`, `--usage` (`NotebookLM usage: {known, available, fiveHour:{remaining, resetsAt}, weekly:{…}, podcast, video}`),

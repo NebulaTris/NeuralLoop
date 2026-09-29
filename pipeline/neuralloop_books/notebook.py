@@ -36,6 +36,16 @@ def is_quota_error(error: BaseException) -> bool:
     return any(hint in text for hint in _QUOTA_HINTS)
 
 
+def is_auth_error(error: BaseException) -> bool:
+    """NotebookLM's session went stale (it does during long podcasts); refreshing it usually fixes this."""
+    if (
+        getattr(error, "rpc_code", None) in (16, "16", "UNAUTHENTICATED")
+        or type(error).__name__ == "AuthError"
+    ):
+        return True
+    return "unauthenticated" in str(error).lower()
+
+
 async def open_client(client_class):
     """notebooklm-py 0.8+ returns an async context manager; older builds return an awaitable."""
     client = client_class.from_storage()

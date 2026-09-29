@@ -1,5 +1,6 @@
 // Runs the book pipeline and streams its output lines.
-// Where the pipeline lives, in order: the downloaded runtime (Application Support/app.neuralloop.books/runtime),
+// Where the pipeline lives, in order: a downloaded runtime (Application Support/app.neuralloop.books/runtime), the one
+// packaged inside the app (Contents/Resources/runtime, `make package`),
 // NEURALLOOP_PIPELINE (a folder with nl_book.py) with NEURALLOOP_PYTHON, then (development) the repo this app was built from.
 
 import Foundation
@@ -18,11 +19,13 @@ final class PipelineRunner: @unchecked Sendable {
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("app.neuralloop.books")
         let runtime = support.appendingPathComponent("runtime/bin/neuralloop")
         if fm.isExecutableFile(atPath: runtime.path) { return (runtime, []) }
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime/bin/neuralloop"),
+           fm.isExecutableFile(atPath: bundled.path) { return (bundled, []) }
         let env = ProcessInfo.processInfo.environment
         if let folder = env["NEURALLOOP_PIPELINE"], let python = env["NEURALLOOP_PYTHON"] {
             return (URL(fileURLWithPath: python), [folder + "/nl_book.py"])
         }
-        if let repo = Bundle.main.object(forInfoDictionaryKey: "NeuralLoopRepo") as? String {
+        if let repo = Bundle.main.object(forInfoDictionaryKey: "NeuralLoopRepo") as? String, !repo.isEmpty {
             let root = URL(fileURLWithPath: repo).standardizedFileURL
             let python = root.appendingPathComponent(".venv/bin/python")
             let script = root.appendingPathComponent("pipeline/nl_book.py")

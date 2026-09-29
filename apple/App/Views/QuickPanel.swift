@@ -19,8 +19,7 @@ struct ShelfSummary {
         for entry in entries {
             if entry.preparing { summary.preparing.append(entry) }
             guard let book = entry.book else { continue }
-            let data = try? Data(contentsOf: entry.folder.appendingPathComponent("progress.json"))
-            let progress = data.flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } ?? StudyProgress()
+            let progress = progress(entry.folder)
             summary.dueCards += Cards.due(book.chapters, progress, now: nowMs).filter { progress.cards[$0.id] != nil }.count
             for back in 0..<7 {
                 summary.weekSeconds += progress.log[Activity.dayKey(nowMs - Double(back) * FSRS.dayMs)] ?? 0
@@ -33,6 +32,11 @@ struct ShelfSummary {
             }
         }
         return summary
+    }
+
+    static func progress(_ folder: URL) -> StudyProgress {
+        let data = try? Data(contentsOf: folder.appendingPathComponent("progress.json"))
+        return data.flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } ?? StudyProgress()
     }
 }
 
@@ -58,7 +62,8 @@ struct QuickPanel: View {
                     open(resume.entry.id)
                 }
             }
-            if let resume = summary.resume, resume.chapter.audio != nil || resume.chapter.video != nil {
+            if let resume = summary.resume, resume.chapter.audio != nil || resume.chapter.video != nil
+                || [.working, .waiting].contains(resume.chapter.status["video"]) {
                 PanelMedia(folder: resume.entry.folder, chapter: resume.chapter)
             }
             if summary.dueCards > 0 {
@@ -139,6 +144,14 @@ struct PanelMedia: View {
                 .font(Theme.display(13, .medium)).foregroundStyle(Theme.ink2).lineLimit(1)
             if let video = chapter.video {
                 ChapterVideo(url: folder.appendingPathComponent(video), corner: 10)
+            } else if let status = chapter.status["video"], status == .working || status == .waiting {
+                HStack(spacing: 8) {
+                    if status == .working { ProgressView().controlSize(.mini) } else { Image(systemName: "clock").foregroundStyle(Theme.ink3) }
+                    Text(status == .working ? "Pip is making the video" : "The video is waiting for NotebookLM")
+                        .font(Theme.body(11)).foregroundStyle(Theme.ink3)
+                }
+                .frame(maxWidth: .infinity, minHeight: 60)
+                .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 10))
             }
             if let audio = chapter.audio {
                 PodcastControls(url: folder.appendingPathComponent(audio), compact: true)

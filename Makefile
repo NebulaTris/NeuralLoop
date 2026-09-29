@@ -5,7 +5,7 @@ CARGO_ENV ?=
 CLT := /Library/Developer/CommandLineTools/Library/Developer
 SWIFT_FLAGS := $(if $(findstring CommandLineTools,$(shell xcode-select -p 2>/dev/null)),-Xswiftc -F$(CLT)/Frameworks -Xlinker -F$(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/usr/lib,)
 
-.PHONY: setup test check lint site app runtime mac
+.PHONY: setup test check lint site app runtime mac package
 
 setup:            ## install dev tools for every part
 	cd pipeline && $(PY) -m pip install -e ".[dev]" playwright && $(PY) -m playwright install chromium
@@ -33,6 +33,9 @@ check: lint test  ## what CI runs
 
 app:              ## build the desktop app for this computer
 	npm run build
+
+package:          ## NeuralLoop.app with the runtime inside, in dist/NeuralLoop-<version>.dmg (unsigned: "Open Anyway" once)
+	scripts/package-mac.sh
 
 runtime:          ## self-contained runtime for the Mac app (build/runtime): Python, pipeline, Rumik, Ollama
 	scripts/build-runtime.sh

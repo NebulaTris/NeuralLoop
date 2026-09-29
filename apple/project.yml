@@ -23,7 +23,7 @@ targets:
         LSApplicationCategoryType: public.app-category.education
         NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
         # Development only: where the repo is, so the app can run the pipeline from source.
-        NeuralLoopRepo: "$(SRCROOT)/.."
+        NeuralLoopRepo: "$(NEURALLOOP_REPO)"
         ATSApplicationFontsPath: "."   # the fonts are copied into Resources itself
     settings:
       base:
@@ -37,3 +37,8 @@ targets:
         SWIFT_VERSION: "5.0"            # app target; the core package uses Swift 6
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Debug:
+          NEURALLOOP_REPO: "$(SRCROOT)/.."
+        Release:
+          NEURALLOOP_REPO: ""            # a packaged app runs its bundled runtime, never a repo

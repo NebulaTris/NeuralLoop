@@ -27,6 +27,6 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 NeuralLoop · MIT</string>
 	<key>NeuralLoopRepo</key>
-	<string>$(SRCROOT)/..</string>
+	<string>$(NEURALLOOP_REPO)</string>
 </dict>
 </plist>

@@ -59,6 +59,8 @@ cat > "$OUT/bin/neuralloop" <<'LAUNCHER'
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export NEURALLOOP_OLLAMA="${NEURALLOOP_OLLAMA:-$HERE/ollama/ollama}"
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$HERE/browsers}"
+# Keep the app bundle untouched (its signature seals it): compiled Python goes to the person's caches.
+export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$HOME/Library/Caches/NeuralLoop/pycache}"
 export PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
 exec "$HERE/python/bin/python3" "$HERE/pipeline/nl_book.py" "$@"
 LAUNCHER
