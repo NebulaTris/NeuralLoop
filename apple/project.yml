@@ -19,6 +19,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: NeuralLoop
+        CFBundleIconFile: AppIcon          # Resources/AppIcon.icns, made by design/pip/make_app_icon.py
         CFBundleShortVersionString: "0.2.0"
         LSApplicationCategoryType: public.app-category.education
         NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"

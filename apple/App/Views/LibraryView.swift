@@ -386,7 +386,7 @@ struct YearLog: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 4) {
                         ZStack(alignment: .topLeading) {
-                            ForEach(grid.months, id: \.week) { month in
+                            ForEach(Self.spaced(grid.months), id: \.week) { month in
                                 Text(month.label).font(Theme.body(10)).foregroundStyle(Theme.ink3)
                                     .offset(x: CGFloat(month.week) * (cell + gap))
                             }
@@ -429,6 +429,13 @@ struct YearLog: View {
         case 3: Theme.mint.opacity(0.75)
         default: Theme.mint
         }
+    }
+
+    /// Month labels at least three weeks apart, so a month that starts right after the grid does ("SepOct") doesn't collide.
+    static func spaced(_ months: [(week: Int, label: String)]) -> [(week: Int, label: String)] {
+        var kept: [(week: Int, label: String)] = []
+        for month in months where (kept.last.map { month.week - $0.week >= 3 } ?? true) { kept.append(month) }
+        return kept
     }
 
     static func pretty(_ key: String) -> String {

@@ -15,10 +15,10 @@ RUNTIME="$ROOT/build/runtime"
 DERIVED="$ROOT/apple/build/release"
 DIST="$ROOT/dist"
 
-SMOKE="" STAGE="" CHECK="" MOUNT=""
+SMOKE="" CHECK="" MOUNT=""
 cleanup() {
   if [[ -n "$MOUNT" ]]; then hdiutil detach "$MOUNT" -quiet -force >/dev/null 2>&1 || true; fi
-  rm -rf "$SMOKE" "$STAGE" "$CHECK"
+  rm -rf "$SMOKE" "$CHECK"
   if [[ -n "$MOUNT" ]]; then rmdir "$MOUNT" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
@@ -72,14 +72,13 @@ PYTHONPYCACHEPREFIX="$SMOKE/pycache" "$APP/Contents/Resources/runtime/bin/neural
 test -f "$SMOKE/book/book.json"
 codesign --verify --strict "$APP" # running it left the bundle untouched
 
-echo "• Disk image"
-STAGE="$(mktemp -d)"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
+echo "• Disk image (Pip's drag-to-Applications window: design/dmg)"
 mkdir -p "$DIST"
 DMG="$DIST/NeuralLoop-$VERSION.dmg"
 rm -f "$DMG"
-hdiutil create -volname "NeuralLoop" -srcfolder "$STAGE" -fs HFS+ -format ULFO -ov "$DMG" -quiet
+UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+"$UV" tool run --quiet --from "dmgbuild==1.6.7" dmgbuild -s "$ROOT/design/dmg/settings.py" \
+  -D app="$APP" -D here="$ROOT/design/dmg" "NeuralLoop" "$DMG" >/dev/null
 
 echo "• Checking the disk image like a download"
 CHECK="$(mktemp -d)"

@@ -48,6 +48,7 @@ struct RootView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @AppStorage("welcomed") private var welcomed = false
+    @State private var movingIn = AppMover.shouldAsk
 
     var body: some View {
         @Bindable var library = library
@@ -59,7 +60,9 @@ struct RootView: View {
         }
         .background(Theme.paper)
         .tint(Theme.accent)
-        .sheet(isPresented: Binding(get: { !welcomed }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
+        // First things first: move into Applications (when running from Downloads or the disk image), then the welcome.
+        .sheet(isPresented: $movingIn) { MoveInView() }
+        .sheet(isPresented: Binding(get: { !welcomed && !movingIn }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
         // Development: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }

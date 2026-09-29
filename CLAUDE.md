@@ -25,7 +25,8 @@ Two parts, one repo:
    `apple/Sources/NeuralLoopCore/*.swift` (tested with Swift Testing in `apple/Tests`). SwiftUI views (`apple/App/Views`) and
    services (`apple/App/Services`) only render, wire events, and do I/O.
 3. **Never hand-edit generated files:** `apple/App/Resources/pip-poses.js` and `pipeline/neuralloop_books/assets/pip-poses.js`
-   (run `make pip`, i.e. `python design/pip/generate_pip.py`); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
+   (run `make pip`, i.e. `python design/pip/generate_pip.py`); `apple/App/Resources/AppIcon.icns` (`python design/pip/make_app_icon.py`);
+   `design/dmg/background.tiff` (`python design/dmg/make_background.py`); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
 4. **`make check` must pass before every commit.** It runs the linters and all tests (Python and Swift).
 5. **Small commits** with imperative messages (`Add book import preview`, `Fix EPUB nav with nested lists`).
 6. **Respect contracts** (section "Contracts" below). If you change one, update this file and the tests in the same commit.
@@ -51,7 +52,8 @@ Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
 For development the app runs the pipeline from the repo's `.venv` (a Python 3.12 venv: `make setup PY=$PWD/.venv/bin/python`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
-`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`.
+`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLMoveIn YES` (the
+"move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
 
 ## File map
 
@@ -100,7 +102,8 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 `scripts/build-runtime.sh` (self-contained runtime: Python 3.12.14, hash-locked wheels from `scripts/runtime-requirements.txt`
 (refresh command at the top of the script), Ollama checked by SHA-256 and Team ID, Chromium; built in a temp folder and swapped
 in only after every check; writes `.stamp` and `.neuralloop-runtime`; `make runtime`) · `scripts/package-mac.sh` (`make package`:
-rebuilds a stale runtime, signs nested code inside out, then checks the DMG like a download) · `scripts/dev-signing-identity.sh`
+rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgbuild and Pip's drag-to-Applications window from
+`design/dmg`, then checks it like a download) · `scripts/dev-signing-identity.sh`
 (one stable self-signed identity so macOS remembers the app's permissions across rebuilds; `make mac` uses it) ·
 `design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
 
