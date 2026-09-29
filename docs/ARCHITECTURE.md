@@ -240,6 +240,12 @@ notebooklm-py in `~/.notebooklm`.
 - **Untrusted input is contained.** Book files (EPUB zips, PDFs) have size and path limits; paths from `book.json` and
   from the Drive must stay inside the library; the pipeline asks models for JSON only and validates it (model output
   is never executed or used as a path).
+- **Books can't steer the AI into acting.** Models only ever return JSON that's validated. Agent-style providers are
+  locked down: opencode runs with every tool permission denied, in an empty folder; Hermes runs in an empty folder and
+  Settings says to turn its tools off. Error text is scrubbed of anything key-shaped before it's saved or shown.
+- **Sync can't be used to reach outside the library.** Every file name coming from the Drive is checked (only
+  `books/<id>/…` and strict inbox names; no `..`, backslashes, or private files), local paths must stay inside the
+  library, downloads are atomic and capped at 2 GB, and the sign-in token is only ever sent to Google.
 - **What ships is verified.** The runtime installs only hash-locked packages; Ollama is checked by checksum and
   signature; the app runs only the runtime sealed inside its own signature.
 - **Honest limits.** The Mac app isn't sandboxed (it has to run the pipeline) and is ad-hoc signed (hence
