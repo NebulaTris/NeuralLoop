@@ -1,6 +1,7 @@
 """Pip the red panda: the single source of truth for Pip's artwork and animation.
 
-Run `python design/pip/generate_pip.py` from the repo root to regenerate:
+Run `python design/pip/generate_pip.py` from the repo root to regenerate (`--force` redraws every PNG;
+`--check` writes nothing and fails when the committed files are out of date, without a browser):
   - apple/App/Resources/pip-rig.json                 (the Mac and iPad apps: layers, pivots, keyframes)
   - apple/App/Resources/PipLayers/*.png              (every layer as a transparent 3x bitmap, plus the menu-bar icon)
   - pipeline/neuralloop_books/assets/pip-poses.js   (explainer videos)
@@ -63,7 +64,10 @@ def fluffy(rx, ry, tufts, depth, step=9):
                 r_push = depth
         k = 1 + r_push / max(rx, ry)
         pts.append((rx * math.cos(a) * k, ry * math.sin(a) * k))
-    mid = lambda p, q: ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+
+    def mid(p, q):
+        return ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+
     m0 = mid(pts[-1], pts[0])
     d = f"M{m0[0]:.1f},{m0[1]:.1f}"
     for i, p in enumerate(pts):
@@ -100,7 +104,7 @@ def head(cx, cy, s=1, expr="open", rot=0, glasses=False, cls="tilt"):
         f'<path d="{HEAD_D}" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/>',
         f'<path d="M-30,-30 Q0,-44 30,-30" fill="none" stroke="{FUR2}" stroke-width="7" stroke-linecap="round" opacity=".7"/>',
         f'<path d="M-4,-40 Q0,-50 5,-41" fill="none" stroke="{OUT}" stroke-width="2.6" stroke-linecap="round"/>',
-        f'<ellipse cx="-24" cy="-33" rx="9" ry="4" transform="rotate(-18 -24 -33)" fill="#FFFFFF" opacity=".22"/>',
+        '<ellipse cx="-24" cy="-33" rx="9" ry="4" transform="rotate(-18 -24 -33)" fill="#FFFFFF" opacity=".22"/>',
         f'<g transform="translate(-36,12)"><path d="{CHEEK_L}" fill="{CREAM}"/></g><g transform="translate(36,12) scale(-1,1)"><path d="{CHEEK_L}" fill="{CREAM}"/></g>',
         f'<ellipse cx="0" cy="18" rx="27" ry="18" fill="{CREAM}"/>',
         f'<ellipse cx="-21" cy="-20" rx="10" ry="6.5" fill="{CREAM}"/><ellipse cx="21" cy="-20" rx="10" ry="6.5" fill="{CREAM}"/>',
@@ -151,10 +155,8 @@ def body(cx, cy, rx=38, ry=33):
 
 def feet(cx, cy):
     return "".join(
-        (
-            f'<ellipse cx="{cx + dx}" cy="{cy}" rx="14.5" ry="9.5" fill="{DARK}" stroke="{OUT}" stroke-width="3"/><path d="M{cx + dx - 6},{cy - 3} L{cx + dx - 6},{cy + 2} M{cx + dx},{cy - 4} L{cx + dx},{cy + 2} M{cx + dx + 6},{cy - 3} L{cx + dx + 6},{cy + 2}" stroke="{OUT}" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>'
-            for dx in (-19, 19)
-        )
+        f'<ellipse cx="{cx + dx}" cy="{cy}" rx="14.5" ry="9.5" fill="{DARK}" stroke="{OUT}" stroke-width="3"/><path d="M{cx + dx - 6},{cy - 3} L{cx + dx - 6},{cy + 2} M{cx + dx},{cy - 4} L{cx + dx},{cy + 2} M{cx + dx + 6},{cy - 3} L{cx + dx + 6},{cy + 2}" stroke="{OUT}" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>'
+        for dx in (-19, 19)
     )
 
 
@@ -184,9 +186,7 @@ def pose_read():
     book = f'<g transform="translate({cx},{cy + 2})"><path d="M-33,-14 L0,-8 L0,20 L-33,14 Z" fill="#FFFFFF" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><g class="page"><path d="M33,-14 L0,-8 L0,20 L33,14 Z" fill="#EEF2FF" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/></g><path d="M-26,-5 L-7,-2 M-26,2 L-7,5 M-26,9 L-12,11" stroke="#9AA6D8" stroke-width="2" stroke-linecap="round"/></g>'
     return svg(
         shadow(cx, 203)
-        + tail(
-            f"M{cx + 30},{cy + 22} C{cx + 86},{cy + 26} {cx + 92},{cy - 36} {cx + 58},{cy - 54}"
-        )
+        + tail(f"M{cx + 30},{cy + 22} C{cx + 86},{cy + 26} {cx + 92},{cy - 36} {cx + 58},{cy - 54}")
         + '<g class="breathe">'
         + body(cx, cy)
         + "</g>"
@@ -202,9 +202,7 @@ def pose_read():
 def pose_happy():
     cx, cy = (120, 150)
     fig = (
-        tail(
-            f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}"
-        )
+        tail(f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}")
         + body(cx, cy)
         + feet(cx, cy + 34)
         + f'<g class="wave-l">{arm(cx - 42, cy - 22, 35, 16, True)}</g><g class="wave-r">{arm(cx + 42, cy - 22, -35, 16, True)}</g>'
@@ -222,6 +220,7 @@ def pose_happy():
 
 def pose_nap():
     cx, cy = (128, 150)
+
     def zed(x, y, size, col):
         return f'<path d="M{x},{y} L{x + size},{y} L{x},{y + size} L{x + size},{y + size}" fill="none" stroke="{col}" stroke-width="{size * 0.24:.1f}" stroke-linecap="round" stroke-linejoin="round"/>'
 
@@ -247,9 +246,7 @@ def pose_stretch():
     return svg(
         shadow(cx - 10, 196, 90)
         + '<g class="stretch">'
-        + tail(
-            f"M{cx + 58},{cy - 10} C{cx + 86},{cy - 50} {cx + 64},{cy - 100} {cx + 36},{cy - 96}"
-        )
+        + tail(f"M{cx + 58},{cy - 10} C{cx + 86},{cy - 50} {cx + 64},{cy - 100} {cx + 36},{cy - 96}")
         + legs
         + bod
         + head(cx - 70, cy + 2, 0.86, "yawn", -8, cls="")
@@ -262,9 +259,7 @@ def pose_play():
     cx, cy = (138, 150)
     return svg(
         shadow(cx - 20, 204, 80)
-        + tail(
-            f"M{cx + 30},{cy + 18} C{cx + 80},{cy + 10} {cx + 86},{cy - 48} {cx + 56},{cy - 64}"
-        )
+        + tail(f"M{cx + 30},{cy + 18} C{cx + 80},{cy + 10} {cx + 86},{cy - 48} {cx + 56},{cy - 64}")
         + body(cx, cy)
         + feet(cx, cy + 34)
         + f'<g class="roll">{yarn(48, 176, 22)}</g>'
@@ -278,9 +273,7 @@ def pose_play():
 def pose_hug():
     cx, cy = (120, 150)
     fig = (
-        tail(
-            f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}"
-        )
+        tail(f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}")
         + body(cx, cy)
         + feet(cx, cy + 34)
         + yarn(cx, cy + 6, 24, True)
@@ -303,9 +296,7 @@ def pose_focus():
     lap = f'<path d="M{cx - 44},{cy + 22} L{cx + 44},{cy + 22} L{cx + 54},{cy + 36} L{cx - 54},{cy + 36} Z" fill="#C9CFE0" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><rect x="{cx - 40}" y="{cy - 22}" width="80" height="46" rx="6" fill="#DDE3F2" stroke="{OUT}" stroke-width="3"/><g class="spin"><circle cx="{cx}" cy="{cy}" r="9" fill="none" stroke="#6F8FE8" stroke-width="3.5" stroke-dasharray="44 14" stroke-linecap="round"/></g>'
     return svg(
         shadow(cx, 206, 70)
-        + tail(
-            f"M{cx + 30},{cy + 18} C{cx + 84},{cy + 20} {cx + 92},{cy - 40} {cx + 60},{cy - 58}"
-        )
+        + tail(f"M{cx + 30},{cy + 18} C{cx + 84},{cy + 20} {cx + 92},{cy - 40} {cx + 60},{cy - 58}")
         + '<g class="breathe">'
         + body(cx, cy)
         + "</g>"
@@ -320,9 +311,7 @@ def pose_proud():
     cx, cy = (120, 150)
     medal = f'<g class="swing"><path d="M{cx - 6},{cy - 24} L{cx},{cy - 6} L{cx + 6},{cy - 24}" fill="none" stroke="#6F8FE8" stroke-width="4"/><circle cx="{cx}" cy="{cy + 4}" r="11" fill="#F2B640" stroke="{OUT}" stroke-width="3"/>{star(cx, cy + 4, 6, "#FFF4E6", "")}</g>'
     fig = (
-        tail(
-            f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}"
-        )
+        tail(f"M{cx + 30},{cy + 20} C{cx + 84},{cy + 20} {cx + 90},{cy - 40} {cx + 60},{cy - 56}")
         + '<g class="puff">'
         + body(cx, cy)
         + "</g>"
@@ -345,57 +334,209 @@ def pose_proud():
 # Every animation, as data: the CSS (explainer videos) and pip-rig.json (the Mac app) are both made from this.
 # Each key is (percent, {tx, ty (px), r (deg), sx, sy, o (opacity)}); missing values are identity.
 # origin: the pivot as a percentage of the animated group's own box (CSS transform-origin with transform-box: fill-box).
-EASE = {"ease": (0.25, 0.1, 0.25, 1), "ease-in-out": (0.42, 0, 0.58, 1), "ease-in": (0.42, 0, 1, 1), "linear": (0, 0, 1, 1)}
+EASE = {
+    "ease": (0.25, 0.1, 0.25, 1),
+    "ease-in-out": (0.42, 0, 0.58, 1),
+    "ease-in": (0.42, 0, 1, 1),
+    "linear": (0, 0, 1, 1),
+}
 ANIM = {
     # A soft sway with a little follow-through at the top.
-    "tail": dict(origin=(0, 100), dur=3.4, ease="ease-in-out", keys=[(0, {}), (42, {"r": 9}), (58, {"r": 7}), (100, {})]),
-    "tail-soft": dict(origin=(100, 20), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"r": -3}), (100, {})]),
+    "tail": dict(
+        origin=(0, 100),
+        dur=3.4,
+        ease="ease-in-out",
+        keys=[(0, {}), (42, {"r": 9}), (58, {"r": 7}), (100, {})],
+    ),
+    "tail-soft": dict(
+        origin=(100, 20), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"r": -3}), (100, {})]
+    ),
     # Eyes open most of the time; one blink, then a double blink, over eight seconds.
-    "lids": dict(origin=(50, 50), dur=8, ease="ease", rest={"sy": 0}, keys=[
-        (0, {"sy": 0}), (41, {"sy": 0}), (43, {"sy": 1}), (45.5, {"sy": 0}), (86, {"sy": 0}), (88, {"sy": 1}),
-        (90, {"sy": 0}), (91.5, {"sy": 1}), (93.5, {"sy": 0}), (100, {"sy": 0})]),
+    "lids": dict(
+        origin=(50, 50),
+        dur=8,
+        ease="ease",
+        rest={"sy": 0},
+        keys=[
+            (0, {"sy": 0}),
+            (41, {"sy": 0}),
+            (43, {"sy": 1}),
+            (45.5, {"sy": 0}),
+            (86, {"sy": 0}),
+            (88, {"sy": 1}),
+            (90, {"sy": 0}),
+            (91.5, {"sy": 1}),
+            (93.5, {"sy": 0}),
+            (100, {"sy": 0}),
+        ],
+    ),
     # Ears twitch now and then (different periods, so they never move together).
-    "twitch-l": dict(origin=(85, 100), dur=6.7, ease="ease-in-out", keys=[
-        (0, {}), (86, {}), (89, {"r": -13}), (92, {}), (94, {"r": -6}), (97, {}), (100, {})]),
-    "twitch-r": dict(origin=(15, 100), dur=9.1, ease="ease-in-out", keys=[
-        (0, {}), (78, {}), (81, {"r": 13}), (84, {}), (100, {})]),
-    "tilt": dict(origin=(50, 90), dur=5.5, ease="ease-in-out", keys=[(0, {}), (30, {"r": -4}), (65, {"r": 3}), (100, {})]),
-    "nod": dict(origin=(50, 90), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 2, "r": -2}), (100, {})]),
+    "twitch-l": dict(
+        origin=(85, 100),
+        dur=6.7,
+        ease="ease-in-out",
+        keys=[(0, {}), (86, {}), (89, {"r": -13}), (92, {}), (94, {"r": -6}), (97, {}), (100, {})],
+    ),
+    "twitch-r": dict(
+        origin=(15, 100),
+        dur=9.1,
+        ease="ease-in-out",
+        keys=[(0, {}), (78, {}), (81, {"r": 13}), (84, {}), (100, {})],
+    ),
+    "tilt": dict(
+        origin=(50, 90),
+        dur=5.5,
+        ease="ease-in-out",
+        keys=[(0, {}), (30, {"r": -4}), (65, {"r": 3}), (100, {})],
+    ),
+    "nod": dict(
+        origin=(50, 90), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 2, "r": -2}), (100, {})]
+    ),
     "watch": dict(origin=(50, 90), dur=1.4, ease="ease-in-out", keys=[(0, {}), (35, {"r": -6}), (100, {})]),
     "bob": dict(origin=(50, 90), dur=1.8, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 2.5}), (100, {})]),
-    "breathe": dict(origin=(50, 100), dur=3.6, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.025, "sy": 1.04}), (100, {})]),
-    "breathe-deep": dict(origin=(50, 100), dur=4.4, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.03, "sy": 1.07}), (100, {})]),
-    "puff": dict(origin=(50, 100), dur=2.2, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.05, "sy": 1.05}), (100, {})]),
+    "breathe": dict(
+        origin=(50, 100),
+        dur=3.6,
+        ease="ease-in-out",
+        keys=[(0, {}), (50, {"sx": 1.025, "sy": 1.04}), (100, {})],
+    ),
+    "breathe-deep": dict(
+        origin=(50, 100),
+        dur=4.4,
+        ease="ease-in-out",
+        keys=[(0, {}), (50, {"sx": 1.03, "sy": 1.07}), (100, {})],
+    ),
+    "puff": dict(
+        origin=(50, 100),
+        dur=2.2,
+        ease="ease-in-out",
+        keys=[(0, {}), (50, {"sx": 1.05, "sy": 1.05}), (100, {})],
+    ),
     # Squash, leap, stretch, land.
-    "hop": dict(origin=(50, 100), dur=1.1, ease=(0.3, 0, 0.4, 1), keys=[
-        (0, {"sx": 1.06, "sy": 0.94}), (15, {}), (50, {"ty": -18, "sx": 0.97, "sy": 1.04}), (85, {}), (100, {"sx": 1.06, "sy": 0.94})]),
-    "shadow-hop": dict(origin=(50, 50), dur=1.1, ease=(0.3, 0, 0.4, 1), rest={"o": 1}, keys=[
-        (0, {}), (50, {"sx": 0.7, "sy": 0.7, "o": 0.55}), (100, {})]),
-    "rock": dict(origin=(50, 100), dur=2.6, ease="ease-in-out", rest={"r": 0}, keys=[(0, {"r": -3}), (50, {"r": 3}), (100, {"r": -3})]),
-    "wave-l": dict(origin=(80, 100), dur=0.55, ease="ease-in-out", alternate=True, keys=[(0, {"r": -8}), (100, {"r": 10})]),
-    "wave-r": dict(origin=(20, 100), dur=0.55, ease="ease-in-out", alternate=True, keys=[(0, {"r": 8}), (100, {"r": -10})]),
-    "twinkle": dict(origin=(50, 50), dur=1.8, ease="ease-in-out", keys=[
-        (0, {"sx": 0.6, "sy": 0.6, "o": 0.4}), (50, {"sx": 1.15, "sy": 1.15, "o": 1}), (100, {"sx": 0.6, "sy": 0.6, "o": 0.4})]),
-    "zz": dict(origin=(50, 50), dur=2.8, ease="ease-in-out", keys=[(0, {"o": 0}), (25, {"tx": 1.5, "ty": -4, "o": 1}), (100, {"tx": 6, "ty": -16, "o": 0})]),
-    "stretch": dict(origin=(100, 100), dur=3.4, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.05, "ty": 2}), (100, {})]),
-    "yawn": dict(origin=(50, 0), dur=3.4, ease="ease-in-out", rest={"sy": 0.35}, keys=[
-        (0, {"sy": 0.35}), (20, {"sy": 0.35}), (50, {"sy": 1.1}), (70, {"sy": 1.1}), (100, {"sy": 0.35})]),
-    "swipe": dict(origin=(100, 0), dur=1.5, ease="ease-in-out", keys=[(0, {}), (30, {"r": -22}), (45, {"r": 4}), (100, {})]),
-    "roll": dict(origin=(50, 50), dur=1.5, ease="ease-in-out", keys=[(0, {}), (28, {}), (55, {"tx": -7, "r": -40}), (100, {})]),
-    "heart": dict(origin=(50, 50), dur=2.6, ease="ease-in", keys=[
-        (0, {"ty": 8, "sx": 0.6, "sy": 0.6, "o": 0}), (30, {"ty": -1, "sx": 0.85, "sy": 0.85, "o": 1}), (100, {"ty": -22, "o": 0})]),
+    "hop": dict(
+        origin=(50, 100),
+        dur=1.1,
+        ease=(0.3, 0, 0.4, 1),
+        keys=[
+            (0, {"sx": 1.06, "sy": 0.94}),
+            (15, {}),
+            (50, {"ty": -18, "sx": 0.97, "sy": 1.04}),
+            (85, {}),
+            (100, {"sx": 1.06, "sy": 0.94}),
+        ],
+    ),
+    "shadow-hop": dict(
+        origin=(50, 50),
+        dur=1.1,
+        ease=(0.3, 0, 0.4, 1),
+        rest={"o": 1},
+        keys=[(0, {}), (50, {"sx": 0.7, "sy": 0.7, "o": 0.55}), (100, {})],
+    ),
+    "rock": dict(
+        origin=(50, 100),
+        dur=2.6,
+        ease="ease-in-out",
+        rest={"r": 0},
+        keys=[(0, {"r": -3}), (50, {"r": 3}), (100, {"r": -3})],
+    ),
+    "wave-l": dict(
+        origin=(80, 100),
+        dur=0.55,
+        ease="ease-in-out",
+        alternate=True,
+        keys=[(0, {"r": -8}), (100, {"r": 10})],
+    ),
+    "wave-r": dict(
+        origin=(20, 100),
+        dur=0.55,
+        ease="ease-in-out",
+        alternate=True,
+        keys=[(0, {"r": 8}), (100, {"r": -10})],
+    ),
+    "twinkle": dict(
+        origin=(50, 50),
+        dur=1.8,
+        ease="ease-in-out",
+        keys=[
+            (0, {"sx": 0.6, "sy": 0.6, "o": 0.4}),
+            (50, {"sx": 1.15, "sy": 1.15, "o": 1}),
+            (100, {"sx": 0.6, "sy": 0.6, "o": 0.4}),
+        ],
+    ),
+    "zz": dict(
+        origin=(50, 50),
+        dur=2.8,
+        ease="ease-in-out",
+        keys=[(0, {"o": 0}), (25, {"tx": 1.5, "ty": -4, "o": 1}), (100, {"tx": 6, "ty": -16, "o": 0})],
+    ),
+    "stretch": dict(
+        origin=(100, 100), dur=3.4, ease="ease-in-out", keys=[(0, {}), (50, {"sx": 1.05, "ty": 2}), (100, {})]
+    ),
+    "yawn": dict(
+        origin=(50, 0),
+        dur=3.4,
+        ease="ease-in-out",
+        rest={"sy": 0.35},
+        keys=[
+            (0, {"sy": 0.35}),
+            (20, {"sy": 0.35}),
+            (50, {"sy": 1.1}),
+            (70, {"sy": 1.1}),
+            (100, {"sy": 0.35}),
+        ],
+    ),
+    "swipe": dict(
+        origin=(100, 0),
+        dur=1.5,
+        ease="ease-in-out",
+        keys=[(0, {}), (30, {"r": -22}), (45, {"r": 4}), (100, {})],
+    ),
+    "roll": dict(
+        origin=(50, 50),
+        dur=1.5,
+        ease="ease-in-out",
+        keys=[(0, {}), (28, {}), (55, {"tx": -7, "r": -40}), (100, {})],
+    ),
+    "heart": dict(
+        origin=(50, 50),
+        dur=2.6,
+        ease="ease-in",
+        keys=[
+            (0, {"ty": 8, "sx": 0.6, "sy": 0.6, "o": 0}),
+            (30, {"ty": -1, "sx": 0.85, "sy": 0.85, "o": 1}),
+            (100, {"ty": -22, "o": 0}),
+        ],
+    ),
     "spin": dict(origin=(50, 50), dur=1.1, ease="linear", keys=[(0, {}), (100, {"r": 360})]),
-    "type-l": dict(origin=(50, 0), dur=0.36, ease="ease-in-out", alternate=True, keys=[(0, {}), (100, {"ty": -3})]),
-    "type-r": dict(origin=(50, 0), dur=0.36, ease="ease-in-out", alternate=True, reverse=True, keys=[(0, {}), (100, {"ty": -3})]),
-    "swing": dict(origin=(50, 0), dur=1.8, ease="ease-in-out", keys=[(0, {"r": -9}), (50, {"r": 9}), (100, {"r": -9})]),
-    "page": dict(origin=(0, 50), dur=4.8, ease="ease-in-out", keys=[(0, {}), (70, {}), (80, {"sx": 0.2}), (90, {}), (100, {})]),
+    "type-l": dict(
+        origin=(50, 0), dur=0.36, ease="ease-in-out", alternate=True, keys=[(0, {}), (100, {"ty": -3})]
+    ),
+    "type-r": dict(
+        origin=(50, 0),
+        dur=0.36,
+        ease="ease-in-out",
+        alternate=True,
+        reverse=True,
+        keys=[(0, {}), (100, {"ty": -3})],
+    ),
+    "swing": dict(
+        origin=(50, 0), dur=1.8, ease="ease-in-out", keys=[(0, {"r": -9}), (50, {"r": 9}), (100, {"r": -9})]
+    ),
+    "page": dict(
+        origin=(0, 50),
+        dur=4.8,
+        ease="ease-in-out",
+        keys=[(0, {}), (70, {}), (80, {"sx": 0.2}), (90, {}), (100, {})],
+    ),
 }
 DELAYS = {"t2": -0.6, "t3": -1.2}
 
 
 def _transform(v: dict) -> str:
-    return (f"translate({v.get('tx', 0)}px,{v.get('ty', 0)}px) rotate({v.get('r', 0)}deg) "
-            f"scale({v.get('sx', 1)},{v.get('sy', 1)})")
+    return (
+        f"translate({v.get('tx', 0)}px,{v.get('ty', 0)}px) rotate({v.get('r', 0)}deg) "
+        f"scale({v.get('sx', 1)},{v.get('sy', 1)})"
+    )
 
 
 def _ease(e) -> str:
@@ -412,12 +553,15 @@ def build_css() -> str:
     out.append("@media (prefers-reduced-motion:no-preference){")
     for name, a in ANIM.items():
         direction = " alternate-reverse" if a.get("reverse") else " alternate" if a.get("alternate") else ""
-        out.append(f".moving .{name}{{animation:nl-{name} {a['dur']}s {_ease(a['ease'])} infinite{direction}}}")
+        out.append(
+            f".moving .{name}{{animation:nl-{name} {a['dur']}s {_ease(a['ease'])} infinite{direction}}}"
+        )
     out.append("".join(f".moving .{k}{{animation-delay:{v}s}}" for k, v in DELAYS.items()))
     out.append("}")
     for name, a in ANIM.items():
         frames = "".join(
-            f"{t}%{{transform:{_transform(v)}" + (f";opacity:{v['o']}" if "o" in v else "") + "}" for t, v in a["keys"]
+            f"{t}%{{transform:{_transform(v)}" + (f";opacity:{v['o']}" if "o" in v else "") + "}"
+            for t, v in a["keys"]
         )
         out.append(f"@keyframes nl-{name}{{{frames}}}")
     return "\n".join(out)
@@ -444,8 +588,7 @@ ICON_SIZE = (19, 18)  # the menu-bar icon, in points
 
 def build_js() -> str:
     poses = {
-        name: draw().replace('width="100%" height="100%"', 'width="100%"')
-        for name, draw in POSES.items()
+        name: draw().replace('width="100%" height="100%"', 'width="100%"') for name, draw in POSES.items()
     }
     poses["icon"] = (
         f'<svg viewBox="-64 -68 128 122" width="100%" aria-hidden="true">{head(0, 0, 1, "happy", cls="tilt")}</svg>'
@@ -487,8 +630,11 @@ def _layers(svg_text: str) -> tuple[list, list, str]:
         layers[-1]["parts"].append(opened + ET.tostring(leaf, encoding="unicode") + "</g>" * len(wrappers))
     view_box = root.get("viewBox")
     for layer in layers:
-        layer["svg"] = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="480" height="440">'
-                        + "".join(layer.pop("parts")) + "</svg>")
+        layer["svg"] = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="480" height="440">'
+            + "".join(layer.pop("parts"))
+            + "</svg>"
+        )
     return layers, groups, ET.tostring(root, encoding="unicode")
 
 
@@ -503,21 +649,88 @@ def _render_png(page, svg_text: str, width: int, height: int, target: Path) -> N
         "<html><head><style>html,body{margin:0;background:transparent}svg{display:block}</style></head>"
         f"<body>{svg_text}</body></html>"
     )
-    page.screenshot(path=str(target), omit_background=True, clip={"x": 0, "y": 0, "width": width, "height": height})
+    page.screenshot(
+        path=str(target), omit_background=True, clip={"x": 0, "y": 0, "width": width, "height": height}
+    )
 
 
-def build_rig(root: Path | None = None) -> dict:
+def _plan() -> tuple[dict, dict]:
+    """Everything about the rig that needs no browser: per pose its label, viewBox, pixel size, the SVG to measure,
+    its animated groups, and its layers (image name, chain, SVG, art hash); and the same for the menu-bar icon."""
+    poses = {}
+    for name, draw in POSES.items():
+        svg_text = draw().replace('width="100%" height="100%"', 'width="480" height="440"')
+        layers, groups, measured = _layers(svg_text)
+        label = svg_text.split('aria-label="', 1)[1].split('"', 1)[0]
+        view_box = [float(v) for v in svg_text.split('viewBox="', 1)[1].split('"', 1)[0].split()]
+        width, height = round(view_box[2] * SCALE), round(view_box[3] * SCALE)
+        planned = []
+        for index, layer in enumerate(layers):
+            layer_svg = layer["svg"].replace('width="480" height="440"', f'width="{width}" height="{height}"')
+            art = _art_hash(f"{width}x{height}:{layer_svg}")
+            planned.append(
+                {"chain": layer["chain"], "image": f"{name}-{index}", "svg": layer_svg, "art": art}
+            )
+        poses[name] = {
+            "label": label,
+            "viewBox": view_box,
+            "size": (width, height),
+            "measured": measured,
+            "groups": groups,
+            "layers": planned,
+        }
+    icon_w, icon_h = ICON_SIZE
+    icon_svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * SCALE}" '
+        f'height="{icon_h * SCALE}">{head(0, 0, 1, "happy", cls="")}</svg>'
+    )
+    size = (icon_w * SCALE, icon_h * SCALE)
+    icon = {
+        "image": "icon",
+        "svg": icon_svg,
+        "size": size,
+        "art": _art_hash(f"{size[0]}x{size[1]}:{icon_svg}"),
+    }
+    return poses, icon
+
+
+def _anims() -> dict:
+    return {
+        name: {
+            "dur": a["dur"],
+            "ease": list(EASE[a["ease"]] if isinstance(a["ease"], str) else a["ease"]),
+            "alternate": bool(a.get("alternate")),
+            "reverse": bool(a.get("reverse")),
+            "rest": a.get("rest", {}),
+            "keys": [{"t": t, **v} for t, v in a["keys"]],
+        }
+        for name, a in ANIM.items()
+    }
+
+
+def _vector_icon() -> str:
+    # The icon also stays vector (the Mac menu bar draws it crisply at any size); `iconImage` is the PNG for the iPad.
+    icon_w, icon_h = ICON_SIZE
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * 2}" '
+        f'height="{icon_h * 2}">{head(0, 0, 1, "happy", cls="")}</svg>'
+    )
+
+
+def build_rig(root: Path | None = None, force: bool = False) -> dict:
     """pip-rig.json: every pose as layers, each animated group's pivot and frame (measured in Chromium, like CSS
     transform-box: fill-box), and the keyframes. The app nests transforms like SVG does (eyelids ride on the head).
     Each layer is also drawn to PipLayers/<pose>-<index>.png. A layer's `art` is a hash of its SVG: a PNG is only
-    redrawn when its art changes, so the same artwork gives the same files on every machine."""
+    redrawn when its art changes (or with `force`), so the same artwork gives the same files on every machine."""
     from playwright.sync_api import sync_playwright
 
     root = root or Path(__file__).resolve().parents[2]
     previous: dict = {}
     try:
         old = json.loads((root / RIG).read_text(encoding="utf-8"))
-        previous = {layer.get("image"): layer.get("art") for pose in old["poses"].values() for layer in pose["layers"]}
+        previous = {
+            layer.get("image"): layer.get("art") for pose in old["poses"].values() for layer in pose["layers"]
+        }
         previous["icon"] = old.get("iconArt")
     except (OSError, ValueError, KeyError):  # no rig yet, or an older shape: draw everything
         pass
@@ -525,23 +738,20 @@ def build_rig(root: Path | None = None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     wanted: set[str] = set()
 
-    def draw_png(page, name: str, svg_text: str, width: int, height: int) -> str:
-        art = _art_hash(f"{width}x{height}:{svg_text}")
+    def draw_png(page, name: str, svg_text: str, size: tuple[int, int], art: str) -> None:
         target = out_dir / f"{name}.png"
         wanted.add(target.name)
-        if previous.get(name) != art or not target.exists():
-            _render_png(page, svg_text, width, height, target)
-        return art
+        if force or previous.get(name) != art or not target.exists():
+            _render_png(page, svg_text, size[0], size[1], target)
 
+    planned, icon = _plan()
     poses = {}
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        for name, draw in POSES.items():
+        for name, plan in planned.items():
             page.set_viewport_size({"width": 480, "height": 440})
-            svg_text = draw().replace('width="100%" height="100%"', 'width="480" height="440"')
-            layers, groups, measured = _layers(svg_text)
-            page.set_content(f"<html><body style='margin:0'>{measured}</body></html>")
+            page.set_content(f"<html><body style='margin:0'>{plan['measured']}</body></html>")
             boxes = page.evaluate("""() => {
                 const svg = document.querySelector('svg');
                 const toRoot = svg.getCTM().inverse();
@@ -552,53 +762,141 @@ def build_rig(root: Path | None = None) -> dict:
             }""")
             by_id = {b["id"]: b for b in boxes}
             chain_info = []
-            for g in groups:
+            for g in plan["groups"]:
                 b = by_id[g["id"]]
                 ox, oy = ANIM[g["anim"]]["origin"]
                 x, y, w, h = b["box"]
                 lx, ly = x + w * ox / 100, y + h * oy / 100
                 a_, b_, c_, d_, e_, f_ = b["m"]
                 pivot = [round(a_ * lx + c_ * ly + e_, 2), round(b_ * lx + d_ * ly + f_, 2)]
-                chain_info.append({"anim": g["anim"], "delay": g["delay"], "pivot": pivot,
-                                   "frame": [round(v, 4) for v in (a_, b_, c_, d_)]})
-            label = svg_text.split('aria-label="', 1)[1].split('"', 1)[0]
-            view_box = [float(v) for v in svg_text.split('viewBox="', 1)[1].split('"', 1)[0].split()]
-            width, height = round(view_box[2] * SCALE), round(view_box[3] * SCALE)
+                chain_info.append(
+                    {
+                        "anim": g["anim"],
+                        "delay": g["delay"],
+                        "pivot": pivot,
+                        "frame": [round(v, 4) for v in (a_, b_, c_, d_)],
+                    }
+                )
             rig_layers = []
-            for index, layer in enumerate(layers):
-                image = f"{name}-{index}"
-                layer_svg = layer["svg"].replace('width="480" height="440"', f'width="{width}" height="{height}"')
-                art = draw_png(page, image, layer_svg, width, height)
-                rig_layers.append({"chain": layer["chain"], "image": image, "art": art})
-            poses[name] = {"label": label, "viewBox": view_box, "groups": chain_info, "layers": rig_layers}
-        icon_w, icon_h = ICON_SIZE
-        icon_svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * SCALE}" '
-                    f'height="{icon_h * SCALE}">{head(0, 0, 1, "happy", cls="")}</svg>')
-        icon_art = draw_png(page, "icon", icon_svg, icon_w * SCALE, icon_h * SCALE)
+            for layer in plan["layers"]:
+                draw_png(page, layer["image"], layer["svg"], plan["size"], layer["art"])
+                rig_layers.append({"chain": layer["chain"], "image": layer["image"], "art": layer["art"]})
+            poses[name] = {
+                "label": plan["label"],
+                "viewBox": plan["viewBox"],
+                "groups": chain_info,
+                "layers": rig_layers,
+            }
+        draw_png(page, icon["image"], icon["svg"], icon["size"], icon["art"])
         browser.close()
     for stale in out_dir.glob("*.png"):
         if stale.name not in wanted:
             stale.unlink()
-    anims = {
-        name: {"dur": a["dur"], "ease": list(EASE[a["ease"]] if isinstance(a["ease"], str) else a["ease"]),
-               "alternate": bool(a.get("alternate")), "reverse": bool(a.get("reverse")), "rest": a.get("rest", {}),
-               "keys": [{"t": t, **v} for t, v in a["keys"]]}
-        for name, a in ANIM.items()
+    return {
+        "poses": poses,
+        "anims": _anims(),
+        "icon": _vector_icon(),
+        "iconImage": icon["image"],
+        "iconSize": list(ICON_SIZE),
+        "iconArt": icon["art"],
+        "scale": SCALE,
     }
-    # The icon also stays vector (the Mac menu bar draws it crisply at any size); `iconImage` is the PNG for the iPad.
-    icon = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="-64 -68 128 122" width="{icon_w * 2}" '
-            f'height="{icon_h * 2}">{head(0, 0, 1, "happy", cls="")}</svg>')
-    return {"poses": poses, "anims": anims, "icon": icon, "iconImage": "icon", "iconSize": [icon_w, icon_h],
-            "iconArt": icon_art, "scale": SCALE}
+
+
+def _png_size(path: Path) -> tuple[int, int] | None:
+    """Width and height from a PNG's header, or None when the file isn't a PNG."""
+    with path.open("rb") as f:
+        head_bytes = f.read(24)
+    if len(head_bytes) < 24 or head_bytes[:8] != b"\x89PNG\r\n\x1a\n" or head_bytes[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head_bytes[16:20], "big"), int.from_bytes(head_bytes[20:24], "big")
+
+
+def check(root: Path | None = None) -> list[str]:
+    """Problems with the committed artwork, found without a browser (so the same on every OS): the explainer
+    script must match, pip-rig.json's layers, art hashes, groups, keyframes, and icon must match the current
+    artwork, and every layer PNG it names must exist at the right size, with no stray PNGs. PNG bytes are not
+    compared (Chromium's encoder differs across systems); pivots need a browser, so the regenerate-and-diff step
+    covers them."""
+    root = root or Path(__file__).resolve().parents[2]
+    problems = []
+    js = build_js()
+    for relative in OUTPUTS:
+        path = root / relative
+        if not path.exists() or path.read_text(encoding="utf-8") != js:
+            problems.append(f"{relative} is out of date")
+    try:
+        rig = json.loads((root / RIG).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return [*problems, f"{RIG} can't be read ({error})"]
+    planned, icon = _plan()
+    out_dir = root / LAYERS
+    wanted = {f"{icon['image']}.png": icon["size"]}
+    if set(rig.get("poses", {})) != set(planned):
+        problems.append(f"{RIG} has poses {sorted(rig.get('poses', {}))}, the artwork has {sorted(planned)}")
+    for name, plan in planned.items():
+        pose = rig.get("poses", {}).get(name, {})
+        want_layers = [{"chain": x["chain"], "image": x["image"], "art": x["art"]} for x in plan["layers"]]
+        if pose.get("layers") != want_layers:
+            problems.append(f"{RIG}: pose '{name}' has different layers or art than the artwork")
+        got_groups = [(g.get("anim"), g.get("delay")) for g in pose.get("groups", [])]
+        if got_groups != [(g["anim"], g["delay"]) for g in plan["groups"]]:
+            problems.append(f"{RIG}: pose '{name}' has different animated groups than the artwork")
+        if pose.get("label") != plan["label"] or pose.get("viewBox") != plan["viewBox"]:
+            problems.append(f"{RIG}: pose '{name}' has a different label or viewBox")
+        wanted.update({f"{x['image']}.png": plan["size"] for x in plan["layers"]})
+    expected = {
+        "anims": _anims(),
+        "icon": _vector_icon(),
+        "iconImage": icon["image"],
+        "iconSize": list(ICON_SIZE),
+        "iconArt": icon["art"],
+        "scale": SCALE,
+    }
+    problems += [f"{RIG}: '{key}' is out of date" for key, value in expected.items() if rig.get(key) != value]
+    for file, size in sorted(wanted.items()):
+        path = out_dir / file
+        if not path.is_file():
+            problems.append(f"{LAYERS}/{file} is missing")
+        elif _png_size(path) != tuple(size):
+            problems.append(f"{LAYERS}/{file} is {_png_size(path)}, expected {tuple(size)}")
+    problems += [
+        f"{LAYERS}/{p.name} isn't in {RIG}" for p in sorted(out_dir.glob("*.png")) if p.name not in wanted
+    ]
+    return problems
 
 
 def main() -> None:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Regenerate Pip's artwork (see the top of this file).")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--force", action="store_true", help="redraw every layer PNG, even when its art is unchanged"
+    )
+    mode.add_argument(
+        "--check", action="store_true", help="write nothing; fail if the committed artwork is out of date"
+    )
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
+    if args.check:
+        problems = check(root)
+        for problem in problems:
+            print(f"✗ {problem}", file=sys.stderr)
+        if problems:
+            sys.exit(
+                "Pip's artwork is out of date: run `python design/pip/generate_pip.py` and commit the result."
+            )
+        print("Pip's artwork is up to date.")
+        return
     js = build_js()
     for relative in OUTPUTS:
         (root / relative).write_text(js, encoding="utf-8")
         print(f"wrote {relative}")
-    (root / RIG).write_text(json.dumps(build_rig(root), separators=(",", ":")), encoding="utf-8")
+    (root / RIG).write_text(
+        json.dumps(build_rig(root, force=args.force), separators=(",", ":")), encoding="utf-8"
+    )
     print(f"wrote {RIG} and {LAYERS}/")
 
 

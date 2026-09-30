@@ -3,9 +3,13 @@
 Run `python design/dmg/make_background.py` from the repo root (needs Playwright's Chromium, which `make setup` installs).
 It writes design/dmg/background.tiff (1x and 2x in one file); scripts/package-mac.sh lays out the window with dmgbuild
 using design/dmg/settings.py. Icon positions there must match APP and APPLICATIONS here. Never edit the TIFF by hand.
+It also writes design/dmg/background.tiff.input-sha256, a hash of what the picture is made from (the page below, with
+Pip's poses and the fonts inside, and this script); `--check` recomputes it without drawing anything and fails when
+the TIFF is stale.
 """
 
 import base64
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -19,6 +23,10 @@ WIDTH, HEIGHT = 660, 440
 APP = (165, 238)  # centres of the two icons (settings.py uses the same numbers)
 APPLICATIONS = (495, 238)
 FONTS = ROOT / "pipeline" / "neuralloop_books" / "assets" / "fonts"
+OUT = ROOT / "design" / "dmg" / "background.tiff"
+STAMP = (
+    ROOT / "design" / "dmg" / "background.tiff.input-sha256"
+)  # hash of the inputs the committed TIFF came from
 
 
 def font(family: str, weight: int, file: str) -> str:
@@ -73,14 +81,43 @@ h1{{font-family:Fredoka;font-weight:600;font-size:30px;margin:0;position:absolut
 
 
 def paw(x: float, y: float, rotate: float) -> str:
-    toes = "".join(f'<circle cx="{dx}" cy="{dy}" r="2.6"/>' for dx, dy in ((-6, -7), (-2, -10), (3, -10), (7, -7)))
+    toes = "".join(
+        f'<circle cx="{dx}" cy="{dy}" r="2.6"/>' for dx, dy in ((-6, -7), (-2, -10), (3, -10), (7, -7))
+    )
     return f'<g transform="translate({x} {y}) rotate({rotate})" fill="#F2B6A0"><ellipse cx="0" cy="0" rx="6" ry="5"/>{toes}</g>'
 
 
+def input_sha256() -> str:
+    """SHA-256 of everything the picture is drawn from: the page (Pip's poses, CSS, and fonts) and this script."""
+    digest = hashlib.sha256()
+    for name, data in (("page", page().encode()), ("script", Path(__file__).resolve().read_bytes())):
+        digest.update(f"{name}\0{len(data)}\0".encode() + data)
+    return digest.hexdigest()
+
+
+def check() -> list[str]:
+    problems = [] if OUT.is_file() else [f"{OUT.relative_to(ROOT)} is missing"]
+    recorded = STAMP.read_text().strip() if STAMP.is_file() else ""
+    if recorded != input_sha256():
+        problems.append(
+            f"{STAMP.relative_to(ROOT)} doesn't match Pip's poses, the fonts, and make_background.py"
+        )
+    return problems
+
+
 def main() -> None:
+    if "--check" in sys.argv[1:]:
+        problems = check()
+        for problem in problems:
+            print(f"✗ {problem}", file=sys.stderr)
+        if problems:
+            sys.exit(
+                "The disk image picture is out of date: run `python design/dmg/make_background.py` on a Mac."
+            )
+        print("The disk image picture is up to date.")
+        return
     from playwright.sync_api import sync_playwright
 
-    out = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
         browser = p.chromium.launch()
         shots = []
@@ -93,8 +130,9 @@ def main() -> None:
             shots.append(shot)
         browser.close()
         # One TIFF with both sizes: Finder picks the sharp one on Retina screens.
-        subprocess.run(["tiffutil", "-cathidpicheck", *map(str, shots), "-out", str(out / "background.tiff")], check=True)
-    print("wrote design/dmg/background.tiff")
+        subprocess.run(["tiffutil", "-cathidpicheck", *map(str, shots), "-out", str(OUT)], check=True)
+    STAMP.write_text(input_sha256() + "\n")
+    print(f"wrote {OUT.relative_to(ROOT)} and {STAMP.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

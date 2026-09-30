@@ -1,0 +1,8 @@
+# Ruff for the Python outside the pipeline package (scripts/, design/): the pipeline's own settings
+# (pipeline/pyproject.toml, line length 110), plus a few per-file exceptions. Files under pipeline/ still use
+# pipeline/pyproject.toml directly (Ruff picks the closest config). `make lint` runs Ruff over all three.
+extend = "pipeline/pyproject.toml"
+
+[lint.extend-per-file-ignores]
+"design/pip/generate_pip.py" = ["E501"]     # Pip's SVG artwork, one drawing per line
+"design/dmg/make_background.py" = ["E501"]  # the disk image window's HTML and CSS

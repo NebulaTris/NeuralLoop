@@ -7,8 +7,9 @@
 # Usage: scripts/build-runtime.sh [OUT_DIR]      (default: build/runtime)
 #        scripts/build-runtime.sh --stamp         (print the stamp for the current sources and exit)
 #
-# Everything downloaded is pinned and verified:
-# - Python: an exact patch version from uv's relocatable builds (PYTHON_VERSION).
+# What is downloaded, and how it is pinned:
+# - uv itself is not downloaded here: it must already be installed, at UV_MIN_VERSION or newer (checked below).
+# - Python: an exact patch version from uv's relocatable builds (PYTHON_VERSION), fetched and checked by uv.
 # - Python packages: scripts/runtime-requirements.txt, installed with --require-hashes. To refresh it
 #   (after changing pipeline/pyproject.toml, or to take updates), run from the repo root:
 #     MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile pipeline/pyproject.toml --extra anthropic \
@@ -17,6 +18,8 @@
 #   Keep --python-version equal to PYTHON_VERSION. MACOSX_DEPLOYMENT_TARGET matches the app's (14.0): without
 #   it uv assumes an older macOS, can't use current MLX wheels, and falls back to an old mlx-audio with torch.
 #   Every package must have a wheel (--only-binary below), so sdist build tools are never fetched unpinned.
+# - Chromium (explainer videos): the build the locked Playwright version names, downloaded by Playwright itself.
+#   Its version follows the lock, but this script has no checksum of its own for it.
 # - Ollama: OLLAMA_VERSION with the SHA-256 of ollama-darwin.tgz from that release's sha256sum.txt
 #   (https://github.com/ollama/ollama/releases/download/v<version>/sha256sum.txt), and the binary's
 #   Developer ID signature must belong to Ollama's team (OLLAMA_TEAM_ID). Update all three together.
@@ -31,6 +34,7 @@ PYTHON_VERSION="3.12.14"
 OLLAMA_VERSION="0.32.14"
 OLLAMA_SHA256="c7e8b91485943785bc6d295d96551e971ec94c6829d0d6b3500366942dc50cd1"
 OLLAMA_TEAM_ID="3MU9H2V9Y9" # Developer ID Application: Infra Technologies, Inc (Ollama)
+UV_MIN_VERSION="0.12.0"     # the oldest uv this script has been tested with
 LOCK="$ROOT/scripts/runtime-requirements.txt"
 MARKER=".neuralloop-runtime" # written into every runtime; OUT is only ever replaced when it has one
 
@@ -60,6 +64,11 @@ if [[ "$(uname -s)-$(uname -m)" != "Darwin-arm64" ]]; then
 fi
 if [[ ! -x "$UV" ]]; then
   echo "uv is needed to fetch a relocatable Python: https://docs.astral.sh/uv/" >&2
+  exit 1
+fi
+UV_VERSION="$("$UV" --version | awk '{print $2}')"
+if [[ "$(printf '%s\n%s\n' "$UV_MIN_VERSION" "$UV_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" != "$UV_MIN_VERSION" ]]; then
+  echo "uv $UV_VERSION is too old; this script needs uv $UV_MIN_VERSION or newer (uv self update)." >&2
   exit 1
 fi
 if [[ ! -f "$LOCK" ]]; then
@@ -92,7 +101,15 @@ DL="$(mktemp -d)"
 OLD=""
 cleanup() {
   rm -rf "$WORK" "$DL"
-  if [[ -n "$OLD" ]]; then rm -rf "$OLD"; fi
+  if [[ -n "$OLD" ]]; then
+    if [[ -e "$OUT" ]]; then
+      rm -rf "$OLD"
+    elif mv "$OLD" "$OUT"; then # the swap didn't finish: put the old runtime back rather than lose both
+      echo "The new runtime couldn't be moved into place; the old one is back at $OUT." >&2
+    else
+      echo "The new runtime couldn't be moved into place; the old one is still at $OLD." >&2
+    fi
+  fi
 }
 trap cleanup EXIT
 mkdir -p "$WORK"/{bin,pipeline,ollama}
@@ -168,7 +185,8 @@ find "$WORK" -name __pycache__ -type d -prune -exec rm -rf {} +
 echo "$STAMP" >"$WORK/.stamp"
 echo "NeuralLoop runtime built by scripts/build-runtime.sh; safe to delete." >"$WORK/$MARKER"
 
-# Swap it in: the old runtime is renamed aside first, so OUT is never half-written.
+# Swap it in: the old runtime is renamed aside first, so OUT is never half-written. If the second move fails (or
+# the script is stopped between the two), cleanup moves the old runtime back.
 if [[ -e "$OUT" ]]; then
   OLD="$(mktemp -d "$OUT.old.XXXXXX")"
   rmdir "$OLD"

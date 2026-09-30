@@ -15,13 +15,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with: { python-version: "3.12" }
-      - name: Set up (like `make setup`)
-        run: cd pipeline && python -m pip install -e ".[dev]" playwright && python -m playwright install --with-deps chromium
+      - name: Set up (`make setup`, with the hash-locked dev tools from scripts/dev-requirements.txt)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          make setup PY=python PLAYWRIGHT_FLAGS=--with-deps
       - name: Pip's generated files are up to date
         run: |
           python design/pip/generate_pip.py
-          git diff --exit-code
-      - run: make check
+          # Modified, deleted, and untracked files all count (git diff alone misses a new PNG nobody added).
+          changed="$(git status --porcelain -- apple/App/Resources pipeline/neuralloop_books/assets)"
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            echo "::error::Pip's artwork is stale: run 'make pip' and commit everything it writes."
+            exit 1
+          fi
+      - name: A full redraw of Pip gives every layer, at the right size
+        # Chromium on Linux doesn't encode PNGs byte for byte like a Mac, so only presence, sizes, and art hashes
+        # are compared; the committed PNGs are put back afterwards.
+        run: |
+          python design/pip/generate_pip.py --force
+          python design/pip/generate_pip.py --check
+          git checkout -- apple/App/Resources/PipLayers
+      - run: make check PY=python
 
   swift:
     runs-on: macos-15

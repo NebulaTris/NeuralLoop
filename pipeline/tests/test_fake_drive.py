@@ -58,3 +58,71 @@ def test_a_tampered_index_cannot_point_outside_the_store(drive, tmp_path):
     (tmp_path / "index.json").write_text(json.dumps({"../../secret": {"name": "x", "md5": "", "size": 1}}))
     module.load_index()
     assert module.FILES == {}
+
+
+def _upload(port: int, data: bytes, headers: dict | None = None) -> tuple[int, bytes]:
+    """Start a session, then PUT `data` with `headers` (a Content-Length there replaces the real one)."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request(
+        "POST", "/upload/drive/v3/files", body=b'{"name": "book"}', headers={"Host": "127.0.0.1"}
+    )
+    location = connection.getresponse().getheader("Location")
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.putrequest("PUT", location.split(str(port), 1)[1], skip_host=True, skip_accept_encoding=True)
+    connection.putheader("Host", "127.0.0.1")
+    for key, value in (headers if headers is not None else {"Content-Length": str(len(data))}).items():
+        connection.putheader(key, value)
+    connection.endheaders(data)
+    response = connection.getresponse()
+    return response.status, response.read()
+
+
+def test_uploads_are_stored_and_listed(drive, tmp_path):
+    _, port = drive
+    status, body = _upload(port, b"hello book")
+    assert status == 200
+    file_id = json.loads(body)["id"]
+    assert (tmp_path / file_id).read_bytes() == b"hello book"
+    assert not list(tmp_path.glob("*.part"))
+    assert _request(port, "GET", f"/drive/v3/files/{file_id}", host="127.0.0.1") == (200, b"hello book")
+
+
+def test_uploads_must_say_how_big_they_are(drive, tmp_path, monkeypatch):
+    module, port = drive
+    assert _upload(port, b"", headers={})[0] == 411
+    assert _upload(port, b"", headers={"Content-Length": "-5"})[0] == 400
+    assert _upload(port, b"", headers={"Content-Length": "lots"})[0] == 400
+    monkeypatch.setattr(module, "MAX_UPLOAD", 4)
+    assert _upload(port, b"too big")[0] == 413
+    assert module.FILES == {} and not [p for p in tmp_path.iterdir() if p.name != "index.json"]
+
+
+def test_files_are_never_read_or_written_through_symlinks(drive, tmp_path):
+    module, port = drive
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("private")
+    (tmp_path / "abc123").symlink_to(secret)
+    module.FILES["abc123"] = {"name": "x", "md5": "", "size": 7}
+    assert _request(port, "GET", "/drive/v3/files/abc123", host="127.0.0.1")[0] == 404
+    (tmp_path / "index.json").symlink_to(secret)
+    with pytest.raises(OSError):
+        module.load_index()
+    assert secret.read_text() == "private"
+
+
+def test_the_store_is_private_and_must_be_yours(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("fake_drive", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    store = module.prepare_store(tmp_path / "store")
+    assert store.is_dir() and (store.stat().st_mode & 0o777) == 0o700
+    (tmp_path / "open").mkdir(mode=0o755)
+    assert (module.prepare_store(tmp_path / "open").stat().st_mode & 0o777) == 0o700
+    (tmp_path / "link").symlink_to(store)
+    with pytest.raises(module.StoreError):
+        module.prepare_store(tmp_path / "link")
+    real_uid = module.os.getuid()
+    monkeypatch.setattr(module.os, "getuid", lambda: real_uid + 1)
+    with pytest.raises(module.StoreError):
+        module.prepare_store(store)
+    assert Path("/tmp/fake-drive") != module.DEFAULT_STORE

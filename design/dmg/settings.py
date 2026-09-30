@@ -11,7 +11,8 @@ format = "ULFO"
 filesystem = "HFS+"
 files = [application]
 symlinks = {"Applications": "/Applications"}
-# No hide_extensions: it sets Finder info on the app, which breaks strict signature checks (Finder hides ".app" anyway).
+# No hide_extensions: it sets Finder info on the app, which breaks strict signature checks
+# (Finder hides ".app" anyway).
 icon_locations = {
     os.path.basename(application): (165, 238),
     "Applications": (495, 238),
@@ -19,7 +20,7 @@ icon_locations = {
 }
 background = os.path.join(here, "background.tiff")
 
-window_rect = ((200, 140), (660, 468))  # the height includes the title bar; the picture is 660 × 440
+window_rect = ((200, 140), (660, 468))  # the height includes the title bar; the picture is 660 x 440
 default_view = "icon-view"
 show_status_bar = False
 show_tab_view = False

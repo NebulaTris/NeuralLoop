@@ -7,6 +7,12 @@
 # After the DMG is made, it is checked like a download: mounted, copied out, quarantined, marked approved the
 # way "Open Anyway" does, and the bundled runtime's dry run must pass from that copy.
 #
+# dmgbuild (which lays out the disk image window) is installed into a throwaway virtual environment from
+# scripts/dmg-requirements.txt with --require-hashes. To change its version, edit scripts/dmg-requirements.in and run
+# from the repo root:
+#   uv pip compile scripts/dmg-requirements.in --generate-hashes --python-version 3.12 \
+#     --python-platform aarch64-apple-darwin --only-binary :all: -o scripts/dmg-requirements.txt
+#
 # Usage: scripts/package-mac.sh            (writes dist/NeuralLoop-<version>.dmg)
 set -euo pipefail
 
@@ -15,10 +21,10 @@ RUNTIME="$ROOT/build/runtime"
 DERIVED="$ROOT/apple/build/release"
 DIST="$ROOT/dist"
 
-SMOKE="" CHECK="" MOUNT=""
+SMOKE="" CHECK="" MOUNT="" DMGENV=""
 cleanup() {
   if [[ -n "$MOUNT" ]]; then hdiutil detach "$MOUNT" -quiet -force >/dev/null 2>&1 || true; fi
-  rm -rf "$SMOKE" "$CHECK"
+  rm -rf "$SMOKE" "$CHECK" "$DMGENV"
   if [[ -n "$MOUNT" ]]; then rmdir "$MOUNT" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
@@ -76,8 +82,11 @@ echo "• Disk image (Pip's drag-to-Applications window: design/dmg)"
 mkdir -p "$DIST"
 DMG="$DIST/NeuralLoop-$VERSION.dmg"
 rm -f "$DMG"
-UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
-"$UV" tool run --quiet --from "dmgbuild==1.6.7" dmgbuild -s "$ROOT/design/dmg/settings.py" \
+DMGENV="$(mktemp -d)"
+"$RUNTIME/python/bin/python3" -m venv "$DMGENV/venv"
+"$DMGENV/venv/bin/python" -m pip install --quiet --no-cache-dir --disable-pip-version-check \
+  --require-hashes --only-binary :all: -r "$ROOT/scripts/dmg-requirements.txt"
+"$DMGENV/venv/bin/python" -m dmgbuild -s "$ROOT/design/dmg/settings.py" \
   -D app="$APP" -D here="$ROOT/design/dmg" "NeuralLoop" "$DMG" >/dev/null
 
 echo "• Checking the disk image like a download"
