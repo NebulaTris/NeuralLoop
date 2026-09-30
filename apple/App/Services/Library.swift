@@ -53,7 +53,13 @@ final class Library {
     @ObservationIgnored private var runs: [String: PipelineRunner] = [:]
     @ObservationIgnored private var records: [String: RunRecord] = Library.loadRecords()
     @ObservationIgnored private var usageCheckedAt = Date.distantPast
+    /// Runs stopped on purpose (the book was removed): their ending isn't a failure to record or announce.
+    @ObservationIgnored private var stopping: Set<String> = []
+    /// Books whose source file is still being copied in (they show as getting started).
+    @ObservationIgnored private var adding: Set<String> = []
     #endif
+    /// Books on their way out (waiting for a run to stop before the folder goes): off the shelf, never resumed.
+    @ObservationIgnored private var removing: Set<String> = []
     @ObservationIgnored private var scanned: [String: Scanned] = [:]
     /// What each book looked like when notifications were last worked out; separate from `entries`, which live progress
     /// lines update early, so "chapter ready" is never missed.
@@ -113,6 +119,7 @@ final class Library {
     func start() {
         guard !started else { return }
         started = true
+        try? FileManager.default.removeItem(at: Self.incoming)  // copies a previous launch didn't finish
         Task {
             while !Task.isCancelled {
                 await refresh()
@@ -122,10 +129,11 @@ final class Library {
     }
     #endif
 
-    /// True while this app is running the pipeline for a book (the Mac; the iPad never prepares books).
+    /// True while this app is running the pipeline for a book, or copying it in to start (the Mac; the iPad never
+    /// prepares books).
     private func runningHere(_ id: String) -> Bool {
         #if os(macOS)
-        runs[id] != nil
+        runs[id] != nil || adding.contains(id)
         #else
         false
         #endif
@@ -147,7 +155,8 @@ final class Library {
         } while refreshAgain
     }
 
-    private func apply(_ fresh: [Scanned]) {
+    private func apply(_ all: [Scanned]) {
+        let fresh = all.filter { !removing.contains($0.id) }
         scanned = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
         let updated = fresh.map { item -> BookEntry in
             let running = runningHere(item.id)
@@ -287,42 +296,75 @@ final class Library {
     /// Where books added on a device that can't prepare them wait for the Mac (sync uploads them to Drive's inbox/).
     nonisolated static let inbox: URL = root.deletingLastPathComponent().appendingPathComponent("inbox", isDirectory: true)
 
-    /// The iPad's "Add a book": keep a copy in inbox/ with a {title, addedAt} sidecar, for the Mac to prepare.
     // MARK: removing books
 
-    /// Removes a book from this device (its folder goes to the Trash) and, through sync, from every device.
+    /// Removes a book from this device (its folder goes to the Trash) and, through sync, from every device. A run
+    /// preparing it is stopped first (this app's own, or one started elsewhere that holds the book's lock).
     func removeBook(_ id: String) {
         guard BookID.isValid(id), let entry = entry(id) else { return }
-        #if os(macOS)
-        runs[id]?.stop()
-        runs[id] = nil
-        #endif
-        forget(entry.folder)
+        letGo(id, folder: entry.folder)
         DriveSync.shared.removed(book: id)
-        if path.contains(id) { path.removeAll() }
-        reload()
     }
 
-    /// Every book goes: folders to the Trash, books waiting in the inbox, and how their runs ended.
+    /// Every book goes: folders to the Trash, books waiting in the inbox (here and in the Drive), and how runs ended.
     func removeAllBooks() {
         for entry in entries { removeBook(entry.id) }
-        forget(DriveSync.root.appendingPathComponent("inbox", isDirectory: true))
+        DriveSync.shared.forgetInbox()
+        forget(Self.inbox)
         #if os(macOS)
         try? FileManager.default.removeItem(at: Self.recordsFile)
         records = [:]
         #endif
     }
 
-    /// Another device removed this book: stop preparing it and let the folder go here too.
+    /// Another device removed this book: stop preparing it and let the folder go here too. Sync asks again every time
+    /// while the folder is still here, so a removal that didn't finish is retried.
     func removedElsewhere(_ id: String) {
-        guard BookID.isValid(id) else { return }
-        #if os(macOS)
-        runs[id]?.stop()
-        runs[id] = nil
-        #endif
-        forget(Self.root.appendingPathComponent(id, isDirectory: true))
-        reload()
+        guard BookID.isValid(id), !removing.contains(id) else { return }
+        letGo(id, folder: Self.root.appendingPathComponent(id, isDirectory: true))
     }
+
+    /// Off the shelf now; the folder goes once any run preparing the book has stopped (or after a few seconds).
+    private func letGo(_ id: String, folder: URL) {
+        removing.insert(id)
+        if path.contains(id) { path.removeAll() }
+        entries.removeAll { $0.id == id }
+        MediaCenter.shared.forget(folder: folder)  // its podcast or video stops, and the lock screen lets go
+        #if os(macOS)
+        if let run = runs[id] {
+            stopping.insert(id)
+            run.stop()
+        } else {
+            Self.stopRunElsewhere(folder)
+        }
+        #endif
+        Task {
+            #if os(macOS)
+            await Task.detached(priority: .userInitiated) { await Self.waitUntilUnlocked(folder, seconds: 3) }.value
+            #endif
+            forget(folder)
+            removing.remove(id)
+            reload()
+        }
+    }
+
+    #if os(macOS)
+    /// A run this app didn't start (the command line, or before a relaunch): its process id is in `.running`, trusted
+    /// only while that run holds the lock on it.
+    nonisolated private static func stopRunElsewhere(_ folder: URL) {
+        guard runningElsewhere(folder),
+              let text = try? String(contentsOf: folder.appendingPathComponent(".running"), encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 1, pid != getpid()
+        else { return }
+        kill(pid, SIGTERM)
+    }
+
+    /// Waits (off the main thread) until no run holds the book's lock, for at most `seconds`.
+    nonisolated private static func waitUntilUnlocked(_ folder: URL, seconds: Double) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while runningElsewhere(folder), Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
+    }
+    #endif
 
     /// To the Trash when there is one (so a slip can be undone), otherwise removed.
     private func forget(_ folder: URL) {
@@ -343,27 +385,53 @@ final class Library {
         return total
     }
 
+    /// Where a book added on the iPad is copied before it goes into the inbox (sync never looks here, so it never
+    /// sends half a file).
+    nonisolated static let incoming: URL = root.deletingLastPathComponent().appendingPathComponent("incoming", isDirectory: true)
+
+    /// The iPad's "Add a book": keep a copy in inbox/ with a {title, addedAt} sidecar, for the Mac to prepare. The copy
+    /// is made off the main thread under incoming/, the sidecar written first, then the book moved into inbox/ whole.
     func addToInbox(_ file: URL) {
         guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
             message = "Pip can read PDF and EPUB books."
             return
         }
         let title = file.deletingPathExtension().lastPathComponent
-        let scoped = file.startAccessingSecurityScopedResource()  // a file picked in Files
-        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
-        let fm = FileManager.default
         let id = UUID().uuidString.lowercased()
-        let copy = Self.inbox.appendingPathComponent("\(id).\(file.pathExtension.lowercased())")
+        let ext = file.pathExtension.lowercased()
+        let staged = Self.incoming.appendingPathComponent("\(id).\(ext)")
+        let scoped = file.startAccessingSecurityScopedResource()  // a file picked in Files
+        try? FileManager.default.createDirectory(at: Self.incoming, withIntermediateDirectories: true)
+        // Instant when the file is already on this device (a hard link), so a caller may tidy its own copy right after.
+        let linked = (try? FileManager.default.linkItem(at: file, to: staged)) != nil
+        Task {
+            let copied = linked ? true : await Task.detached(priority: .userInitiated) {
+                (try? FileManager.default.copyItem(at: file, to: staged)) != nil
+            }.value
+            if scoped { file.stopAccessingSecurityScopedResource() }
+            let added = copied ? await Task.detached(priority: .userInitiated) { Self.moveIntoInbox(staged, id: id, ext: ext, title: title) }.value : false
+            if added {
+                message = "Your Mac will prepare “\(title)” the next time it syncs."
+            } else {
+                try? FileManager.default.removeItem(at: staged)
+                message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file has finished downloading, then try again."
+            }
+        }
+    }
+
+    /// The sidecar first, then the book file moved in whole (same volume, so it's one rename).
+    nonisolated private static func moveIntoInbox(_ staged: URL, id: String, ext: String, title: String) -> Bool {
+        let fm = FileManager.default
+        let sidecar = inbox.appendingPathComponent("\(id).json")
         do {
-            try fm.createDirectory(at: Self.inbox, withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: copy)
-            let sidecar: [String: Any] = ["title": title, "addedAt": Date().timeIntervalSince1970 * 1000]
-            try JSONSerialization.data(withJSONObject: sidecar, options: [.sortedKeys])
-                .write(to: Self.inbox.appendingPathComponent("\(id).json"), options: .atomic)
-            message = "Your Mac will prepare “\(title)” the next time it syncs."
+            try fm.createDirectory(at: inbox, withIntermediateDirectories: true)
+            let details: [String: Any] = ["title": title, "addedAt": Date().timeIntervalSince1970 * 1000]
+            try JSONSerialization.data(withJSONObject: details, options: [.sortedKeys]).write(to: sidecar, options: .atomic)
+            try fm.moveItem(at: staged, to: inbox.appendingPathComponent("\(id).\(ext)"))
+            return true
         } catch {
-            try? fm.removeItem(at: copy)
-            message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file has finished downloading, then try again."
+            try? fm.removeItem(at: sidecar)
+            return false
         }
     }
 
@@ -373,7 +441,7 @@ final class Library {
     /// from the person first (setup, a readable book) or keeps failing (then it backs off).
     func resumeUnfinished() {
         let now = Date().timeIntervalSince1970 * 1000
-        for item in scanned.values where runs[item.id] == nil && item.elsewhere == nil {
+        for item in scanned.values where runs[item.id] == nil && item.elsewhere == nil && !adding.contains(item.id) {
             guard let book = item.book,
                   AutoResume.hasWork(book, usage: usage, logModified: item.logModified, now: now),
                   AutoResume.mayStart(after: records[item.id], settingsChangedAt: AISettings.changedAt, now: now),
@@ -385,33 +453,66 @@ final class Library {
         }
     }
 
-    /// A book added on another device, just arrived from the Drive inbox: prepare it like a dropped book. Returns true
-    /// once it's on the shelf (so sync can take it out of the inbox).
-    func addFromInbox(_ file: URL, title: String?) -> Bool { add(file, title: title) }
-
-    @discardableResult
-    func add(_ file: URL, practice: Bool = false, title: String? = nil) -> Bool {
-        guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
-            message = "Pip can read PDF and EPUB books."
+    /// A book added on another device, waiting in the inbox: prepare it like a dropped book. Returns true once it's on
+    /// the shelf (so sync can take it out of the inbox); the copy is quick (same disk) and done before answering.
+    func addFromInbox(_ file: URL, title: String?) -> Bool {
+        guard let (id, folder, copy) = newBook(file, title: title) else { return false }
+        guard Self.copySource(file, to: copy) else {
+            couldNotCopy(file, folder: folder)
             return false
         }
-        let taken = Set(entries.map(\.id)).union(DriveSync.shared.removedBooks)  // never reuse a removed book's id
+        startNew(id, folder: folder, copy: copy, original: file, practice: false)
+        return true
+    }
+
+    /// A dropped or picked book: the copy is made off the main thread (it may be big, or on another disk), then Pip
+    /// starts preparing it. Returns false only when it isn't a book Pip can read.
+    @discardableResult
+    func add(_ file: URL, practice: Bool = false, title: String? = nil) -> Bool {
+        guard let (id, folder, copy) = newBook(file, title: title) else { return false }
+        adding.insert(id)
+        reload()
+        Task {
+            let copied = await Task.detached(priority: .userInitiated) { Self.copySource(file, to: copy) }.value
+            adding.remove(id)
+            if copied { startNew(id, folder: folder, copy: copy, original: file, practice: practice) } else { couldNotCopy(file, folder: folder) }
+        }
+        return true
+    }
+
+    /// A fresh id (never one on disk, on the shelf, or removed on any device) and its folder.
+    private func newBook(_ file: URL, title: String?) -> (id: String, folder: URL, copy: URL)? {
+        guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
+            message = "Pip can read PDF and EPUB books."
+            return nil
+        }
+        let onDisk = ((try? FileManager.default.contentsOfDirectory(atPath: Self.root.path)) ?? [])
+        let taken = Set(entries.map(\.id)).union(DriveSync.shared.removedBooks).union(onDisk).union(adding).union(removing)
         let id = BookID.unique(base: BookID.slug(title ?? file.deletingPathExtension().lastPathComponent), taken: taken)
         let folder = Self.root.appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Keep our own copy: the book still works if the original moves, and later runs never need to reach into
         // Desktop or Documents (which macOS guards with a permission prompt).
-        let copy = folder.appendingPathComponent("source.\(file.pathExtension.lowercased())")
-        if (try? FileManager.default.copyItem(at: file, to: copy)) == nil {
-            message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file isn't still downloading, then try again."
-            return false
-        }
-        let meta: [String: Any] = ["path": copy.path, "originalPath": file.path, "addedAt": Date().timeIntervalSince1970 * 1000,
+        return (id, folder, folder.appendingPathComponent("source.\(file.pathExtension.lowercased())"))
+    }
+
+    nonisolated private static func copySource(_ file: URL, to copy: URL) -> Bool {
+        (try? FileManager.default.copyItem(at: file, to: copy)) != nil
+    }
+
+    /// No ghost books: the folder made for it goes again.
+    private func couldNotCopy(_ file: URL, folder: URL) {
+        try? FileManager.default.removeItem(at: folder)
+        message = "Pip couldn't copy “\(file.lastPathComponent)”. Check that the file isn't still downloading, then try again."
+        reload()
+    }
+
+    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool) {
+        let meta: [String: Any] = ["path": copy.path, "originalPath": original.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
         prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice))
         reload()
-        return true
     }
 
     /// Podcasts and videos for every chapter, and another try for anything that failed. Remembered, so later automatic
@@ -472,6 +573,11 @@ final class Library {
     }
 
     private func finished(_ id: String, code: Int32, tail: [String]) {
+        if stopping.remove(id) != nil {  // stopped on purpose (removed): not a failure
+            runs[id] = nil
+            reload()
+            return
+        }
         runs[id] = nil
         let alreadyRunning = tail.contains { $0.contains("already being prepared") }
         if !alreadyRunning {

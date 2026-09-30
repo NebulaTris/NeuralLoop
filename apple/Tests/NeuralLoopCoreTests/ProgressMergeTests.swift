@@ -74,3 +74,79 @@ func progress(_ json: String) throws -> StudyProgress {
     let merged = StudyProgress.merged([ipad, mac])  // order of files doesn't matter
     #expect(merged.last == Resume(n: 2, stage: "prime") && merged.mapSeen == [1, 2] && merged.updatedAt == 200)
 }
+
+// Every quiz, recall, remake, map position, and "where you left off" carries its own time (stamps), so a device that
+// saves an older merged view never rolls back what another device did later.
+@Test func aStaleSessionsSaveDoesNotRollBackAnotherDevicesNewerWork() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    // The Mac opened the book at t=1000 and keeps that view in memory.
+    var mac = StudyProgress()
+    mac.setQuiz("3", .object(["i": .number(1)]), now: 500)
+    mac.setRemake("2", .object(["guess": .string("old")]), now: 500)
+    mac.setLast(Resume(n: 1, stage: "read"), now: 500)
+    mac.log = ["2026-09-29": 60]
+    ProgressFile.save(mac, ownLog: mac.log, to: folder)
+    let session = ProgressFile.loadMerged(from: folder)
+    // Meanwhile the iPad did more (its file arrives through sync).
+    var ipad = session.merged
+    ipad.log = ["2026-09-29": 30]
+    ipad.setQuiz("3", .object(["i": .number(4)]), now: 2000)
+    ipad.setRemake("2", .object(["guess": .string("new")]), now: 2000)
+    ipad.setLast(Resume(n: 2, stage: "recall"), now: 2000)
+    ipad.setMapPos("k1", [5, 6], now: 2000)
+    try JSONEncoder().encode(ipad).write(to: folder.appendingPathComponent("devices/ipad1.json"))
+    // The stale Mac session changes something else later and saves its whole (old) view.
+    var stale = session.merged
+    stale.setQuiz("5", .object(["i": .number(2)]), now: 3000)
+    stale.setMapPos("k1", [1, 1], now: 100)
+    ProgressFile.save(stale, ownLog: session.own.log, to: folder)
+
+    for merged in [ProgressFile.loadMerged(from: folder).merged,
+                   StudyProgress.merged([ipad, ProgressFile.load(from: folder)])] {  // as the iPad sees it
+        #expect(merged.quiz["3"] == .object(["i": .number(4)]) && merged.quiz["5"] == .object(["i": .number(2)]))
+        #expect(merged.remake["2"] == .object(["guess": .string("new")]))
+        #expect(merged.last == Resume(n: 2, stage: "recall") && merged.mapPos["k1"] == [5, 6])
+        #expect(merged.log == ["2026-09-29": 90])
+    }
+    #expect(ProgressFile.load(from: folder).log == ["2026-09-29": 60])  // own study time only
+}
+
+@Test func mergingIsIdempotentAndOrderFree() throws {
+    var a = StudyProgress(), b = StudyProgress()
+    a.setQuiz("1", .string("a"), now: 10); a.setLast(Resume(n: 1, stage: "read"), now: 40); a.log = ["d": 10]
+    b.setQuiz("1", .string("b"), now: 20); b.setRemake("1", .string("b"), now: 5); b.log = ["d": 5]
+    b.setLast(Resume(n: 3, stage: "map"), now: 30)
+    let once = StudyProgress.merged([a, b])
+    var saved = once
+    saved.log = a.log  // what device a writes back
+    #expect(StudyProgress.merged([saved, b]) == once && StudyProgress.merged([b, saved]) == once)
+    #expect(StudyProgress.merged([b, a]) == once)
+    #expect(once.quiz["1"] == .string("b") && once.last == Resume(n: 1, stage: "read") && once.log == ["d": 15])
+}
+
+@Test func stampsRoundTripAndOldFilesHaveNone() throws {
+    let old = try progress(#"{"quiz":{"1":{"i":1}},"updatedAt":5}"#)
+    #expect(old.stamps.isEmpty)
+    let odd = try progress(#"{"stamps":{"quiz.1":7,"bad":"x"}}"#)
+    #expect(odd.stamps == ["quiz.1": 7])
+    var p = StudyProgress()
+    p.setQuiz("2", .bool(true), now: 9)
+    #expect(try JSONDecoder().decode(StudyProgress.self, from: JSONEncoder().encode(p)) == p)
+    #expect(p.stamps == ["quiz.2": 9] && p.updatedAt == 9)
+}
+
+@Test func theDevicesSignatureChangesWhenAnotherDevicesFileDoes() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let empty = ProgressFile.devicesSignature(in: folder)
+    try Data("{}".utf8).write(to: folder.appendingPathComponent("devices/ipad1.json"))
+    let one = ProgressFile.devicesSignature(in: folder)
+    #expect(one != empty && ProgressFile.devicesSignature(in: folder) == one)
+    try Data(#"{"log":{}}"#.utf8).write(to: folder.appendingPathComponent("devices/ipad1.json"))
+    #expect(ProgressFile.devicesSignature(in: folder) != one)
+    try Data("{}".utf8).write(to: folder.appendingPathComponent("progress.json"))  // our own file doesn't count
+    #expect(ProgressFile.devicesSignature(in: folder) == ProgressFile.devicesSignature(in: folder))
+}

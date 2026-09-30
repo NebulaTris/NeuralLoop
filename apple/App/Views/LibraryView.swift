@@ -409,7 +409,7 @@ struct ResumeCard: View {
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     if let audio = chapter.audio, let url = BookFiles.url(audio, in: entry.folder), FileManager.default.fileExists(atPath: url.path) {
-                        PodcastControls(url: url, compact: true).frame(maxWidth: 300)
+                        PodcastControls(url: url, compact: true, title: chapter.title, artist: entry.title).frame(maxWidth: 300)
                     }
                 }
                 .padding(.top, 4)
@@ -497,10 +497,18 @@ struct YearLog: View {
         return kept
     }
 
-    static func pretty(_ key: String) -> String {
+    /// One parser for every square (a DateFormatter is costly to make, and the grid has 371 of them).
+    private static let parser: DateFormatter = {
         let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.calendar = Calendar(identifier: .gregorian)
         parser.dateFormat = "yyyy-MM-dd"
+        return parser
+    }()
+    private static let dayStyle = Date.FormatStyle.dateTime.month(.abbreviated).day()
+
+    static func pretty(_ key: String) -> String {
         guard let date = parser.date(from: key) else { return key }
-        return date.formatted(.dateTime.month(.abbreviated).day())
+        return date.formatted(dayStyle)
     }
 }

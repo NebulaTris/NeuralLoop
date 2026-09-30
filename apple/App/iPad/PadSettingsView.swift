@@ -4,7 +4,11 @@
 import SwiftUI
 
 struct ProfileButton: View {
+    #if DEBUG
     @State private var open = UserDefaults.standard.bool(forKey: "NLOpenSettings")  // development: `-NLOpenSettings YES`
+    #else
+    @State private var open = false
+    #endif
 
     var body: some View {
         Button { open = true } label: { Avatar(email: DriveAccount.shared.email, size: 30) }

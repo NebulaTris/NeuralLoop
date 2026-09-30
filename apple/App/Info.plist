@@ -29,7 +29,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.education</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>© 2026 NeuralLoop · MIT</string>
+	<string>© 2026 Shambhavi Mishra. Source-available under PolyForm Noncommercial 1.0.0.</string>
 	<key>NeuralLoopRepo</key>
 	<string>$(NEURALLOOP_REPO)</string>
 </dict>

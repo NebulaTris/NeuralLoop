@@ -34,7 +34,8 @@ struct NeuralLoopApp: App {
         Settings {
             SettingsView().environment(settings).environment(library)
         }
-        // Development: `-NLPipSheet YES` shows every pose, animated, for checking Pip's artwork and motion.
+        #if DEBUG
+        // Development only (never in a Release build): `-NLPipSheet YES` shows every pose, animated, for checking Pip's artwork and motion.
         Window("Pip", id: "pip-sheet") {
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(200), spacing: 16), count: 4), spacing: 16) {
                 ForEach(PipPose.allCases, id: \.self) { pose in
@@ -53,6 +54,7 @@ struct NeuralLoopApp: App {
             QuickPanel().environment(library).environment(settings)
         }
         .windowResizability(.contentSize)
+        #endif
         MenuBarExtra {
             QuickPanel().environment(library).environment(settings)
         } label: {
@@ -74,7 +76,7 @@ struct RootView: View {
         NavigationStack(path: $library.path) {
             LibraryView()
                 .navigationDestination(for: String.self) { id in
-                    if let entry = library.entry(id) { BookView(entry: entry) }
+                    if let entry = library.entry(id) { BookView(entry: entry) } else { BookGoneView() }
                 }
         }
         .background(Theme.paper)
@@ -82,8 +84,9 @@ struct RootView: View {
         // First things first: move into Applications (when running from Downloads or the disk image), then the welcome.
         .sheet(isPresented: $movingIn) { MoveInView() }
         .sheet(isPresented: Binding(get: { !welcomed && !movingIn }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
-        // Development: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
+        // Development builds only: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {
+            #if DEBUG
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
             if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
@@ -92,6 +95,7 @@ struct RootView: View {
                 try? await Task.sleep(for: .seconds(1))
                 library.path = [id]
             }
+            #endif
         }
     }
 }

@@ -44,3 +44,34 @@ private func edge(_ a: String, _ b: String) -> KnowledgeGraph.Edge {
     #expect(one.nodes.map(\.id) == ["c1:a", "c1:b"] && one.edges.count == 1 && one.tour.map(\.nodeIds) == [["c1:a"]])
     #expect(graph.only(chapters: [2]).tour.map(\.nodeIds) == [["c2:c"]] && graph.nodes[0].group == "Basics")
 }
+
+@Test func repeatedIdeaIdsKeepTheFirstAndDropBrokenLinks() throws {
+    let json = #"""
+    {"nodes":[{"id":"a","name":"First A","chapter":1},{"id":"b","name":"B","chapter":1},{"id":"a","name":"Second A","chapter":2}],
+     "edges":[{"source":"a","target":"b"},{"source":"a","target":"gone"},{"source":"ghost","target":"b"}],
+     "tour":[{"title":"Real","nodeIds":["a","gone"]},{"title":"Empty","nodeIds":["gone"]}]}
+    """#
+    let graph = try JSONDecoder().decode(KnowledgeGraph.self, from: Data(json.utf8))
+    #expect(graph.nodes.map(\.id) == ["a", "b"])
+    #expect(graph.nodes.first?.name == "First A")
+    #expect(graph.edges.count == 1)
+    #expect(graph.tour.map(\.title) == ["Real"] && graph.tour.first?.nodeIds == ["a"])
+    #expect(graph.only(chapters: [1]).nodes.count == 2)
+}
+
+@Test func layoutToleratesRepeatedIds() {
+    let layout = GraphLayout.layout(ids: ["a", "b", "a"], edges: [edge("a", "b")], anchors: ["a": Point(0, 0)],
+                                    fixed: [:], radius: ["a": 12])
+    #expect(layout.count == 2)
+}
+
+@Test func aBigMapLaysOutQuicklyWithFinitePositions() {
+    let ids = (0..<600).map { "n\($0)" }
+    let edges = (1..<600).map { edge("n\($0)", "n\(($0 * 7) % $0)") }
+    let anchors = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, GraphLayout.sproutPoint($0 / 50, center: Point(0, 0))) })
+    let start = Date()
+    let layout = GraphLayout.layout(ids: ids, edges: edges, anchors: anchors)
+    #expect(Date().timeIntervalSince(start) < 3)
+    #expect(layout.count == 600)
+    #expect(layout.values.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+}

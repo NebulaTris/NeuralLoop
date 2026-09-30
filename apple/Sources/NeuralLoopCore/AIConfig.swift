@@ -37,10 +37,12 @@ public struct AIConfig: Codable, Equatable, Sendable {
     public var voices = ["Ira", "Zoya"]
     public var voiceQuality: VoiceQuality = .fast
     public var audioLength: AudioLength = .auto
+    /// Hermes Agent can act on this Mac with its own tools; book text could steer it. Off unless the person turns it on.
+    public var hermesTools = false
 
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case engine, make, tasks, recall, voices, voiceQuality, audioLength }
+    enum CodingKeys: String, CodingKey { case engine, make, tasks, recall, voices, voiceQuality, audioLength, hermesTools }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = AIConfig()
@@ -52,6 +54,7 @@ public struct AIConfig: Codable, Equatable, Sendable {
         voices = v.count == 2 ? v : d.voices
         voiceQuality = (try? c.decodeIfPresent(VoiceQuality.self, forKey: .voiceQuality)) ?? d.voiceQuality
         audioLength = (try? c.decodeIfPresent(AudioLength.self, forKey: .audioLength)) ?? d.audioLength
+        hermesTools = (try? c.decodeIfPresent(Bool.self, forKey: .hermesTools)) ?? false
     }
 }
 

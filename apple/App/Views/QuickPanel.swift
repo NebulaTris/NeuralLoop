@@ -61,7 +61,7 @@ struct QuickPanel: View {
             }
             if let resume = summary.resume, resume.chapter.audio != nil || resume.chapter.video != nil
                 || [.working, .waiting].contains(resume.chapter.status["video"]) {
-                PanelMedia(folder: resume.entry.folder, chapter: resume.chapter)
+                PanelMedia(folder: resume.entry.folder, chapter: resume.chapter, bookTitle: resume.entry.title)
             }
             if summary.dueCards > 0 {
                 PanelButton(icon: "rectangle.stack.fill", title: "Review \(summary.dueCards) card\(summary.dueCards == 1 ? "" : "s")",
@@ -100,9 +100,9 @@ struct QuickPanel: View {
                 Button("Add a book") { open(nil); library.isPicking = true }
                 Spacer()
                 Button { openSettings(); NSApp.activate(ignoringOtherApps: true) } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.borderless).help("Settings")
+                    .buttonStyle(.borderless).help("Settings").accessibilityLabel("Settings")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
-                    .buttonStyle(.borderless).help("Quit NeuralLoop")
+                    .buttonStyle(.borderless).help("Quit NeuralLoop").accessibilityLabel("Quit NeuralLoop")
             }
         }
         .padding(16)
@@ -134,13 +134,14 @@ struct QuickPanel: View {
 struct PanelMedia: View {
     let folder: URL
     let chapter: Chapter
+    var bookTitle: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Listen & watch · \(chapter.title)", systemImage: "headphones")
                 .font(Theme.display(13, .medium)).foregroundStyle(Theme.ink2).lineLimit(1)
             if let video = chapter.video, let url = BookFiles.url(video, in: folder) {
-                ChapterVideo(url: url, corner: 10)
+                ChapterVideo(url: url, corner: 10, title: chapter.title, artist: bookTitle)
             } else if let status = chapter.status["video"], status == .working || status == .waiting {
                 HStack(spacing: 8) {
                     if status == .working { ProgressView().controlSize(.mini) } else { Image(systemName: "clock").foregroundStyle(Theme.ink3) }
@@ -151,7 +152,7 @@ struct PanelMedia: View {
                 .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 10))
             }
             if let audio = chapter.audio, let url = BookFiles.url(audio, in: folder) {
-                PodcastControls(url: url, compact: true)
+                PodcastControls(url: url, compact: true, title: chapter.title, artist: bookTitle)
             }
         }
         .padding(10)

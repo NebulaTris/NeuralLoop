@@ -181,14 +181,25 @@ public struct KnowledgeGraph: Decodable, Equatable, Sendable {
     public var edges: [Edge]
     public var tour: [TourStep]
 
-    public init(nodes: [Node], edges: [Edge], tour: [TourStep] = []) { (self.nodes, self.edges, self.tour) = (nodes, edges, tour) }
+    /// Repeated idea ids keep only their first idea; links and tour stops that point at missing ideas are dropped,
+    /// so everything that indexes ideas by id can rely on each id being there exactly once.
+    public init(nodes: [Node], edges: [Edge], tour: [TourStep] = []) {
+        var seen = Set<String>()
+        let unique = nodes.filter { seen.insert($0.id).inserted }
+        self.nodes = unique
+        self.edges = edges.filter { seen.contains($0.source) && seen.contains($0.target) }
+        self.tour = tour.map { TourStep(title: $0.title, description: $0.description, nodeIds: $0.nodeIds.filter(seen.contains)) }
+            .filter { !$0.nodeIds.isEmpty }
+    }
 
     enum CodingKeys: String, CodingKey { case nodes, edges, tour }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        nodes = (try? c.decodeIfPresent([Node].self, forKey: .nodes)) ?? []
-        edges = (try? c.decodeIfPresent([Edge].self, forKey: .edges)) ?? []
-        tour = (try? c.decodeIfPresent([TourStep].self, forKey: .tour)) ?? []
+        self.init(
+            nodes: (try? c.decodeIfPresent([Node].self, forKey: .nodes)) ?? [],
+            edges: (try? c.decodeIfPresent([Edge].self, forKey: .edges)) ?? [],
+            tour: (try? c.decodeIfPresent([TourStep].self, forKey: .tour)) ?? []
+        )
     }
 
     /// Only the ideas from these chapters, the links between them, and tour steps that still have ideas.

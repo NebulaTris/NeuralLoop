@@ -19,13 +19,17 @@ struct ListenStep: View {
         VStack(alignment: .leading, spacing: 22) {
             Text("Watch").font(Theme.display(20))
             if let video = chapter.video, let url = session.file(video) {
-                WhenDownloaded(url: url, what: "the video") { ChapterVideo(url: url) }
+                WhenDownloaded(url: url, what: "the video") {
+                    ChapterVideo(url: url, title: chapter.title, artist: session.book.title)
+                }
             } else {
                 NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id)
             }
             Text("Listen").font(Theme.display(20))
             if let audio = chapter.audio, let url = session.file(audio) {
-                WhenDownloaded(url: url, what: "the podcast") { PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file)) }
+                WhenDownloaded(url: url, what: "the podcast") { 
+                    PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file), title: chapter.title, artist: session.book.title)
+                }
             } else {
                 NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
             }
@@ -36,11 +40,15 @@ struct ListenStep: View {
 struct ChapterVideo: View {
     let url: URL
     var corner: CGFloat = 16
+    /// What the lock screen and Control Center show: the chapter and the book.
+    var title: String? = nil
+    var artist: String? = nil
 
     var body: some View {
         PlayerView(player: MediaCenter.shared.player(for: url))
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: corner))
+            .onAppear { if let title { MediaCenter.shared.setNowPlaying(url, title: title, artist: artist) } }
     }
 }
 
@@ -53,6 +61,7 @@ struct PlayerView: NSViewRepresentable {
         let view = AVPlayerView()
         view.controlsStyle = .inline
         view.showsFullScreenToggleButton = true
+        view.updatesNowPlayingInfoCenter = false  // MediaCenter says what's playing, with the chapter's title
         view.player = player
         return view
     }
@@ -76,6 +85,7 @@ struct PlayerView: UIViewControllerRepresentable {
         let controller = AVPlayerViewController()
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
+        controller.updatesNowPlayingInfoCenter = false  // MediaCenter says what's playing, with the chapter's title
         return controller
     }
 
@@ -112,6 +122,8 @@ struct TranscriptLine: Decodable, Identifiable {
 struct PodcastControls: View {
     let url: URL
     var compact = false
+    var title: String? = nil
+    var artist: String? = nil
     private var media: MediaCenter { .shared }
 
     var body: some View {
@@ -141,18 +153,25 @@ struct PodcastControls: View {
                 .font(Theme.body(11)).monospacedDigit().foregroundStyle(Theme.ink3)
             }
         }
-        .onAppear { _ = media.player(for: url) }
+        .onAppear {
+            _ = media.player(for: url)
+            if let title { media.setNowPlaying(url, title: title, artist: artist) }
+        }
     }
 }
 
 struct PodcastPlayer: View {
     let url: URL
     let lines: [TranscriptLine]
+    let title: String?
+    let artist: String?
     private var media: MediaCenter { .shared }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(url: URL, transcript: URL?) {
+    init(url: URL, transcript: URL?, title: String? = nil, artist: String? = nil) {
         self.url = url
         self.lines = TranscriptLine.load(transcript)
+        (self.title, self.artist) = (title, artist)
     }
 
     private var current: Double? {
@@ -163,7 +182,7 @@ struct PodcastPlayer: View {
     var body: some View {
         CardBox {
             VStack(alignment: .leading, spacing: 12) {
-                PodcastControls(url: url)
+                PodcastControls(url: url, title: title, artist: artist)
                 if !lines.isEmpty {
                     Divider()
                     ScrollViewReader { proxy in
@@ -186,7 +205,7 @@ struct PodcastPlayer: View {
                             }
                         }
                         .frame(maxHeight: 320)
-                        .onChange(of: current) { _, now in if let now { withAnimation { proxy.scrollTo(now, anchor: .center) } } }
+                        .onChange(of: current) { _, now in if let now { withAnimation(reduceMotion ? nil : .default) { proxy.scrollTo(now, anchor: .center) } } }
                     }
                 }
             }
@@ -358,7 +377,11 @@ struct RecallStep: View {
     @State private var feedback = ""
     @State private var checkedBy = ""
     @State private var checking = false
+    #if DEBUG
     @State private var showQuiz = UserDefaults.standard.bool(forKey: "NLQuiz")  // development: `-NLQuiz YES`
+    #else
+    @State private var showQuiz = false
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -395,9 +418,10 @@ struct RecallStep: View {
                         .buttonStyle(.borderedProminent).disabled(checking || answer.trimmingCharacters(in: .whitespaces).isEmpty)
                     if checking { ProgressView().controlSize(.small) }
                     if index + 1 < chapter.recall.count {
-                        Button("Next question") { index += 1; answer = ""; covered = nil; feedback = "" }
+                        Button("Next question") { index += 1; answer = ""; covered = nil; feedback = ""; checkedBy = "" }
+                            .disabled(checking)
                     } else if !chapter.quiz.isEmpty, covered != nil {
-                        Button("On to the quiz") { showQuiz = true }
+                        Button("On to the quiz") { showQuiz = true }.disabled(checking)
                     }
                 }
                 if let covered {
@@ -423,6 +447,8 @@ extension RecallStep {
     func check(_ prompt: RecallPrompt) async {
         checking = true
         defer { checking = false }
+        let asked = index
+        let answer = answer  // the answer as it was sent, even if it's edited while Pip checks
         #if os(macOS)
         let request: [String: Any] = ["question": prompt.prompt, "keyPoints": prompt.keyPoints, "answer": answer]
         let input = String(decoding: (try? JSONSerialization.data(withJSONObject: request)) ?? Data(), as: UTF8.self)
@@ -430,6 +456,7 @@ extension RecallStep {
         #else
         let lines: [String] = []
         #endif
+        guard asked == index else { return }  // the question changed meanwhile: this result belongs to another one
         if let line = lines.last, let result = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
            let marks = result["covered"] as? [Bool], marks.count == prompt.keyPoints.count {
             covered = marks
@@ -449,8 +476,12 @@ extension RecallStep {
 struct MapStep: View {
     let session: BookSession
     let chapter: Chapter
+    #if DEBUG
     // Development: `-NLMapMode concepts|mind|remake` opens that view.
     @State private var mode: MapMode? = ["concepts": MapMode.concepts, "mind": .mind, "remake": .remake][UserDefaults.standard.string(forKey: "NLMapMode") ?? ""]
+    #else
+    @State private var mode: MapMode?
+    #endif
 
     enum MapMode: String, CaseIterable { case remake = "Remake from memory", mind = "Mind map", concepts = "Concept graph" }
 

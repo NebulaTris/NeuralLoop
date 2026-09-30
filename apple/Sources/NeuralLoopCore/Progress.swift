@@ -47,10 +47,14 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     public var last: Resume?
     public var log: [String: Double] = [:]                 // local day -> seconds studied
     public var updatedAt: Double = 0                        // when this device last changed anything (Unix ms)
+    /// When each quiz, recall, remake, map position, and "where you left off" last changed, anywhere (Unix ms):
+    /// "quiz.3", "recall.3", "remake.2", "mapPos.<id>", "last". Merging keeps the newest of each, so a device saving an
+    /// older view never rolls back newer work. Files from before stamps count as 0 (then the newer file wins).
+    public var stamps: [String: Double] = [:]
 
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case cards, loop, quiz, recall, remake, mapPos, mapSeen, last, log, updatedAt }
+    enum CodingKeys: String, CodingKey { case cards, loop, quiz, recall, remake, mapPos, mapSeen, last, log, updatedAt, stamps }
 
     /// Lenient: one odd card, day, or field (from an older or newer app, or a half-finished edit) is skipped rather
     /// than losing everything else.
@@ -68,25 +72,47 @@ public struct StudyProgress: Codable, Equatable, Sendable {
         last = (try? c.decodeIfPresent(Resume.self, forKey: .last)) ?? nil
         log = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .log)) ?? nil)?.compactMapValues(\.value) ?? [:]
         updatedAt = ((try? c.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil) ?? 0
+        stamps = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .stamps)) ?? nil)?.compactMapValues(\.value) ?? [:]
+    }
+
+    // Changes that carry their own time (use these rather than setting the fields, so merging knows what's newest).
+
+    public mutating func setQuiz(_ key: String, _ value: JSONValue, now: Double) { quiz[key] = value; stamp("quiz.\(key)", now) }
+    public mutating func setRecall(_ key: String, _ value: JSONValue, now: Double) { recall[key] = value; stamp("recall.\(key)", now) }
+    public mutating func setRemake(_ key: String, _ value: JSONValue, now: Double) { remake[key] = value; stamp("remake.\(key)", now) }
+    public mutating func setMapPos(_ id: String, _ point: [Double], now: Double) { mapPos[id] = point; stamp("mapPos.\(id)", now) }
+    public mutating func setLast(_ resume: Resume, now: Double) { last = resume; stamp("last", now) }
+
+    private mutating func stamp(_ key: String, _ now: Double) {
+        stamps[key] = max(stamps[key] ?? 0, now)
+        updatedAt = max(updatedAt, now)
     }
 
     /// Merge every device's progress. Cards: the latest review wins. Loop steps: done anywhere is done (earliest time).
-    /// Study log: seconds add up across devices (each device's own file holds only its own study time). Quiz, recall, remake, map positions, and where you left off: the most
-    /// recently updated device wins.
+    /// Study log: seconds add up across devices (each device's own file holds only its own study time). Each quiz,
+    /// recall, remake, map position, and where you left off: the newest stamp wins (a tie, as with files from before
+    /// stamps, goes to the most recently updated device).
     public static func merged(_ devices: [StudyProgress]) -> StudyProgress {
         var out = StudyProgress()
-        for device in devices.sorted(by: { $0.updatedAt < $1.updatedAt }) {
+        func newest<V>(_ field: WritableKeyPath<StudyProgress, [String: V]>, _ prefix: String, from device: StudyProgress) {
+            for (key, value) in device[keyPath: field] where device.stamps["\(prefix).\(key)"] ?? 0 >= out.stamps["\(prefix).\(key)"] ?? 0 {
+                out[keyPath: field][key] = value
+            }
+        }
+        let ordered = devices.sorted { ($0.updatedAt, $0.stamps.count) < ($1.updatedAt, $1.stamps.count) }
+        for device in ordered {
             for (id, card) in device.cards where card.last >= (out.cards[id]?.last ?? -1) { out.cards[id] = card }
             for (chapter, steps) in device.loop {
                 out.loop[chapter, default: [:]].merge(steps) { min($0, $1) }
             }
             for (day, seconds) in device.log { out.log[day, default: 0] += seconds }
-            out.quiz.merge(device.quiz) { $1 }
-            out.recall.merge(device.recall) { $1 }
-            out.remake.merge(device.remake) { $1 }
-            out.mapPos.merge(device.mapPos) { $1 }
+            newest(\.quiz, "quiz", from: device)
+            newest(\.recall, "recall", from: device)
+            newest(\.remake, "remake", from: device)
+            newest(\.mapPos, "mapPos", from: device)
             out.mapSeen = Array(Set(out.mapSeen).union(device.mapSeen)).sorted()
-            out.last = device.last ?? out.last
+            if let last = device.last, device.stamps["last"] ?? 0 >= out.stamps["last"] ?? 0 { out.last = last }
+            out.stamps.merge(device.stamps) { max($0, $1) }
             out.updatedAt = max(out.updatedAt, device.updatedAt)
         }
         return out
@@ -125,11 +151,30 @@ public enum ProgressFile {
     /// time never ends up in this device's file.
     public static func loadMerged(from folder: URL) -> (own: StudyProgress, merged: StudyProgress) {
         let own = load(from: folder)
+        let others = others(in: folder)
+        return (own, others.isEmpty ? own : StudyProgress.merged([own] + others))
+    }
+
+    /// Every other device's progress for this book (their files, downloaded by sync, in `devices/<id>.json`).
+    public static func others(in folder: URL) -> [StudyProgress] {
         let devices = folder.appendingPathComponent("devices", isDirectory: true)
-        let others = ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [])
+        return ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }
             .compactMap { (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } }
-        return (own, others.isEmpty ? own : StudyProgress.merged([own] + others))
+    }
+
+    /// A cheap fingerprint of the other devices' progress files (names, sizes, modification times): when it changes,
+    /// sync brought something new and an open book should merge again.
+    public static func devicesSignature(in folder: URL) -> String {
+        let devices = folder.appendingPathComponent("devices", isDirectory: true)
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        return ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: keys)) ?? [])
+            .filter { $0.pathExtension == "json" }
+            .map { url -> String in
+                let values = try? url.resourceValues(forKeys: Set(keys))
+                return "\(url.lastPathComponent):\(values?.fileSize ?? 0):\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+            }
+            .sorted().joined(separator: "|")
     }
 
     /// Saves the merged view as this device's file, but with only this device's own study time.
@@ -140,7 +185,9 @@ public enum ProgressFile {
     }
 
     public static func save(_ progress: StudyProgress, to folder: URL) {
-        guard let data = try? JSONEncoder().encode(progress) else { return }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys  // the same progress always makes the same bytes (so sync sends it once)
+        guard let data = try? encoder.encode(progress) else { return }
         try? data.write(to: folder.appendingPathComponent("progress.json"), options: .atomic)
     }
 }

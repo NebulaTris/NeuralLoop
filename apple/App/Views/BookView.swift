@@ -16,6 +16,31 @@ struct BookView: View {
     }
 }
 
+/// The open book left the shelf (removed here or on another device): say so warmly and offer the way back.
+struct BookGoneView: View {
+    @Environment(Library.self) private var library
+    @State private var shown = false  // a moment's grace while the shelf is first read, so this never flashes
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if shown {
+                PipView(pose: .read, size: 140)
+                Text("This book is no longer on your shelf").font(Theme.display(22)).foregroundStyle(Theme.ink)
+                Text("It was removed, here or on another of your devices. Everything else is right where you left it.")
+                    .font(Theme.body(15)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 420)
+                Button { library.path = [] } label: { Label("Back to your shelf", systemImage: "books.vertical") }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.paper)
+        .task {
+            try? await Task.sleep(for: .milliseconds(600))
+            shown = true
+        }
+    }
+}
+
 struct BookContent: View {
     @Environment(Library.self) private var library
     #if os(macOS)
@@ -27,7 +52,11 @@ struct BookContent: View {
     #endif
     let session: BookSession
     @State private var selected: Int?
-    @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")
+    #if DEBUG
+    @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")  // development: `-NLBookMap YES`
+    #else
+    @State private var showingMap = false
+    #endif
 
     var body: some View {
         HStack(spacing: 0) {
@@ -123,6 +152,7 @@ struct ChapterView: View {
     let chapter: Chapter
     @State private var stage: Stage = .prime
     @State private var celebrate = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -155,7 +185,9 @@ struct ChapterView: View {
         .onAppear {
             // On an iPad, opening a chapter brings its podcast, video, and pages (and the next chapter's) from the Drive.
             DriveSync.shared.want(book: session.entry.id, chapter: chapter.n)
+            #if DEBUG
             if let forced = UserDefaults.standard.string(forKey: "NLStage").flatMap(Stage.init) { stage = forced; return }
+            #endif
             if let last = session.progress.last, last.n == chapter.n, let s = Stage(rawValue: last.stage) { stage = s }
             else if let next = Loop.nextStage(session.progress, chapter.n) { stage = next }
         }
@@ -194,7 +226,7 @@ struct ChapterView: View {
     private var finishButton: some View {
         Button {
             if session.complete(chapter.n, stage) {
-                withAnimation(.spring) { celebrate = true }
+                withAnimation(reduceMotion ? nil : .spring) { celebrate = true }
             } else if let next = Loop.nextStage(session.progress, chapter.n) {
                 stage = next
             }
@@ -213,7 +245,7 @@ struct ChapterView: View {
         .padding(40)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 28))
         .shadow(color: .black.opacity(0.12), radius: 30, y: 10)
-        .transition(.scale(scale: 0.85).combined(with: .opacity))
+        .transition(reduceMotion ? .opacity : .scale(scale: 0.85).combined(with: .opacity))
     }
 }
 

@@ -52,23 +52,29 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         defer { signingIn = false }
         do {
             let callback: URL = try await withCheckedThrowingContinuation { continuation in
+                let once = ResumeOnce(continuation)
                 let session = ASWebAuthenticationSession(url: attempt.url, callbackURLScheme: oauth.redirectScheme) { url, error in
-                    if let url { continuation.resume(returning: url) } else { continuation.resume(throwing: error ?? DriveError.notSignedIn) }
+                    if let url { once.resume(.success(url)) } else { once.resume(.failure(error ?? DriveError.notSignedIn)) }
                 }
                 session.presentationContextProvider = self
                 session.prefersEphemeralWebBrowserSession = false
                 self.session = session
-                session.start()
+                // The sheet couldn't open (no window to show it on, say): say so rather than wait forever.
+                if !session.start() { once.resume(.failure(SignInError.couldNotOpen)) }
             }
+            session = nil
             guard let code = oauth.code(from: callback, for: attempt) else { throw DriveError.notSignedIn }
             let (data, response) = try await URLSession.shared.data(for: oauth.tokenRequest(code: code, verifier: attempt.verifier))
             guard (response as? HTTPURLResponse)?.statusCode == 200, let fresh = GoogleOAuth.tokens(from: data) else {
                 throw DriveError.http((response as? HTTPURLResponse)?.statusCode ?? 0, "sign-in")
             }
             store(fresh)
+            DriveSync.shared.signedIn()  // the first sync starts now, not at the next tick
         } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            session = nil
             note = ""
         } catch {
+            session = nil
             note = "Sign-in didn't finish (\(error.localizedDescription)). You can try again any time."
         }
     }
@@ -82,10 +88,10 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         Keychain.save(Self.keychainName, "")
     }
 
-    /// A valid access token, refreshed when needed.
-    func accessToken() async throws -> String {
+    /// A valid access token, refreshed when needed, or right away with `forceRefresh` (Google refused the current one).
+    func accessToken(forceRefresh: Bool = false) async throws -> String {
         guard let current = tokens, let refresh = current.refresh, let clientID = Self.clientID else { throw DriveError.notSignedIn }
-        if current.isFresh() { return current.access }
+        if current.isFresh(), !forceRefresh { return current.access }
         let (data, response) = try await URLSession.shared.data(for: GoogleOAuth(clientID: clientID).refreshRequest(refreshToken: refresh))
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let fresh = GoogleOAuth.tokens(from: data, previous: current) else {
@@ -113,5 +119,24 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
             return UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first ?? ASPresentationAnchor()
             #endif
         }
+    }
+}
+
+enum SignInError: LocalizedError {
+    case couldNotOpen
+    var errorDescription: String? { "the Google sign-in window couldn't open" }
+}
+
+/// Resumes a continuation at most once (the sign-in sheet's callback and a failed start could both try).
+private final class ResumeOnce: @unchecked Sendable {
+    private var continuation: CheckedContinuation<URL, Error>?
+    private let lock = NSLock()
+    init(_ continuation: CheckedContinuation<URL, Error>) { self.continuation = continuation }
+    func resume(_ result: Result<URL, Error>) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
     }
 }

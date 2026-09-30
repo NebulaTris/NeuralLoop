@@ -17,14 +17,40 @@ final class BookSession {
     @ObservationIgnored private var ownLog: [String: Double] = [:]
     private var clock: Timer?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    /// What other devices' files looked like when they were last merged in (see `catchUp`).
+    @ObservationIgnored private var devicesSeen = ""
+    @ObservationIgnored nonisolated(unsafe) private var observer: NSObjectProtocol?
+
+    /// Posted after sync brings in another device's progress.
+    static let progressArrived = Notification.Name("NeuralLoopProgressArrived")
 
     init(entry: BookEntry) {
         self.entry = entry
         self.book = entry.book ?? Library.loadBook(entry.folder) ?? BookSession.emptyBook
         // An unreadable file is kept aside rather than overwritten by the first save.
+        devicesSeen = ProgressFile.devicesSignature(in: entry.folder)
         let loaded = ProgressFile.loadMerged(from: entry.folder)
         self.progress = loaded.merged
         self.ownLog = loaded.own.log
+        observer = NotificationCenter.default.addObserver(forName: Self.progressArrived, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.catchUp() }
+        }
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// Another device's progress arrived (sync wrote devices/<id>.json): merge it in, so what's on screen (and what
+    /// this device saves next) includes it. Our own study time stays our own. Cheap when nothing changed.
+    func catchUp() {
+        let signature = ProgressFile.devicesSignature(in: entry.folder)
+        guard signature != devicesSeen else { return }
+        devicesSeen = signature
+        var mine = progress  // includes anything not saved yet (a draft being typed)
+        mine.log = ownLog
+        let fresh = StudyProgress.merged([mine] + ProgressFile.others(in: entry.folder))
+        if fresh != progress { progress = fresh }
     }
 
     /// True while this book's window is the one in front and the app is active (the study clock only counts then).
@@ -40,8 +66,8 @@ final class BookSession {
     func quiz(_ n: Int) -> QuizProgress { QuizProgress(progress.quiz[String(n)]) }
 
     func setQuiz(_ n: Int, _ quiz: QuizProgress) {
-        progress.quiz[String(n)] = quiz.json
-        touch()
+        progress.setQuiz(String(n), quiz.json, now: now)
+        save()
     }
 
     func remakeGuess(_ n: Int) -> String {
@@ -55,30 +81,28 @@ final class BookSession {
     }
 
     func setRemake(_ n: Int, guess: String, best: Int? = nil) {
-        progress.remake[String(n)] = .object(["guess": .string(guess), "best": .number(Double(best ?? remakeBest(n)))])
-        touch()
+        progress.setRemake(String(n), .object(["guess": .string(guess), "best": .number(Double(best ?? remakeBest(n)))]), now: now)
+        save()
     }
 
     /// Typing a remake draft saves a second after the last keystroke, not on every key.
     func setRemakeDraft(_ n: Int, guess: String) {
         guard guess != remakeGuess(n) else { return }
-        progress.remake[String(n)] = .object(["guess": .string(guess), "best": .number(Double(remakeBest(n)))])
-        progress.updatedAt = now
+        progress.setRemake(String(n), .object(["guess": .string(guess), "best": .number(Double(remakeBest(n)))]), now: now)
         pendingSave?.cancel()
         pendingSave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            if !Task.isCancelled { self?.save() }
+            if !Task.isCancelled { self?.pendingSave = nil; self?.save() }
         }
     }
 
     func placeOnMap(_ placed: [String: Point], seen chapters: [Int]) {
-        for (id, point) in placed { progress.mapPos[id] = [point.x, point.y] }
-        progress.mapSeen = Array(Set(progress.mapSeen).union(chapters)).sorted()
-        touch()
-    }
-
-    private func touch() {
-        progress.updatedAt = now
+        let time = now
+        for (id, point) in placed { progress.setMapPos(id, [point.x, point.y], now: time) }
+        let seen = Array(Set(progress.mapSeen).union(chapters)).sorted()
+        guard !placed.isEmpty || seen != progress.mapSeen else { return }
+        progress.mapSeen = seen
+        progress.updatedAt = max(progress.updatedAt, time)
         save()
     }
 
@@ -97,25 +121,34 @@ final class BookSession {
     }
 
     func remember(_ n: Int, _ stage: Stage) {
-        progress.last = Resume(n: n, stage: stage.rawValue)
-        progress.updatedAt = now
+        let resume = Resume(n: n, stage: stage.rawValue)
+        guard progress.last != resume else { return }
+        progress.setLast(resume, now: now)
         save()
     }
 
-    func save() {
+    /// Saves this device's file. Changes you made (a review, a step, a quiz answer) reach your other devices a few
+    /// seconds later (`syncSoon`); the study clock's ticks just ride along with the next sync.
+    func save(syncSoon: Bool = true) {
         ProgressFile.save(progress, ownLog: ownLog, to: entry.folder)
-        DriveSync.shared.soon()  // your other devices catch up a few seconds later
+        if syncSoon { DriveSync.shared.soon() }
     }
 
     /// Counts study time in 15-second ticks while the book is open and in front (`isActive`, kept current by the view).
     func startClock() {
+        catchUp()  // the book is on screen (again): show the latest from every device
         clock?.invalidate()
         clock = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isActive, Self.appIsActive else { return }
+                guard let self else { return }
+                self.catchUp()  // another device's progress may have arrived
+                guard self.isActive, Self.appIsActive else { return }
+                // Study time isn't a change to merge by: the tick leaves updatedAt alone.
+                let updatedAt = self.progress.updatedAt
                 Activity.log(&self.progress, now: self.now, seconds: 15)
+                self.progress.updatedAt = updatedAt
                 self.ownLog[Activity.dayKey(self.now), default: 0] += 15
-                self.save()
+                self.save(syncSoon: false)
             }
         }
     }

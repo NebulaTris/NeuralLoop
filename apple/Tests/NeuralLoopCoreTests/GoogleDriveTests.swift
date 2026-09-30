@@ -124,4 +124,34 @@ private func stubbedDrive() -> GoogleDrive {
         await #expect(throws: DriveError.http(403, "Rate limit exceeded")) { try await stubbedDrive().list() }
         #expect(DriveError.http(401, "").errorDescription?.contains("Sign in again") == true)
     }
+
+    @Test func anExpiredTokenIsRefreshedOnceAndTheRequestTriedAgain() async throws {
+        DriveStub.seen = []
+        DriveStub.handler = { request, _ in
+            request.value(forHTTPHeaderField: "Authorization") == "Bearer fresh"
+                ? (200, [:], Data(#"{"files":[{"id":"a","name":"inbox/u.pdf","md5Checksum":"m1","size":"3","modifiedTime":"2026-09-30T10:00:00.250Z"}]}"#.utf8))
+                : (401, [:], Data(#"{"error":{"message":"Invalid Credentials"}}"#.utf8))
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DriveStub.self]
+        let forced = Counter()
+        let drive = GoogleDrive(session: URLSession(configuration: configuration)) { force in
+            if force { await forced.bump() }
+            return force ? "fresh" : "stale"
+        }
+        let files = try await drive.list()
+        let refreshes = await forced.value
+        #expect(files.map(\.path) == ["inbox/u.pdf"] && DriveStub.seen.count == 2 && refreshes == 1)
+        #expect(files[0].modified == Date(timeIntervalSince1970: 1_790_762_400.25))
+        // Still refused after a fresh token: say so, don't loop.
+        DriveStub.seen = []
+        DriveStub.handler = { _, _ in (401, [:], Data()) }
+        await #expect(throws: DriveError.http(401, "")) { try await drive.list() }
+        #expect(DriveStub.seen.count == 2)
+    }
+}
+
+actor Counter {
+    var value = 0
+    func bump() { value += 1 }
 }

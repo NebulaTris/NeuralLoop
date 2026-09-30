@@ -8,6 +8,9 @@ struct ProfileButton: View {
     @Environment(AISettings.self) private var settings
     @Environment(\.openSettings) private var openSettings
     @State private var open = false
+    /// The account check runs Python, so the shelf asks at most every five minutes; opening the card always asks.
+    private static var lastChecked: Date?
+    static let recheckAfter: TimeInterval = 5 * 60
 
     var body: some View {
         Button { open.toggle() } label: { Avatar(email: settings.account.signedIn ? settings.account.email : nil, size: 26) }
@@ -16,9 +19,17 @@ struct ProfileButton: View {
             .accessibilityLabel("Profile and settings")
             .popover(isPresented: $open, arrowEdge: .bottom) { card }
             .task {
-                await settings.refreshAccount()
+                if Self.lastChecked.map({ Date().timeIntervalSince($0) > Self.recheckAfter }) ?? true { await refresh() }
+                #if DEBUG
                 if UserDefaults.standard.bool(forKey: "NLProfile") { open = true }  // development: `-NLProfile YES`
+                #endif
             }
+            .onChange(of: open) { _, isOpen in if isOpen { Task { await refresh() } } }
+    }
+
+    private func refresh() async {
+        Self.lastChecked = Date()
+        await settings.refreshAccount()
     }
 
     private var card: some View {

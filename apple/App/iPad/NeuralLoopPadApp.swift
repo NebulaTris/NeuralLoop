@@ -35,18 +35,20 @@ struct PadRootView: View {
         NavigationStack(path: $library.path) {
             LibraryView()
                 .navigationDestination(for: String.self) { id in
-                    if let entry = library.entry(id) { BookView(entry: entry) }
+                    if let entry = library.entry(id) { BookView(entry: entry) } else { BookGoneView() }
                 }
         }
         .background(Theme.paper)
         .tint(Theme.accent)
         .task {
+            #if DEBUG
             // Development, as on the Mac: `-NLOpenBook <id> [-NLStage map] [-NLBookMap YES]` opens a book
             // (`xcrun simctl launch booted app.neuralloop.books -NLOpenBook sample-book`).
             if let id = UserDefaults.standard.string(forKey: "NLOpenBook") {
                 try? await Task.sleep(for: .seconds(1))
                 library.path = [id]
             }
+            #endif
         }
     }
 }

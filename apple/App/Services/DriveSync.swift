@@ -5,6 +5,7 @@
 import Foundation
 import NeuralLoopCore
 import Observation
+import Security
 
 @MainActor @Observable
 final class DriveSync {
@@ -18,25 +19,24 @@ final class DriveSync {
     @ObservationIgnored private var again = false
     @ObservationIgnored private var soonTask: Task<Void, Never>?
     @ObservationIgnored private var engine: SyncEngine?
-    /// Mac: a book arrived in the inbox (the file, and the title from its sidecar). Return true once it's being prepared.
+    /// Mac: a book waits in the inbox (the file, and the title from its sidecar). Return true once it's being prepared;
+    /// false means it's offered again later (a few times, further apart).
     @ObservationIgnored var onArrived: (URL, String?) -> Bool = { _, _ in false }
     /// Something changed on disk: the library should look again.
     @ObservationIgnored var onChanged: () -> Void = {}
     /// Another device removed a book: let go of it here too.
     @ObservationIgnored var onRemovedElsewhere: (String) -> Void = { _ in }
-    /// Books removed on any device (a new book never reuses one of their ids).
-    private(set) var removedBooks: Set<String> = []
+    /// Books removed on any device (a new book never reuses one of their ids). Read from sync-state.json at launch,
+    /// signed in or not.
+    private(set) var removedBooks: Set<String> = SyncEngine.removedBooks(savedIn: DriveSync.root)
 
     static let root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("app.neuralloop.books", isDirectory: true)
 
-    /// A stable id for this device (its progress file in the Drive is named after it).
-    static let device: String = {
-        if let saved = UserDefaults.standard.string(forKey: "deviceID") { return saved }
-        let made = "\(role.rawValue)-\(UUID().uuidString.prefix(8).lowercased())"
-        UserDefaults.standard.set(made, forKey: "deviceID")
-        return made
-    }()
+    /// A stable id for this device (its progress file in the Drive is named after it). Kept in a this-device-only
+    /// Keychain item, so a backup restored onto another device doesn't bring it along; if two devices still end up
+    /// sharing one (sync notices, `SyncReport.deviceClash`), this one takes a new id.
+    private(set) var device: String = DeviceIdentity.load(role: DriveSync.role)
 
     #if os(macOS)
     static let role = SyncRole.mac
@@ -82,11 +82,24 @@ final class DriveSync {
         if let engine { return engine }
         let account = DriveAccount.shared
         let store: GoogleDrive = Self.fakeDrive.map { GoogleDrive(base: $0) { "development" } }
-            ?? GoogleDrive { try await account.accessToken() }
-        let made = SyncEngine(root: Self.root, device: Self.device, role: Self.role, store: store)
+            ?? GoogleDrive { force in try await account.accessToken(forceRefresh: force) }
+        let made = SyncEngine(root: Self.root, device: device, role: Self.role, store: store)
         engine = made
-        Task { removedBooks = await made.removedBooks }
         return made
+    }
+
+    /// Signed in just now: start syncing right away rather than at the next tick.
+    func signedIn() {
+        if started { Task { await syncNow() } } else { start() }
+    }
+
+    /// "Remove all books": books waiting in the inbox leave the Drive too (the caller empties the local inbox).
+    func forgetInbox() {
+        let engine = sharedEngine()
+        Task {
+            await engine.forgetInbox()
+            await syncNow()
+        }
     }
 
     /// A book was removed here: it leaves the Drive (and every other device) on the next sync, even if that's later.
@@ -99,7 +112,8 @@ final class DriveSync {
         }
     }
 
-    /// Something changed here (you studied, reviewed a card): sync a few seconds later, once things settle.
+    /// Something changed here (you reviewed a card, finished a step, answered a quiz): sync a few seconds later, once
+    /// things settle. The study clock doesn't call this; its minutes go with the next sync.
     func soon() {
         soonTask?.cancel()
         soonTask = Task { [weak self] in
@@ -117,22 +131,100 @@ final class DriveSync {
             syncing = false
             if again { again = false; Task { await syncNow() } }
         }
-        let engine = sharedEngine()
+        var engine = sharedEngine()
         do {
-            let report = try await engine.sync(wantedMedia: wantedMedia)
+            var report = try await engine.sync(wantedMedia: wantedMedia)
+            if report.deviceClash {
+                // Another device has been using this id: take a new one and sync as that.
+                device = DeviceIdentity.replace(role: Self.role)
+                self.engine = nil
+                engine = sharedEngine()
+                report = try await engine.sync(wantedMedia: wantedMedia)
+            }
             removedBooks = await engine.removedBooks
             for id in report.removedElsewhere { onRemovedElsewhere(id) }
             for book in report.arrived {
                 let sidecar = book.deletingPathExtension().appendingPathExtension("json")
                 let details = (try? JSONSerialization.jsonObject(with: Data(contentsOf: sidecar))) as? [String: Any]
-                if onArrived(book, details?["title"] as? String) { await engine.markTaken(book) }
+                if onArrived(book, details?["title"] as? String) { await engine.markTaken(book) } else { await engine.markFailed(book) }
             }
             lastReport = report
             lastSync = Date()
             problem = report.problems.first
+            if report.downloaded > 0 {
+                NotificationCenter.default.post(name: BookSession.progressArrived, object: nil)  // open books merge it in
+            }
             if report.downloaded > 0 || !report.arrived.isEmpty || !report.removedElsewhere.isEmpty { onChanged() }
         } catch {
             problem = error.localizedDescription
         }
+    }
+}
+
+/// This device's sync id, in a Keychain item that stays on this device: not synced through iCloud, not restored onto
+/// another device from a backup (kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly). The Mac uses the data protection
+/// keychain when the app's signature allows it, and the login keychain otherwise (which Migration Assistant does copy;
+/// sync's clash check covers that). Ids saved in UserDefaults by earlier versions move over once.
+enum DeviceIdentity {
+    private static let account = "SYNC_DEVICE_ID"
+    private static let legacyKey = "deviceID"
+
+    static func load(role: SyncRole) -> String {
+        if let saved = read(), BookID.isValid(saved) { return saved }
+        let legacy = UserDefaults.standard.string(forKey: legacyKey).flatMap { BookID.isValid($0) ? $0 : nil }
+        let id = legacy ?? fresh(role)
+        if write(id) { UserDefaults.standard.removeObject(forKey: legacyKey) } else { UserDefaults.standard.set(id, forKey: legacyKey) }
+        return id
+    }
+
+    /// A new id, for when another device turned out to share this one.
+    static func replace(role: SyncRole) -> String {
+        let id = fresh(role)
+        if !write(id) { UserDefaults.standard.set(id, forKey: legacyKey) }
+        return id
+    }
+
+    private static func fresh(_ role: SyncRole) -> String { "\(role.rawValue)-\(UUID().uuidString.prefix(8).lowercased())" }
+
+    private static func base(dataProtection: Bool) -> [String: Any] {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Keychain.service,
+                                    kSecAttrAccount as String: account, kSecAttrSynchronizable as String: kCFBooleanFalse as Any]
+        #if os(macOS)
+        if dataProtection { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
+        return query
+    }
+
+    private static var variants: [Bool] {
+        #if os(macOS)
+        [true, false]
+        #else
+        [true]
+        #endif
+    }
+
+    private static func read() -> String? {
+        for dataProtection in variants {
+            var query = base(dataProtection: dataProtection)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var item: CFTypeRef?
+            if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
+                return String(data: data, encoding: .utf8)
+            }
+        }
+        return nil
+    }
+
+    private static func write(_ id: String) -> Bool {
+        let fields: [String: Any] = [kSecValueData as String: Data(id.utf8),
+                                     kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        for dataProtection in variants {
+            let query = base(dataProtection: dataProtection)
+            var status = SecItemUpdate(query as CFDictionary, fields as CFDictionary)
+            if status == errSecItemNotFound { status = SecItemAdd(query.merging(fields) { $1 } as CFDictionary, nil) }
+            if status == errSecSuccess { return true }
+        }
+        return false
     }
 }

@@ -14,7 +14,9 @@ enum AppMover {
     }
 
     static var shouldAsk: Bool {
+        #if DEBUG
         if UserDefaults.standard.bool(forKey: "NLMoveIn") { return true }  // development: `-NLMoveIn YES` shows the sheet
+        #endif
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         return !isDevelopmentBuild && place.needsMove && UserDefaults.standard.string(forKey: "moveInLater") != version
     }

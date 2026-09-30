@@ -151,6 +151,7 @@ private struct MindTreeNode: View {
     let depth: Int
     let color: Color
     @State private var open: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(node: MindNode, depth: Int, color: Color) {
         (self.node, self.depth, self.color) = (node, depth, color)
@@ -160,7 +161,7 @@ private struct MindTreeNode: View {
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             Button {
-                withAnimation(.spring(duration: 0.3)) { open.toggle() }
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.3)) { open.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Text(node.name).font(depth == 0 ? Theme.display(16) : Theme.body(13)).foregroundStyle(Theme.ink)
@@ -203,6 +204,7 @@ struct RemakeView: View {
     let onSeeFullMap: () -> Void
     @State private var guess = ""
     @State private var result: RemakeResult?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var note = ""
 
     var body: some View {
@@ -234,7 +236,7 @@ struct RemakeView: View {
         guard !compared.lines.isEmpty else { note = "Write at least one branch first"; return }
         note = ""
         session.setRemake(chapter.n, guess: guess, best: max(session.remakeBest(chapter.n), compared.percent))
-        withAnimation(.spring) { result = compared }
+        withAnimation(reduceMotion ? nil : .spring) { result = compared }
     }
 
     private func comparison(_ result: RemakeResult) -> some View {

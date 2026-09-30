@@ -47,8 +47,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Environment(AISettings.self) private var settings
+    #if DEBUG
     // Development: `-NLSettingsPage Account` opens on that page.
     @State private var page: SettingsPage = SettingsPage(rawValue: UserDefaults.standard.string(forKey: "NLSettingsPage") ?? "") ?? .ai
+    #else
+    @State private var page: SettingsPage = .ai
+    #endif
 
     var body: some View {
         HStack(spacing: 0) {
@@ -290,6 +294,17 @@ struct ModelPicker: View {
                                     .fixedSize()
                             }
                         }
+                    }
+                    if preset.provider == "hermes" {
+                        @Bindable var settings = settings
+                        Toggle(isOn: $settings.config.hermesTools) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Let Hermes use its tools").font(Theme.body(13))
+                                Text("Hermes can act on your Mac with its tools, and text in a book could steer it. Only turn this on if you've limited its tools in Hermes.")
+                                    .font(Theme.body(11)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
                     }
                     if preset.provider == "custom" {
                         Field(label: "Address") {

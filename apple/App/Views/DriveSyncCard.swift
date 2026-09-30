@@ -25,7 +25,7 @@ struct DriveSyncCard: View {
                     Button("Stop syncing") { Task { await account.signOut() } }
                 }
             } else {
-                Button { Task { await account.signIn(); DriveSync.shared.start() } } label: {
+                Button { Task { await account.signIn() } } label: {  // a successful sign-in starts syncing
                     Label(account.signingIn ? "Waiting for Google…" : "Sign in with Google", systemImage: "person.crop.circle.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)

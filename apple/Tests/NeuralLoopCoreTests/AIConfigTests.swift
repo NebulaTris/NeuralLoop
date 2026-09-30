@@ -3,10 +3,10 @@ import Testing
 @testable import NeuralLoopCore
 
 @Test func readsAndWritesTheSameAIJSONAsThePipeline() throws {
-    let json = #"{"engine":"local","make":{"provider":"anthropic","model":"claude-opus-5"},"tasks":{"quiz":{"provider":"ollama","model":"qwen3:8b"}},"recall":{"provider":"ollama","model":"gemma2:2b"},"voices":["Aisha","Siya"],"voiceQuality":"best","audioLength":"short"}"#
+    let json = #"{"engine":"local","make":{"provider":"anthropic","model":"claude-opus-5"},"tasks":{"quiz":{"provider":"ollama","model":"qwen3:8b"}},"recall":{"provider":"ollama","model":"gemma2:2b"},"voices":["Aisha","Siya"],"voiceQuality":"best","audioLength":"short","hermesTools":true}"#
     let config = try JSONDecoder().decode(AIConfig.self, from: Data(json.utf8))
     #expect(config.engine == .local && config.make.provider == "anthropic" && config.tasks["quiz"]?.model == "qwen3:8b")
-    #expect(config.voices == ["Aisha", "Siya"] && config.voiceQuality == .best && config.audioLength == .short)
+    #expect(config.voices == ["Aisha", "Siya"] && config.voiceQuality == .best && config.audioLength == .short && config.hermesTools)
     let again = try JSONDecoder().decode(AIConfig.self, from: JSONEncoder().encode(config))
     #expect(again == config)
 }
@@ -15,7 +15,7 @@ import Testing
     let config = try JSONDecoder().decode(AIConfig.self, from: Data("{}".utf8))
     #expect(config.engine == .auto && config.make.provider == "auto")
     #expect(config.recall == ModelChoice(provider: "ollama", model: "gemma2:2b"))
-    #expect(config.voices == ["Ira", "Zoya"] && config.voiceQuality == .fast && config.audioLength == .auto)
+    #expect(config.voices == ["Ira", "Zoya"] && config.voiceQuality == .fast && config.audioLength == .auto && !config.hermesTools)
 }
 
 @Test func lmStudioIsAnOpenAICompatibleAddressOnThisMac() {

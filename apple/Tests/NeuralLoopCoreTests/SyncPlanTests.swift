@@ -76,3 +76,43 @@ private func file(_ path: String, _ md5: String = "a", id: String? = nil) -> Syn
     let plan = SyncPlan.make(local: [], remote: remote, device: "ipad1", role: .pad, wantedMedia: ["mcp:1"])
     #expect(plan.downloads.map(\.path) == ["books/mcp/media/01-podcast.m4a"])
 }
+
+private func dated(_ path: String, _ md5: String, id: String, at seconds: Double?) -> SyncFile {
+    SyncFile(path: path, md5: md5, size: 10, id: id, modified: seconds.map { Date(timeIntervalSince1970: $0) })
+}
+
+// Two creates of the same name (a retried upload, two syncs racing) leave duplicates in the Drive: keep the newest,
+// delete the rest, and only ever read or replace the one that's kept.
+@Test func duplicateDriveFilesKeepTheNewestAndTheRestAreDeleted() {
+    let remote = [dated("books/mcp/book.json", "old", id: "r1", at: 100), dated("books/mcp/book.json", "new", id: "r2", at: 200),
+                  dated("books/mcp/book.json", "older", id: "r0", at: nil), dated("books/mcp/progress/mac1.json", "p", id: "r3", at: 50)]
+    let pad = SyncPlan.make(local: [], remote: remote.shuffled(), device: "ipad1", role: .pad)
+    #expect(pad.downloads.compactMap(\.id).sorted() == ["r2", "r3"])
+    #expect(pad.deletes.compactMap(\.id).sorted() == ["r0", "r1"])
+    let mac = SyncPlan.make(local: [file("books/mcp/book.json", "mine")], remote: remote.shuffled(), device: "mac1", role: .mac)
+    #expect(mac.uploads.map(\.id) == ["r2"] && mac.deletes.compactMap(\.id).sorted() == ["r0", "r1"])
+    // Without times (an older stand-in), the choice is still the same on every device.
+    let undated = [file("books/mcp/book.json", "a", id: "x1"), file("books/mcp/book.json", "b", id: "x2")]
+    #expect(SyncPlan.make(local: [], remote: undated, device: "ipad1", role: .pad).downloads.map(\.id)
+        == SyncPlan.make(local: [], remote: undated.reversed(), device: "ipad1", role: .pad).downloads.map(\.id))
+}
+
+// Migration Assistant or a backup restore can give two devices the same id. The one whose progress file in the Drive
+// isn't what it last uploaded knows someone else writes it.
+@Test func aProgressFileSomeoneElseWroteMeansTheDeviceIDIsShared() {
+    let remote = [file("books/mcp/progress/mac1.json", "theirs", id: "r1"), file("books/other/progress/mac1.json", "same", id: "r2")]
+    #expect(DeviceClash.found(remote: remote, device: "mac1", lastUploaded: ["books/mcp/progress/mac1.json": "mine"]))
+    #expect(!DeviceClash.found(remote: remote, device: "mac1", lastUploaded: ["books/mcp/progress/mac1.json": "theirs"]))
+    #expect(!DeviceClash.found(remote: remote, device: "mac1", lastUploaded: [:]))  // never uploaded here: nothing to compare
+    // Our upload landed but its answer was lost: the Drive holds exactly what's here, so it's still ours.
+    #expect(!DeviceClash.found(remote: remote, device: "mac1", lastUploaded: ["books/mcp/progress/mac1.json": "mine"],
+                               local: ["books/mcp/progress/mac1.json": "theirs"]))
+    #expect(!DeviceClash.found(remote: remote, device: "ipad1", lastUploaded: ["books/mcp/progress/mac1.json": "mine"]))
+}
+
+@Test func inboxRetriesBackOffAndStopAfterFive() {
+    #expect(InboxRetry.isDue(attempts: 0, last: 0, now: 0))
+    #expect(!InboxRetry.isDue(attempts: 1, last: 0, now: 60_000) && InboxRetry.isDue(attempts: 1, last: 0, now: 120_000))
+    #expect(!InboxRetry.isDue(attempts: 3, last: 0, now: 7 * 60_000) && InboxRetry.isDue(attempts: 3, last: 0, now: 8 * 60_000))
+    #expect(!InboxRetry.isDue(attempts: 5, last: 0, now: 1e12) && InboxRetry.gaveUp(attempts: 5) && !InboxRetry.gaveUp(attempts: 4))
+}

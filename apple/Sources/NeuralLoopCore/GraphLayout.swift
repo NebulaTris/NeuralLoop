@@ -53,10 +53,13 @@ public enum GraphLayout {
     /// never move (so the book map keeps its shape as it grows). Deterministic: the same graph lays out the same way.
     public static func layout(
         ids: [String], edges: [KnowledgeGraph.Edge], anchors: [String: Point], fixed: [String: Point] = [:],
-        radius: [String: Double] = [:], iterations: Int = 300
+        radius: [String: Double] = [:], iterations: Int? = nil
     ) -> [String: Point] {
+        var seen = Set<String>()
+        let ids = ids.filter { seen.insert($0).inserted }  // a repeated id is one idea
         guard !ids.isEmpty else { return [:] }
-        let index = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
+        let iterations = iterations ?? defaultIterations(ids.count)
+        let index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         var position = ids.map { id -> Point in
             if let pinned = fixed[id] { return pinned }
             let anchor = anchors[id] ?? Point(0, 0)
@@ -69,7 +72,9 @@ public enum GraphLayout {
             return (a, b)
         }
         let size = ids.map { radius[$0] ?? 14 }
+        let cutoff2 = repulsionCutoff * repulsionCutoff
         var alpha = 1.0
+        let cooling = min(0.985, pow(0.02, 1 / Double(max(iterations, 1))))  // fewer rounds cool faster, still settling
         for _ in 0..<iterations {
             var force = Array(repeating: Point(0, 0), count: ids.count)
             for i in 0..<ids.count {
@@ -77,6 +82,7 @@ public enum GraphLayout {
                     var dx = position[j].x - position[i].x
                     var dy = position[j].y - position[i].y
                     var distance2 = dx * dx + dy * dy
+                    if distance2 > cutoff2 { continue }  // far-apart ideas barely push each other: skip them
                     if distance2 < 0.01 { dx = 0.1 * Double(j - i); dy = 0.1; distance2 = dx * dx + dy * dy }
                     let distance = distance2.squareRoot()
                     var push = 9000 / distance2  // everyone keeps some room (labels sit under the shapes)
@@ -103,9 +109,18 @@ public enum GraphLayout {
                 position[i].x += max(-30, min(30, velocity[i].x))
                 position[i].y += max(-30, min(30, velocity[i].y))
             }
-            alpha = max(0.02, alpha * 0.985)
+            alpha = max(0.02, alpha * cooling)
         }
-        return Dictionary(uniqueKeysWithValues: zip(ids, position))
+        return Dictionary(zip(ids, position), uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Beyond this distance two ideas no longer push each other (9000 / d² is already tiny there).
+    static let repulsionCutoff = 900.0
+
+    /// Big maps settle with fewer rounds: each round costs n², so the total work stays about the same beyond 100 ideas.
+    static func defaultIterations(_ count: Int) -> Int {
+        guard count > 100 else { return 300 }
+        return max(60, Int(300 * 10_000 / Double(count * count)))
     }
 
     /// A small, stable offset per id, so ideas that share an anchor start apart (and the layout is repeatable).

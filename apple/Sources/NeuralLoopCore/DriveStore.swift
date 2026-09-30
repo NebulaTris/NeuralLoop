@@ -28,19 +28,27 @@ public enum DriveError: LocalizedError, Equatable {
     }
 }
 
-/// Google Drive's REST API (v3), with a bearer token from `token()` (refreshed by the caller when it expires).
+/// Google Drive's REST API (v3), with a bearer token from `token(forceRefresh)`: the caller refreshes it when it
+/// expires, and when asked to (Google refused it with a 401, say after the clock jumped or the token was revoked).
 public struct GoogleDrive: DriveStore {
-    let token: @Sendable () async throws -> String
+    let token: @Sendable (_ forceRefresh: Bool) async throws -> String
     let session: URLSession
     let api: String
     let uploadAPI: String
+    static let fields = "id,name,md5Checksum,size,modifiedTime"
 
     /// `base` is Google's API host; development builds can point it at a local stand-in (scripts/fake_drive.py).
     public init(session: URLSession = .shared, base: String = "https://www.googleapis.com",
-                token: @escaping @Sendable () async throws -> String) {
+                token: @escaping @Sendable (_ forceRefresh: Bool) async throws -> String) {
         (self.session, self.token) = (session, token)
         api = "\(base)/drive/v3/files"
         uploadAPI = "\(base)/upload/drive/v3/files"
+    }
+
+    /// A token that never needs refreshing (tests, the development stand-in).
+    public init(session: URLSession = .shared, base: String = "https://www.googleapis.com",
+                token: @escaping @Sendable () async throws -> String) {
+        self.init(session: session, base: base) { _ in try await token() }
     }
 
     public func list() async throws -> [SyncFile] {
@@ -51,7 +59,7 @@ public struct GoogleDrive: DriveStore {
             components.queryItems = [
                 URLQueryItem(name: "spaces", value: "appDataFolder"),
                 URLQueryItem(name: "pageSize", value: "1000"),
-                URLQueryItem(name: "fields", value: "nextPageToken,files(id,name,md5Checksum,size)"),
+                URLQueryItem(name: "fields", value: "nextPageToken,files(\(Self.fields))"),
             ] + (pageToken.map { [URLQueryItem(name: "pageToken", value: $0)] } ?? [])
             let (data, _) = try await send(URLRequest(url: components.url!))
             let page = try JSONDecoder().decode(FilePage.self, from: data)
@@ -64,9 +72,14 @@ public struct GoogleDrive: DriveStore {
     public func download(_ file: SyncFile, to destination: URL) async throws {
         guard let id = file.id, Self.isFileID(id) else { throw DriveError.badResponse }
         var request = URLRequest(url: URL(string: "\(api)/\(id)?alt=media")!)
-        request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
-        let (temporary, response) = try await session.download(for: request)
+        request.setValue("Bearer \(try await token(false))", forHTTPHeaderField: "Authorization")
+        var (temporary, response) = try await session.download(for: request)
         let fm = FileManager.default
+        if (response as? HTTPURLResponse)?.statusCode == 401 {  // refused: one fresh token, one more try
+            try? fm.removeItem(at: temporary)
+            request.setValue("Bearer \(try await token(true))", forHTTPHeaderField: "Authorization")
+            (temporary, response) = try await session.download(for: request)
+        }
         defer { try? fm.removeItem(at: temporary) }
         try check(response, data: nil)
         let size = ((try? fm.attributesOfItem(atPath: temporary.path))?[.size] as? NSNumber)?.int64Value ?? 0
@@ -87,8 +100,8 @@ public struct GoogleDrive: DriveStore {
     public func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
         // Resumable upload: one request for the session, one PUT with the bytes (works for podcasts and videos).
         if let id, !Self.isFileID(id) { throw DriveError.badResponse }
-        var start = URLRequest(url: URL(string: id.map { "\(uploadAPI)/\($0)?uploadType=resumable&fields=id,name,md5Checksum,size" }
-                                        ?? "\(uploadAPI)?uploadType=resumable&fields=id,name,md5Checksum,size")!)
+        var start = URLRequest(url: URL(string: id.map { "\(uploadAPI)/\($0)?uploadType=resumable&fields=\(Self.fields)" }
+                                        ?? "\(uploadAPI)?uploadType=resumable&fields=\(Self.fields)")!)
         start.httpMethod = id == nil ? "POST" : "PATCH"
         start.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
         let metadata: [String: Any] = id == nil ? ["name": path, "parents": ["appDataFolder"]] : [:]
@@ -100,7 +113,7 @@ public struct GoogleDrive: DriveStore {
         else { throw DriveError.badResponse }
         var put = URLRequest(url: url)
         put.httpMethod = "PUT"
-        put.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
+        put.setValue("Bearer \(try await token(false))", forHTTPHeaderField: "Authorization")
         let (data, done) = try await session.upload(for: put, fromFile: source)
         try check(done, data: data)
         return try JSONDecoder().decode(DriveFile.self, from: data).syncFile
@@ -119,10 +132,15 @@ public struct GoogleDrive: DriveStore {
         !id.isEmpty && id.count <= 200 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 
+    /// Sends with the current token; if Google refuses it (401), gets a fresh one and tries once more.
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
         var request = request
-        request.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await session.data(for: request)
+        request.setValue("Bearer \(try await token(false))", forHTTPHeaderField: "Authorization")
+        var (data, response) = try await session.data(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            request.setValue("Bearer \(try await token(true))", forHTTPHeaderField: "Authorization")
+            (data, response) = try await session.data(for: request)
+        }
         try check(response, data: data)
         return (data, response)
     }
@@ -141,7 +159,19 @@ public struct GoogleDrive: DriveStore {
         let name: String
         let md5Checksum: String?
         let size: String?
-        var syncFile: SyncFile { SyncFile(path: name, md5: md5Checksum ?? "", size: Int64(size ?? "0") ?? 0, id: id) }
+        let modifiedTime: String?
+        var syncFile: SyncFile {
+            SyncFile(path: name, md5: md5Checksum ?? "", size: Int64(size ?? "0") ?? 0, id: id, modified: modifiedTime.flatMap(Self.date))
+        }
+
+        /// Drive's RFC 3339 times ("2026-09-30T10:00:00.250Z"), with or without fractional seconds.
+        static func date(_ text: String) -> Date? {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: text) { return date }
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: text)
+        }
     }
 
     struct FilePage: Decodable {
@@ -150,15 +180,22 @@ public struct GoogleDrive: DriveStore {
     }
 }
 
-/// An in-memory Drive app folder with the same behaviour (ids, MD5s, replace in place), for tests and previews.
+/// An in-memory Drive app folder with Google's behaviour (ids, MD5s, modified times, replace in place, 404 for ids that
+/// are gone, several files allowed under one name, no promised order), for tests and previews.
 public actor MemoryDrive: DriveStore {
     public private(set) var files: [String: (file: SyncFile, data: Data)] = [:]  // by id
     private var nextId = 1
+    private var clock = 1_000_000.0
+    private let shuffled: Bool
     public private(set) var uploads = 0
 
-    public init() {}
+    /// `shuffled`: list in a different order every time, as Google may.
+    public init(shuffled: Bool = true) { self.shuffled = shuffled }
 
-    public func list() async throws -> [SyncFile] { files.values.map(\.file).sorted { $0.path < $1.path } }
+    public func list() async throws -> [SyncFile] {
+        let all = files.values.map(\.file)
+        return shuffled ? all.shuffled() : all.sorted { $0.path < $1.path }
+    }
 
     public func download(_ file: SyncFile, to destination: URL) async throws {
         guard let id = file.id, let stored = files[id] else { throw DriveError.http(404, "File not found") }
@@ -168,16 +205,32 @@ public actor MemoryDrive: DriveStore {
 
     public func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
         let data = try Data(contentsOf: source)
-        let fileId: String
-        if let id, files[id] != nil { fileId = id } else { fileId = "f\(nextId)"; nextId += 1 }
-        let file = SyncFile(path: path, md5: FileHash.md5(data), size: Int64(data.count), id: fileId)
-        files[fileId] = (file, data)
+        if let id, files[id] == nil { throw DriveError.http(404, "File not found") }
         uploads += 1
-        return file
+        return store(data, as: path, id: id)
     }
 
-    public func delete(_ file: SyncFile) async throws { if let id = file.id { files[id] = nil } }
+    public func delete(_ file: SyncFile) async throws {
+        guard let id = file.id else { return }
+        guard files[id] != nil else { throw DriveError.http(404, "File not found") }
+        files[id] = nil
+    }
 
-    /// Test helper: what's stored at a path.
-    public func data(at path: String) -> Data? { files.values.first { $0.file.path == path }?.data }
+    /// Test helper: a new file under this name, even if one exists (how duplicates appear in the Drive).
+    @discardableResult public func insert(_ data: Data, as path: String) -> SyncFile { store(data, as: path, id: nil) }
+
+    /// Test helper: what's stored at a path (the newest, if there are several).
+    public func data(at path: String) -> Data? {
+        files.values.filter { $0.file.path == path }.max { ($0.file.modified ?? .distantPast) < ($1.file.modified ?? .distantPast) }?.data
+    }
+
+    private func store(_ data: Data, as path: String, id: String?) -> SyncFile {
+        let fileId = id ?? "f\(nextId)"
+        if id == nil { nextId += 1 }
+        clock += 1
+        let file = SyncFile(path: path, md5: FileHash.md5(data), size: Int64(data.count), id: fileId,
+                            modified: Date(timeIntervalSince1970: clock))
+        files[fileId] = (file, data)
+        return file
+    }
 }

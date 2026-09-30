@@ -163,3 +163,136 @@ private func read(_ root: URL, _ path: String) -> String? {
     let padReport = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
     #expect(padReport.downloaded == 0 && read(pad, "books/gone/book.json") == nil)
 }
+
+@Test func duplicatesInTheDriveAreTidiedAndTheNewestComesDown() async throws {
+    let drive = MemoryDrive()
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await drive.insert(Data("old".utf8), as: "books/mcp/book.json")
+    await drive.insert(Data("new".utf8), as: "books/mcp/book.json")
+    let report = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
+    #expect(read(pad, "books/mcp/book.json") == "new" && report.deleted == 1)
+    let left = try await drive.list()
+    #expect(left.count == 1)
+}
+
+/// A Drive whose listing is a snapshot from earlier: what a sync sees when another device changes things mid-sync.
+private struct StaleListing: DriveStore {
+    let drive: MemoryDrive
+    let snapshot: [SyncFile]
+    func list() async throws -> [SyncFile] { snapshot }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await drive.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        try await drive.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws { try await drive.delete(file) }
+}
+
+@Test func aFileAnotherDeviceDeletedIsCreatedAgainNotLost() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync()
+    let snapshot = try await drive.list()
+    // Gone from the Drive between our list and our replace or delete: Google answers 404, like the stand-in.
+    try await drive.delete(snapshot[0])
+    await #expect(throws: DriveError.http(404, "File not found")) { try await drive.delete(snapshot[0]) }
+    try write(#"{"title":"MCP 2"}"#, mac, "books/mcp/book.json")
+    let report = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: StaleListing(drive: drive, snapshot: snapshot)).sync()
+    #expect(report.problems.isEmpty && report.uploaded == 1)
+    #expect(await drive.data(at: "books/mcp/book.json") == Data(#"{"title":"MCP 2"}"#.utf8))
+}
+
+@Test func twoDevicesWithTheSameIDNoticeAndOneStepsAside() async throws {
+    let drive = MemoryDrive()
+    let a = try temporaryRoot(), b = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+    try write(#"{"title":"MCP"}"#, a, "books/mcp/book.json")
+    try write(#"{"log":{"d":1}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    // A restored copy of the same Mac: same files, same sync state, same id.
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)
+    try write(#"{"log":{"d":2}}"#, a, "books/mcp/progress.json")
+    let first = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    #expect(!first.deviceClash && first.uploaded == 1)
+    try write(#"{"log":{"d":3}}"#, b, "books/mcp/progress.json")
+    let second = try await SyncEngine(root: b, device: "mac1", role: .mac, store: drive).sync()
+    #expect(second.deviceClash && second.uploaded == 0)   // it never overwrites the other device's file
+    #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":2}}"#.utf8))
+    let fresh = try await SyncEngine(root: b, device: "mac-2", role: .mac, store: drive).sync()
+    #expect(!fresh.deviceClash && read(b, "books/mcp/devices/mac1.json") == #"{"log":{"d":2}}"#)
+    #expect(await drive.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d":3}}"#.utf8))
+}
+
+@Test func inboxBooksNotYetTakenAreOfferedAgainWithBackoff() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"Clean Code"}"#, pad, "inbox/u1.json")
+    _ = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive)
+    let start = Date(timeIntervalSince1970: 1_000_000)
+    #expect(try await macSync.sync(now: start).arrived.map(\.lastPathComponent) == ["u1.pdf"])
+    // Not prepared (onArrived said no): offered again, but not straight away.
+    await macSync.markFailed(mac.appendingPathComponent("inbox/u1.pdf"), now: start)
+    #expect(try await macSync.sync(now: start.addingTimeInterval(60)).arrived.isEmpty)
+    #expect(try await macSync.sync(now: start.addingTimeInterval(121)).arrived.count == 1)
+    for _ in 0..<4 { await macSync.markFailed(mac.appendingPathComponent("inbox/u1.pdf"), now: start) }
+    let gaveUp = try await macSync.sync(now: start.addingTimeInterval(1e6))
+    #expect(gaveUp.arrived.isEmpty && gaveUp.problems.contains { $0.contains("Clean Code") })
+}
+
+@Test func removingEveryBookAlsoEmptiesTheInbox() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"Clean Code"}"#, pad, "inbox/u1.json")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    await padSync.forgetInbox()
+    try FileManager.default.removeItem(at: pad.appendingPathComponent("inbox"))
+    let report = try await padSync.sync()
+    #expect(report.deleted == 2 && report.uploaded == 0)
+    #expect(try await drive.list().isEmpty)
+    #expect(try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync().arrived.isEmpty)
+}
+
+@Test func anyDeviceClearsWhatsLeftOfARemovedBookAndKeepsAskingToLetGo() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write(#"{"title":"Gone"}"#, mac, "books/gone/book.json")
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive)
+    _ = try await macSync.sync()
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    await padSync.remove(book: "gone")
+    _ = try await padSync.sync()
+    // A straggler (say, a device that was offline) left a file behind: whoever sees it next takes it out.
+    await drive.insert(Data("late".utf8), as: "books/gone/chapters/02.md")
+    let first = try await macSync.sync()
+    #expect(first.removedElsewhere == ["gone"] && first.deleted == 1)
+    #expect(!(try await drive.list()).contains { $0.path.hasPrefix("books/gone/") })
+    // The folder is still here (removing it failed, or it's waiting for a run to stop): ask again.
+    #expect(try await macSync.sync().removedElsewhere == ["gone"])
+    try FileManager.default.removeItem(at: mac.appendingPathComponent("books/gone"))
+    #expect(try await macSync.sync().removedElsewhere.isEmpty)
+    #expect(SyncEngine.removedBooks(savedIn: mac) == ["gone"])
+}
+
+@Test func theHashCacheForgetsFilesThatAreGone() async throws {
+    let root = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try write("a", root, "books/mcp/book.json")
+    try write("b", root, "books/mcp/chapters/01.md")
+    let engine = SyncEngine(root: root, device: "mac1", role: .mac, store: MemoryDrive())
+    _ = try await engine.sync()
+    try FileManager.default.removeItem(at: root.appendingPathComponent("books/mcp/chapters"))
+    _ = try await engine.sync()
+    let state = try String(contentsOf: root.appendingPathComponent("sync-state.json"), encoding: .utf8)
+    #expect(state.contains("book.json") && !state.contains("01.md"))
+}

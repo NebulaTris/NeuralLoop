@@ -26,21 +26,30 @@ public struct SyncReport: Equatable, Sendable {
     public var downloaded = 0
     public var deleted = 0
     public var bytes: Int64 = 0
-    /// Mac: inbox books that just arrived, ready to prepare (the book file; its sidecar JSON sits next to it).
+    /// Mac: inbox books waiting to be prepared (the book file; its sidecar JSON sits next to it). Every sync offers
+    /// each one not yet taken, with a back-off after it couldn't be prepared (`markFailed`).
     public var arrived: [URL] = []
-    /// Books another device removed: this device should let go of them too (stop preparing, remove the folder).
+    /// Books removed on any device whose folder is still here: this device should let go of them (stop preparing,
+    /// remove the folder). Offered every sync until the folder is gone.
     public var removedElsewhere: [String] = []
+    /// Another device writes this device's progress files (they share an id): nothing was uploaded; take a new id.
+    public var deviceClash = false
     public var problems: [String] = []
     public init() {}
 }
 
 struct SyncState: Codable {
     struct Hash: Codable { var size: Int64; var modified: Double; var md5: String }
+    struct Attempt: Codable { var count: Int; var last: Double }
     var hashes: [String: Hash] = [:]
     var taken: Set<String> = []   // Mac: inbox paths already turned into books
     var sent: Set<String> = []    // pad: inbox paths uploaded
     var removed: Set<String> = []          // books removed on any device (never synced again)
     var removeFromDrive: Set<String> = []  // removed here, still to be taken out of the Drive
+    var uploaded: [String: String] = [:]   // our own progress paths → the md5 we last saw there (ours)
+    var tries: [String: Attempt] = [:]     // Mac: inbox book paths that couldn't be prepared yet
+    var dropInbox: Set<String> = []        // inbox paths to take out of the Drive ("Remove all books")
+    var dropInboxBefore: Double?           // … and every inbox upload older than this (Unix ms)
 
     init() {}
     init(from decoder: Decoder) throws {  // older state files lack the newer fields
@@ -50,6 +59,15 @@ struct SyncState: Codable {
         sent = (try? c.decode(Set<String>.self, forKey: .sent)) ?? []
         removed = (try? c.decode(Set<String>.self, forKey: .removed)) ?? []
         removeFromDrive = (try? c.decode(Set<String>.self, forKey: .removeFromDrive)) ?? []
+        uploaded = (try? c.decode([String: String].self, forKey: .uploaded)) ?? [:]
+        tries = (try? c.decode([String: Attempt].self, forKey: .tries)) ?? [:]
+        dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
+        dropInboxBefore = try? c.decode(Double.self, forKey: .dropInboxBefore)
+    }
+
+    static func load(_ root: URL) -> SyncState {
+        let saved = try? Data(contentsOf: root.appendingPathComponent("sync-state.json"))
+        return saved.flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
     }
 }
 
@@ -66,17 +84,28 @@ public actor SyncEngine {
 
     public init(root: URL, device: String, role: SyncRole, store: DriveStore) {
         (self.root, self.device, self.role, self.store) = (root, device, role, store)
-        let saved = try? Data(contentsOf: root.appendingPathComponent("sync-state.json"))
-        state = saved.flatMap { try? JSONDecoder().decode(SyncState.self, from: $0) } ?? SyncState()
+        state = SyncState.load(root)
+        state.uploaded = state.uploaded.filter { SyncLayout.progressDevice($0.key) == device }  // an id we gave up
     }
+
+    /// Books removed on any device, as last saved here (readable before signing in, so removed ids are never reused).
+    public static func removedBooks(savedIn root: URL) -> Set<String> { SyncState.load(root).removed }
 
     /// The Mac has made a book from an inbox upload: remember it, so the upload (and its sidecar) leave the Drive.
     public func markTaken(_ bookFile: URL) {
         let name = bookFile.deletingPathExtension().lastPathComponent
         for ext in [bookFile.pathExtension, "json"] {
             state.taken.insert("inbox/\(name).\(ext)")
+            state.tries["inbox/\(name).\(ext)"] = nil
             try? FileManager.default.removeItem(at: inbox.appendingPathComponent("\(name).\(ext)"))
         }
+        save()
+    }
+
+    /// The Mac couldn't prepare an inbox book this time: offer it again later (see `InboxRetry`).
+    public func markFailed(_ bookFile: URL, now: Date = Date()) {
+        let path = "inbox/\(bookFile.lastPathComponent)"
+        state.tries[path] = SyncState.Attempt(count: (state.tries[path]?.count ?? 0) + 1, last: now.timeIntervalSince1970 * 1000)
         save()
     }
 
@@ -91,9 +120,28 @@ public actor SyncEngine {
         save()
     }
 
-    public func sync(wantedMedia: Set<String> = []) async throws -> SyncReport {
+    /// "Remove all books": every book waiting in the inbox leaves the Drive too (whether sent from here or not yet
+    /// taken by the Mac), on the next sync. The caller empties the local inbox folder.
+    public func forgetInbox(now: Date = Date()) {
+        let local = ((try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil)) ?? [])
+            .map { "inbox/\($0.lastPathComponent)" }
+        state.dropInbox.formUnion(state.sent.union(local).filter(SyncLayout.isInbox))
+        state.dropInboxBefore = now.timeIntervalSince1970 * 1000
+        state.tries = [:]
+        save()
+    }
+
+    public func sync(wantedMedia: Set<String> = [], now: Date = Date()) async throws -> SyncReport {
         var remote = try await store.list()
         var report = SyncReport()
+        let local = scan()
+        let localByPath = Dictionary(local.map { ($0.path, $0.md5) }, uniquingKeysWith: { a, _ in a })
+        // Someone else writes our progress files (a copied device id): touch nothing, so we never overwrite theirs.
+        if DeviceClash.found(remote: remote, device: device, lastUploaded: state.uploaded, local: localByPath) {
+            report.deviceClash = true
+            save()
+            return report
+        }
         // Removals: ours go up (a marker, then the book's files leave the Drive); others' come down.
         for id in state.removeFromDrive {
             let marker = root.appendingPathComponent(".removed-\(id).json")
@@ -103,16 +151,41 @@ public actor SyncEngine {
                 if !remote.contains(where: { $0.path == SyncLayout.removedPath(id) }) {
                     try await store.upload(marker, as: SyncLayout.removedPath(id), replacing: nil)
                 }
-                for file in remote where SyncLayout.book(file.path) == id { try await store.delete(file); report.deleted += 1 }
-                remote.removeAll { SyncLayout.book($0.path) == id }
                 state.removeFromDrive.remove(id)
             } catch { report.problems.append("removing \(id): \(error.localizedDescription)") }
         }
-        for id in remote.compactMap({ SyncLayout.removedBook($0.path) }) where !state.removed.contains(id) {
-            state.removed.insert(id)
-            if FileManager.default.fileExists(atPath: books.appendingPathComponent(id).path) { report.removedElsewhere.append(id) }
+        state.removed.formUnion(remote.compactMap { SyncLayout.removedBook($0.path) })
+        // Whatever is left of a removed book (from a device that was offline, say) leaves the Drive, whoever sees it.
+        var gone = Set<String>()
+        for file in remote where SyncLayout.book(file.path).map(state.removed.contains) ?? false {
+            do {
+                try await deleteRemote(file)
+                report.deleted += 1
+                gone.insert(file.id ?? file.path)
+            } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
         }
-        let local = scan()
+        remote.removeAll { gone.contains($0.id ?? $0.path) }
+        for id in state.removed.sorted() where FileManager.default.fileExists(atPath: books.appendingPathComponent(id).path) {
+            report.removedElsewhere.append(id)
+        }
+        // "Remove all books": inbox uploads leave the Drive.
+        if !state.dropInbox.isEmpty || state.dropInboxBefore != nil {
+            var failed = false
+            for file in remote where SyncLayout.isInbox(file.path) && dropsFromInbox(file) {
+                do {
+                    try await deleteRemote(file)
+                    report.deleted += 1
+                    gone.insert(file.id ?? file.path)
+                    state.sent.remove(file.path)
+                } catch { failed = true; report.problems.append("\(file.path): \(error.localizedDescription)") }
+            }
+            remote.removeAll { gone.contains($0.id ?? $0.path) }
+            if !failed { state.dropInbox = []; state.dropInboxBefore = nil }
+        }
+        // Our own progress already matching the Drive counts as ours (so a later clash is noticed).
+        for file in remote where SyncLayout.progressDevice(file.path) == device && localByPath[file.path] == file.md5 {
+            state.uploaded[file.path] = file.md5
+        }
         // A pad never re-sends an inbox book it already sent (once it's gone from the Drive, the Mac has it).
         let settled = role == .mac ? state.taken : state.sent
         let plan = SyncPlan.make(local: local, remote: remote, device: device, role: role, wantedMedia: wantedMedia,
@@ -120,10 +193,15 @@ public actor SyncEngine {
         for file in plan.uploads {
             do {
                 guard let source = localURL(file.path) else { continue }
-                try await store.upload(source, as: file.path, replacing: file.id)
+                let stored: SyncFile
+                do { stored = try await store.upload(source, as: file.path, replacing: file.id) }
+                catch DriveError.http(404, _) where file.id != nil {  // deleted since we looked: create it again
+                    stored = try await store.upload(source, as: file.path, replacing: nil)
+                }
                 report.uploaded += 1
                 report.bytes += file.size
                 if SyncLayout.isInbox(file.path) { state.sent.insert(file.path) }
+                if SyncLayout.progressDevice(file.path) == device { state.uploaded[file.path] = stored.md5.isEmpty ? file.md5 : stored.md5 }
             } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
         }
         for file in plan.downloads {
@@ -133,16 +211,18 @@ public actor SyncEngine {
                 report.downloaded += 1
                 report.bytes += file.size
                 remember(file.path, destination, md5: file.md5)
-                if role == .mac, SyncLayout.isInbox(file.path), destination.pathExtension != "json" { report.arrived.append(destination) }
             } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
         }
+        var undeleted = Set<String>()
         for file in plan.deletes {
             do {
-                try await store.delete(file)
+                try await deleteRemote(file)
                 report.deleted += 1
-                state.taken.remove(file.path)
-            } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
+            } catch { undeleted.insert(file.path); report.problems.append("\(file.path): \(error.localizedDescription)") }
         }
+        // A taken inbox upload is settled once every copy of it has left the Drive.
+        for file in plan.deletes where state.taken.contains(file.path) && !undeleted.contains(file.path) { state.taken.remove(file.path) }
+        if role == .mac { offerInbox(&report, remote: Set(remote.map(\.path)), now: now.timeIntervalSince1970 * 1000) }
         if role == .pad {
             // Books the Mac has picked up: their uploads are gone from the Drive, so the local copies can go too.
             let there = Set(remote.map(\.path))
@@ -155,10 +235,44 @@ public actor SyncEngine {
         return report
     }
 
+    /// Deleting something that's already gone is fine (another device got there first).
+    private func deleteRemote(_ file: SyncFile) async throws {
+        do { try await store.delete(file) } catch DriveError.http(404, _) {}
+    }
+
+    private func dropsFromInbox(_ file: SyncFile) -> Bool {
+        if state.dropInbox.contains(file.path) { return true }
+        guard let before = state.dropInboxBefore else { return false }
+        return (file.modified.map { $0.timeIntervalSince1970 * 1000 } ?? 0) < before
+    }
+
+    /// Mac: every inbox book here that isn't taken yet, unless it's waiting out a back-off or Pip gave up on it.
+    /// A book whose sidecar is in the Drive but not here yet waits for it (so it gets its title).
+    private func offerInbox(_ report: inout SyncReport, remote: Set<String>, now: Double) {
+        let files = (try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil)) ?? []
+        for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+        where ["pdf", "epub"].contains(url.pathExtension.lowercased()) && SyncLayout.isInbox("inbox/\(url.lastPathComponent)") {
+            let path = "inbox/\(url.lastPathComponent)"
+            let sidecar = url.deletingPathExtension().appendingPathExtension("json")
+            guard !state.taken.contains(path) else { continue }
+            if !FileManager.default.fileExists(atPath: sidecar.path), remote.contains("inbox/\(sidecar.lastPathComponent)") { continue }
+            let attempt = state.tries[path]
+            if InboxRetry.gaveUp(attempts: attempt?.count ?? 0) {
+                let title = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: sidecar))) as? [String: Any])?["title"] as? String
+                report.problems.append("Pip couldn't prepare \(title.map { "“\($0)”" } ?? "a book") from your other device after "
+                    + "\(InboxRetry.maxAttempts) tries. Add it again there to give it another go.")
+            } else if InboxRetry.isDue(attempts: attempt?.count ?? 0, last: attempt?.last ?? 0, now: now) {
+                report.arrived.append(url)
+            }
+        }
+    }
+
     // MARK: local side
 
     /// This device's files in Drive layout.
     func scan() -> [SyncFile] {
+        seen = []
+        defer { state.hashes = state.hashes.filter { seen.contains($0.key) } }  // forget files that are gone
         var files: [SyncFile] = []
         let fm = FileManager.default
         for folder in (try? fm.contentsOfDirectory(at: books, includingPropertiesForKeys: nil)) ?? [] where folder.hasDirectoryPath {
@@ -201,7 +315,10 @@ public actor SyncEngine {
         return url.path.hasPrefix(container.standardizedFileURL.path + "/") ? url : nil
     }
 
+    private var seen: Set<String> = []
+
     private func hashed(_ url: URL, as path: String) -> SyncFile? {
+        seen.insert(url.path)
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = (attributes[.size] as? NSNumber)?.int64Value else { return nil }
         let modified = ((attributes[.modificationDate] as? Date) ?? .distantPast).timeIntervalSince1970

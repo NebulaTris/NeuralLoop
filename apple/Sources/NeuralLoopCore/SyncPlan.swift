@@ -15,13 +15,16 @@ public struct SyncFile: Equatable, Sendable {
     public let md5: String
     public let size: Int64
     public var id: String?  // Drive's file id (remote files only)
-    public init(path: String, md5: String, size: Int64, id: String? = nil) { (self.path, self.md5, self.size, self.id) = (path, md5, size, id) }
+    public var modified: Date?  // when Drive last changed it (remote files only; picks the newest of duplicates)
+    public init(path: String, md5: String, size: Int64, id: String? = nil, modified: Date? = nil) {
+        (self.path, self.md5, self.size, self.id, self.modified) = (path, md5, size, id, modified)
+    }
 }
 
 public struct SyncPlan: Equatable, Sendable {
     public var uploads: [SyncFile] = []      // local files to send (with the remote id when replacing)
     public var downloads: [SyncFile] = []    // remote files to fetch
-    public var deletes: [SyncFile] = []      // remote files to remove (inbox books the Mac has taken)
+    public var deletes: [SyncFile] = []      // remote files to remove (inbox books the Mac has taken, duplicates)
     public var isEmpty: Bool { uploads.isEmpty && downloads.isEmpty && deletes.isEmpty }
 }
 
@@ -109,6 +112,10 @@ extension SyncPlan {
                             wantedMedia: Set<String> = [], takenInbox: Set<String> = [], removed: Set<String> = []) -> SyncPlan {
         var plan = SyncPlan()
         let localByPath = Dictionary(local.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        // Drive allows several files with one name: keep the newest, remove the others, and use only the kept one.
+        let (kept, duplicates) = deduplicated(remote)
+        plan.deletes = duplicates
+        let remote = kept
         let remoteByPath = Dictionary(remote.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
 
         for file in local where !(SyncLayout.book(file.path).map(removed.contains) ?? false) {
@@ -138,5 +145,52 @@ extension SyncPlan {
             }
         }
         return plan
+    }
+}
+
+extension SyncPlan {
+    /// One file per name: the newest (by Drive's modified time, then id, so every device picks the same one) is kept;
+    /// the others are duplicates to delete. Only names this app writes are tidied.
+    public static func deduplicated(_ remote: [SyncFile]) -> (kept: [SyncFile], duplicates: [SyncFile]) {
+        var kept: [SyncFile] = []
+        var duplicates: [SyncFile] = []
+        for (path, group) in Dictionary(grouping: remote, by: \.path) {
+            guard group.count > 1, SyncLayout.isSafeRemote(path) else { kept += group; continue }
+            let ordered = group.sorted { a, b in
+                let (ta, tb) = (a.modified ?? .distantPast, b.modified ?? .distantPast)
+                return ta != tb ? ta > tb : (a.id ?? "") > (b.id ?? "")
+            }
+            kept.append(ordered[0])
+            duplicates += ordered.dropFirst()
+        }
+        return (kept.sorted { $0.path < $1.path }, duplicates)
+    }
+}
+
+/// Two devices with one id (Migration Assistant, or a backup restored onto a new device, copies it): each writes the
+/// same progress files. A device whose progress file in the Drive isn't what it last uploaded there knows another
+/// device is writing it, and takes a new id.
+public enum DeviceClash {
+    /// `local`: this device's files by path → md5 (a Drive copy matching what's here is ours, even if the answer to our
+    /// upload got lost on the way back).
+    public static func found(remote: [SyncFile], device: String, lastUploaded: [String: String], local: [String: String] = [:]) -> Bool {
+        remote.contains { file in
+            guard SyncLayout.progressDevice(file.path) == device, let mine = lastUploaded[file.path] else { return false }
+            return file.md5 != mine && file.md5 != local[file.path]
+        }
+    }
+}
+
+/// Inbox books the Mac couldn't take yet are offered again: after 2, 4, 8, 16 minutes, then no more (the person is told).
+public enum InboxRetry {
+    public static let maxAttempts = 5
+
+    public static func gaveUp(attempts: Int) -> Bool { attempts >= maxAttempts }
+
+    /// `last` and `now` in Unix ms.
+    public static func isDue(attempts: Int, last: Double, now: Double) -> Bool {
+        guard attempts > 0 else { return true }
+        guard !gaveUp(attempts: attempts) else { return false }
+        return now - last >= Double(1 << attempts) * 60_000
     }
 }

@@ -55,6 +55,8 @@ struct GraphExplorer: View {
     @State private var panStart: CGSize = .zero
     @State private var zoomStart: CGFloat = 1
     @State private var canvasSize = CGSize(width: 640, height: 520)
+    @State private var laidOut = false
+    @State private var layoutGeneration = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var groups: [String] {
@@ -131,6 +133,7 @@ struct GraphExplorer: View {
 
     // MARK: layout
 
+    /// The force layout costs n² per round, so it runs off the main thread; the canvas shows a light placeholder meanwhile.
     private func layOut() {
         let order = style.chapterOrder
         var anchorFor: [String: Point] = [:]
@@ -138,11 +141,27 @@ struct GraphExplorer: View {
             let k = style.colorBy == .chapter ? (order.firstIndex(of: node.chapter ?? 0) ?? 0) : 0
             anchorFor[node.id] = GraphLayout.sproutPoint(k, center: Point(0, 0))
         }
-        let radius = Dictionary(uniqueKeysWithValues: graph.nodes.map { ($0.id, Double(nodeRadius($0))) })
-        let fixed = style.saved.filter { id, _ in graph.nodes.contains { $0.id == id } }
-        let placed = GraphLayout.layout(ids: graph.nodes.map(\.id), edges: graph.edges, anchors: anchorFor, fixed: fixed, radius: radius)
+        let radius = Dictionary(graph.nodes.map { ($0.id, Double(nodeRadius($0))) }, uniquingKeysWith: { first, _ in first })
+        let ids = graph.nodes.map(\.id)
+        let known = Set(ids)
+        let fixed = style.saved.filter { known.contains($0.key) }
+        let edges = graph.edges
+        layoutGeneration += 1
+        let generation = layoutGeneration
+        laidOut = false
+        Task {
+            let placed = await Task.detached(priority: .userInitiated) {
+                GraphLayout.layout(ids: ids, edges: edges, anchors: anchorFor, fixed: fixed, radius: radius)
+            }.value
+            guard generation == layoutGeneration else { return }  // the graph changed while this one was laid out
+            apply(placed, anchors: anchorFor)
+        }
+    }
+
+    private func apply(_ placed: [String: Point], anchors anchorFor: [String: Point]) {
         anchors = anchorFor
         positions = placed
+        laidOut = true
         let new = placed.filter { style.saved[$0.key] == nil }
         if !new.isEmpty { onPlaced?(new) }
         let settled = Set(graph.nodes.compactMap(\.chapter)).subtracting(style.fresh)
@@ -229,6 +248,13 @@ struct GraphExplorer: View {
                     }
                 }
                 .padding(10)
+                if !laidOut && !graph.nodes.isEmpty {
+                    VStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Arranging the ideas…").font(Theme.body(12)).foregroundStyle(Theme.ink3)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
             .onAppear { canvasSize = geo.size }
             .onChange(of: geo.size) { canvasSize = geo.size; fit() }
@@ -516,9 +542,10 @@ private struct ZoomButtons: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Button(action: zoomIn) { Image(systemName: "plus") }.help("Zoom in")
-            Button(action: zoomOut) { Image(systemName: "minus") }.help("Zoom out")
+            Button(action: zoomIn) { Image(systemName: "plus") }.help("Zoom in").accessibilityLabel("Zoom in")
+            Button(action: zoomOut) { Image(systemName: "minus") }.help("Zoom out").accessibilityLabel("Zoom out")
             Button(action: fit) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.help("Fit the whole map")
+                .accessibilityLabel("Fit the whole map")
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
