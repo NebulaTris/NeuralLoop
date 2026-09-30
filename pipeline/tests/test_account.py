@@ -59,10 +59,23 @@ def test_status_survives_a_missing_command(monkeypatch):
     assert account.status() == {"signedIn": False, "email": ""}
 
 
-def test_the_library_runs_through_this_python_so_a_moved_app_still_works():
+def test_the_library_runs_through_this_python_so_a_moved_app_still_works(monkeypatch):
     import sys
 
-    assert account._cli()[:3] == [sys.executable, "-m", "notebooklm"]
+    # As in the app's runtime, which has notebooklm-py (an optional extra: tests don't need it).
+    installed = {"notebooklm": object()}
+    monkeypatch.setattr(account.importlib.util, "find_spec", lambda name: installed.get(name))
+    monkeypatch.setattr(account.shutil, "which", lambda name: "/somewhere/else/notebooklm")
+    assert account._cli() == [sys.executable, "-m", "notebooklm"]
+
+
+def test_without_the_library_the_notebooklm_command_on_path_is_used(monkeypatch):
+    monkeypatch.setattr(account.importlib.util, "find_spec", lambda name: None)
+    on_path = {"notebooklm": "/opt/bin/notebooklm"}
+    monkeypatch.setattr(account.shutil, "which", lambda name: on_path.get(name))
+    assert account._cli() == ["/opt/bin/notebooklm"]
+    monkeypatch.setattr(account.shutil, "which", lambda name: None)
+    assert account._cli() is None
 
 
 def test_sign_out_clears_the_saved_session(monkeypatch):

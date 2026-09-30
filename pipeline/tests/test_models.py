@@ -569,13 +569,13 @@ def test_every_model_escapes_the_chapter_it_sends(monkeypatch, fresh_opencode_pr
 
 def test_an_openai_compatible_timeout_fails_one_item_not_the_run():
     """A slow answer is not something to fix in Settings: the item fails and can be retried."""
-    import httpx
+    import httpx2  # openai's HTTP library (not httpx: its errors take an httpx2.Request)
     import openai
 
     from neuralloop_books.models.openai_compat import OpenAICompatModel
 
     model = OpenAICompatModel("custom", "m", api_key="none", base_url="https://api.example.ai/v1")
-    request = httpx.Request("POST", "https://api.example.ai/v1/chat/completions")
+    request = httpx2.Request("POST", "https://api.example.ai/v1/chat/completions")
     for error in (openai.APITimeoutError(request=request), openai.APIConnectionError(request=request)):
 
         async def fail(*args, _error=error, **kwargs):
