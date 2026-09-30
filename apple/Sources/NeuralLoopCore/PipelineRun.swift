@@ -67,11 +67,22 @@ public enum PipelineCommand {
 
     /// The pipeline's arguments. The engine, models, and voices come from the person's ai.json; keys come only
     /// from environment variables, never the command line.
-    public static func arguments(book: String, out: String, options: Options) -> [String] {
+    /// `title`: what the book is called, for its first run (the pipeline reads the app's copy, `source.pdf`, and names
+    /// the book once, when it first splits it).
+    public static func arguments(book: String, out: String, options: Options, title: String? = nil) -> [String] {
         var args = [book, "--out", out, "--no-open", "--media", options.media]
         if options.dryRun { args.append("--dry-run") }
         if options.retry { args.append("--retry") }
         if let engine = options.engine { args += ["--engine", engine] }
+        if let title { args += ["--title", title] }
         return args
+    }
+
+    /// A book's name from its file name: "Agents_guide.pdf" is "Agents guide". Nil when nothing is left.
+    public static func title(forFile file: URL) -> String? {
+        let words = file.deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+        return words.isEmpty ? nil : words.joined(separator: " ")
     }
 }

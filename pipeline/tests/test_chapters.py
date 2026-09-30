@@ -12,6 +12,25 @@ def test_front_matter_titles():
     assert not is_front_matter("Contention in databases")
 
 
+def test_reading_guides_and_back_matter_are_not_chapters():
+    for title in (
+        "How to make the most out of this book and your time?",
+        "How to use this book",
+        "How to read this book",
+        "About this book",
+        "Appendix B: Setting up Python",
+        "Appendices",
+        "Glossary",
+        "Bibliography",
+        "Further reading",
+        "Notes",
+        "References",
+    ):
+        assert is_front_matter(title), title
+    for title in ("How to build an agent", "Notes on caching", "Referential integrity", "About agents"):
+        assert not is_front_matter(title), title
+
+
 class TestEpub:
     def test_chapters_come_from_the_table_of_contents(self, epub, tmp_path):
         chapters = split_book(epub, tmp_path / "out")
@@ -53,6 +72,45 @@ class TestPdf:
         outline = [("Part I", 0, [("Ch 1", 0), ("Ch 2", 3)]), ("Part II", 6, [("Ch 3", 6), ("Ch 4", 9)])]
         chapters = split_book(write_pdf(tmp_path / "b.pdf", 12, outline), tmp_path / "out")
         assert [c["title"] for c in chapters] == ["Ch 1", "Ch 2", "Ch 3", "Ch 4"]
+
+    def test_a_guidebook_with_blank_bookmarks_a_reading_guide_and_a_long_part_of_projects(self, tmp_path):
+        """Shaped like a real guidebook: blank bookmarks, a reading guide and contents up front, one short
+        chapter with only section bookmarks inside, and a long part whose bookmarks are whole projects."""
+        outline = [
+            ("How to make the most out of this book and your time?", 0, [("Table of contents", 0)]),
+            (" ", 0, []),
+            ("AI Agents", 0, []),
+            ("What is an AI Agent?", 5, []),
+            ("Agent vs LLM vs RAG", 8, []),
+            ("  ", 8, [("LLM", 8), ("RAG", 9)]),
+            ("Building blocks", 10, [("1) Roles", 10), ("2) Tasks", 11), ("3) Tools", 12), ("4) Ask", 14)]),
+            ("Design patterns", 16, []),
+            ("", 20, []),
+            ("Projects", 21, [("#1) Agentic RAG", 22), ("", 27), ("#2) Voice RAG", 28), ("#3) Flights", 35),
+                              ("#4) Analyst", 42), ("", 48), ("#5) News", 50)]),
+        ]  # fmt: skip
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 75, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            ("What is an AI Agent?", [6, 8]),
+            ("Agent vs LLM vs RAG", [9, 10]),
+            ("Building blocks", [11, 16]),
+            ("Design patterns", [17, 21]),
+            ("#1) Agentic RAG", [23, 28]),
+            ("#2) Voice RAG", [29, 35]),
+            ("#3) Flights", [36, 42]),
+            ("#4) Analyst", [43, 50]),
+            ("#5) News", [51, 75]),
+        ]
+
+    def test_a_part_with_a_few_pages_of_its_own_keeps_them_as_a_chapter(self, tmp_path):
+        outline = [
+            ("One", 0, []),
+            ("Two", 5, []),
+            ("Projects", 10, [("Alpha", 13), ("Beta", 23), ("Gamma", 33)]),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 45, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == ["One", "Two", "Projects", "Alpha", "Beta", "Gamma"]
+        assert chapters[2]["pages"] == [11, 13]
 
     def test_without_bookmarks_pages_are_chunked(self, tmp_path):
         chapters = split_book(write_pdf(tmp_path / "b.pdf", 45, []), tmp_path / "out")

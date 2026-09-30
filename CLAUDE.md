@@ -66,7 +66,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `nl_book.py` | Entry point; friendly exit on Python < 3.10; calls `cli.main()` |
 | `neuralloop_books/cli.py` | Argument parsing, engine choice, exit codes (0 ok, 2 invalid or unreadable book, 3 setup needed: key, model, Ollama, sign-in; 130 interrupted), final summary |
 | `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run(opts, engine)` (the book's OS lock, a text lane and a media lane, quota handling, book.json after every item; a setup error cancels the other items cleanly) |
-| `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, chapters split at `#anchors` when several share one file, safety limits); front-matter filter; `UnreadableBookError`; `chapter_size` |
+| `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, chapters split at `#anchors` when several share one file, safety limits); blank bookmarks ignored, a long part whose bookmarks are chapter-sized (a "Projects" part) opened into those chapters; front matter, reading guides, and back matter (appendices, glossary…) skipped (`config.FRONT_MATTER`); `UnreadableBookError`; `chapter_size` |
 | `neuralloop_books/engines/local.py` | `LocalEngine`: any text model writes each item (checked, retried once with the reason); podcasts and explainers voiced by a speech engine |
 | `neuralloop_books/engines/notebooklm.py` | `NotebookLMEngine`: adds chapters as sources, then `ChapterMaker` makes each item; a stale session is refreshed and the item retried once |
 | `neuralloop_books/engines/auto.py` | `AutoEngine`: NotebookLM first, local engine for the whole run or per failed item (an item fails on its own if the fallback can't be set up); results tagged with who made them (`tasks.*.by`) |
@@ -117,7 +117,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
 
 - **Pipeline CLI** (used by `apple/App/Services`): `nl_book.py BOOK --out DIR [--no-open] --media SPEC --style S --audio A
   --video V --language L [--engine auto|local|notebooklm] [--provider auto|anthropic|openai|openrouter|custom|ollama|opencode|hermes|fake]
-  [--model M] [--base-url URL] [--context CHARS] [--audio-length auto|short|default|long] [--speech auto|rumik|fake] [--voices A,B] [--dry-run] [--retry]`.
+  [--model M] [--base-url URL] [--context CHARS] [--audio-length auto|short|default|long] [--speech auto|rumik|fake] [--voices A,B] [--title T] [--dry-run] [--retry]`.
+  `--title` names the book when it's first split (the app passes the original file's name, since it hands over its copy `source.pdf`; later runs keep the saved title).
   `--no-open` does nothing (kept for older callers). `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless
   a key is set) for the whole run when not, and per item when NotebookLM fails or hits its limit (a stale NotebookLM session is
   refreshed and the item retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,

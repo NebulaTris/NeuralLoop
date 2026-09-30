@@ -461,7 +461,7 @@ final class Library {
             couldNotCopy(file, folder: folder)
             return false
         }
-        startNew(id, folder: folder, copy: copy, original: file, practice: false)
+        startNew(id, folder: folder, copy: copy, original: file, practice: false, title: title)
         return true
     }
 
@@ -475,7 +475,7 @@ final class Library {
         Task {
             let copied = await Task.detached(priority: .userInitiated) { Self.copySource(file, to: copy) }.value
             adding.remove(id)
-            if copied { startNew(id, folder: folder, copy: copy, original: file, practice: practice) } else { couldNotCopy(file, folder: folder) }
+            if copied { startNew(id, folder: folder, copy: copy, original: file, practice: practice, title: title) } else { couldNotCopy(file, folder: folder) }
         }
         return true
     }
@@ -507,11 +507,12 @@ final class Library {
         reload()
     }
 
-    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool) {
+    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool, title: String?) {
         let meta: [String: Any] = ["path": copy.path, "originalPath": original.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
-        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice))
+        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice),
+                title: title ?? PipelineCommand.title(forFile: original))
         reload()
     }
 
@@ -548,12 +549,12 @@ final class Library {
         return true
     }
 
-    private func prepare(id: String, book: URL, options: PipelineCommand.Options) {
+    private func prepare(id: String, book: URL, options: PipelineCommand.Options, title: String? = nil) {
         let out = Self.root.appendingPathComponent(id, isDirectory: true)
         let runner = PipelineRunner()
         runs[id] = runner
         do {
-            try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options),
+            try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options, title: title),
                              log: out.appendingPathComponent("pipeline.log")) { [weak self] line in
                 Task { @MainActor in self?.handle(id, line) }
             } onExit: { [weak self] code, tail in

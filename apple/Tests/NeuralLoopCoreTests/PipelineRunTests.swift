@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NeuralLoopCore
 
@@ -24,6 +25,16 @@ import Testing
     let args = PipelineCommand.arguments(book: "/b/Caching.epub", out: "/lib/caching", options: .init(media: "1-2", dryRun: true, retry: false))
     #expect(args == ["/b/Caching.epub", "--out", "/lib/caching", "--no-open", "--media", "1-2", "--dry-run"])
     #expect(!args.joined(separator: " ").contains("KEY"))
+}
+
+@Test func aNewBookIsNamedAfterItsFileNotTheAppsCopy() {
+    // The pipeline reads the app's own copy (source.pdf), so the first run says what the book is called.
+    let args = PipelineCommand.arguments(book: "/lib/agents-guide/source.pdf", out: "/lib/agents-guide", options: .init(),
+                                         title: PipelineCommand.title(forFile: URL(fileURLWithPath: "/Users/me/Desktop/Agents_guide.pdf")))
+    #expect(args.suffix(2) == ["--title", "Agents guide"])
+    #expect(PipelineCommand.title(forFile: URL(fileURLWithPath: "/x/deep-learning--2nd_ed.epub")) == "deep learning 2nd ed")
+    #expect(PipelineCommand.title(forFile: URL(fileURLWithPath: "/x/___.pdf")) == nil)
+    #expect(!PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init()).contains("--title"))
 }
 
 @Test func aRunCanBeToldToUseMyAIForItemsThatAreWaiting() {

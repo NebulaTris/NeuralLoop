@@ -14,6 +14,8 @@ from .config import FRONT_MATTER
 MIN_PDF_PAGES = 2
 MIN_EPUB_CHARS = 1500
 FALLBACK_PAGES = 20
+LONG_PART_PAGES = 30  # a bookmark this long, with bookmarks inside...
+MIN_SECTION_PAGES = 4  # ...averaging this many pages each holds whole chapters (projects, say), not sections
 MAX_EPUB_ENTRY = 50_000_000
 MAX_EPUB_TOTAL = 500_000_000
 MAX_EPUB_ENTRIES = 5000
@@ -106,7 +108,11 @@ def _pdf_chapter_ranges(reader) -> list[tuple[str, int, int]]:
         inner = [child for _, _, kids in entries for child in _outline_level(reader, kids)]
         if len(inner) >= 4:
             entries = inner
-    starts = sorted({page: (title, page) for title, page, _ in entries}.values(), key=lambda e: e[1])
+    entries = _open_long_parts(reader, entries, page_count)
+    first_on_page: dict[int, tuple[str, int]] = {}
+    for title, page, _ in entries:
+        first_on_page.setdefault(page, (title, page))  # a parent and its first child: the parent names it
+    starts = sorted(first_on_page.values(), key=lambda e: e[1])
     if len(starts) < 2:
         return [
             (f"Pages {p + 1}-{min(page_count, p + FALLBACK_PAGES)}", p, min(page_count, p + FALLBACK_PAGES))
@@ -119,8 +125,33 @@ def _pdf_chapter_ranges(reader) -> list[tuple[str, int, int]]:
     return ranges
 
 
+Entry = tuple[str, int, list]  # (title, page index, child items)
+
+
+def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entry]:
+    """A long bookmark whose inner bookmarks are chapter-sized ("Projects" holding twelve projects) becomes
+    those chapters; its own opening pages stay a chapter only if there are enough of them. A chapter whose
+    inner bookmarks are short sections stays whole."""
+    ordered = sorted(entries, key=lambda e: e[1])
+    opened: list[Entry] = []
+    for i, (title, page, kids) in enumerate(ordered):
+        end = next((p for _, p, _ in ordered[i + 1 :] if p > page), page_count)
+        inside = sorted((c for c in _outline_level(reader, kids) if page <= c[1] < end), key=lambda c: c[1])
+        if (
+            end - page >= LONG_PART_PAGES
+            and len(inside) >= 2
+            and (end - inside[0][1]) / len(inside) >= MIN_SECTION_PAGES
+        ):
+            if inside[0][1] > page:
+                opened.append((title, page, []))
+            opened.extend(inside)
+        else:
+            opened.append((title, page, kids))
+    return opened
+
+
 def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
-    """Top-level bookmarks at one outline level: (title, page index, child items)."""
+    """Bookmarks at one outline level: (title, page index, child items). Blank bookmarks mark nothing."""
     level = []
     for i, item in enumerate(items):
         if isinstance(item, list):
@@ -130,6 +161,8 @@ def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
             page = reader.get_destination_page_number(item)
             title = str(item.title).strip()
         except Exception:  # broken bookmark: skip it rather than fail the book
+            continue
+        if not clean_title(title):
             continue
         if isinstance(page, int) and 0 <= page < len(reader.pages):  # None or past the end: points nowhere
             level.append((title, page, children))

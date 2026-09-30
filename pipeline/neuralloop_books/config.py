@@ -33,10 +33,14 @@ VIDEO_STYLES = {
     "paper-craft": "PAPER_CRAFT",
 }
 
+# Pages around the chapters that aren't worth a learning loop: front matter, reading guides, and back matter.
+# The last group only counts as the whole title ("Notes", but not "Notes on caching").
 FRONT_MATTER = re.compile(
-    r"^\s*(cover|title page|half title|copyright|table of contents|contents|brief contents|index|"
+    r"^\s*(?:(?:cover|title page|half title|copyright|table of contents|contents|brief contents|index|"
     r"about the authors?|acknowledge?ments?|colophon|praise for|also by|dedication|other books|"
-    r"list of (figures|tables))\b",
+    r"list of (?:figures|tables)|about this book|how to (?:use|read|get the most|make the most)\b.*\bbook|"
+    r"appendix|appendices|glossary|bibliography|further reading|endnotes)\b"
+    r"|(?:notes|references|sources)\s*$)",
     re.IGNORECASE,
 )
 
