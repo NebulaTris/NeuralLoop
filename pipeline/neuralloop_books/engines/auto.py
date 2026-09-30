@@ -7,6 +7,7 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 import asyncio
 
 from ..models import SetupError, safe_message
+from ..notebook import is_quota_error
 
 
 class AutoEngine:
@@ -17,6 +18,7 @@ class AutoEngine:
         self._state = None
         self._why = ""
         self._fallback_error: SetupError | None = None  # the local engine couldn't be set up this run
+        self._fallback_limited: set[str] = set()  # items the fallback hit its limit on: don't ask it again
 
     @property
     def name(self) -> str:
@@ -56,6 +58,10 @@ class AutoEngine:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
             except Exception as error:  # this item is made locally instead; the book always finishes
+                if task in self._fallback_limited:
+                    # The fallback is at its limit for this kind of item: this one fails (or waits) as
+                    # NotebookLM's, and NotebookLM still tries the next ones.
+                    raise _tagged(error, self.primary.name) from None
                 try:
                     fallback = await self._fallback_ready()
                 except SetupError:
@@ -69,6 +75,8 @@ class AutoEngine:
         try:
             return {**await fallback.make(task, chapter), "_by": fallback.name}
         except Exception as error:  # say who failed, so a limit is reported under the right name
+            if self.primary is not None and is_quota_error(error):
+                self._fallback_limited.add(task)
             _tagged(error, fallback.name)
             raise
 

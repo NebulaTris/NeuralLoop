@@ -34,8 +34,9 @@ def test_retry_only_revives_failed_and_waiting(tmp_path):
     state = make_state(tmp_path, 2)
     state.chapters[0]["tasks"]["quiz"]["status"] = FAILED
     state.chapters[1]["tasks"]["quiz"]["status"] = WAITING
+    state.chapters[1]["tasks"]["cards"]["status"] = DONE
     state.apply_selection({1, 2}, set(), audio=True, video=True, retry=False)
-    assert statuses(state, "quiz") == [FAILED, WAITING]
+    assert statuses(state, "quiz") == [FAILED, TODO] and statuses(state, "cards") == [TODO, DONE]
     state.apply_selection({1, 2}, set(), audio=True, video=True, retry=True)
     assert statuses(state, "quiz") == [TODO, TODO]
 
@@ -62,3 +63,11 @@ def test_items_left_working_by_an_interrupted_run_are_picked_up_again(tmp_path):
     state.chapters[0]["tasks"]["quiz"]["status"] = "working"
     assert state.reset_interrupted() == 1
     assert state.chapters[0]["tasks"]["quiz"]["status"] == "todo"
+
+
+def test_a_normal_run_tries_items_waiting_for_a_limit_again_but_not_failed_ones(tmp_path):
+    state = make_state(tmp_path, 2)
+    state.chapters[0]["tasks"]["quiz"]["status"] = FAILED
+    state.chapters[1]["tasks"]["quiz"]["status"] = WAITING
+    state.apply_selection({1, 2}, set(), audio=True, video=True, retry=False)
+    assert statuses(state, "quiz") == [FAILED, TODO]

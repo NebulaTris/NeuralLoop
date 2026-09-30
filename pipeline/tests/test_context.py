@@ -39,3 +39,21 @@ def test_long_source_is_condensed_once_and_cached(tmp_path):
     assert "Notes" in first and cache.exists()
     again = asyncio.run(context.source_for(model, long_text, budget=500, cache=cache))
     assert again == first and len(model.calls) == calls
+
+
+def test_notes_made_for_a_bigger_budget_are_remade_for_a_smaller_one(tmp_path):
+    import json
+
+    model = FakeModel()
+    long_text = "\n\n".join("Idea " + "z" * 90 for _ in range(40))
+    cache = tmp_path / "notes.json"
+    asyncio.run(context.source_for(model, long_text, budget=2_000, cache=cache))
+    assert json.loads(cache.read_text())["budget"] == 2_000
+    cache.write_text(json.dumps({"notes": "n" * 1_500, "budget": 2_000}))  # fits 2,000, not 1,000
+    calls = len(model.calls)
+    notes = asyncio.run(context.source_for(model, long_text, budget=1_000, cache=cache))
+    assert len(model.calls) > calls and notes != "n" * 1_500
+    assert json.loads(cache.read_text())["budget"] == 1_000
+    calls = len(model.calls)
+    again = asyncio.run(context.source_for(model, long_text, budget=2_000, cache=cache))
+    assert again == notes and len(model.calls) == calls  # shorter notes still fit a bigger budget

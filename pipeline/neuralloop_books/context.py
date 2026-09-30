@@ -26,11 +26,18 @@ def chunks(text: str, budget: int) -> list[str]:
 
 
 async def source_for(model, text: str, budget: int, cache: Path, system: str = "") -> str:
-    """The chapter text if it fits, otherwise condensed notes (made once, then read from `cache`)."""
+    """The chapter text if it fits, otherwise condensed notes (made once, then read from `cache`).
+
+    The cache records the budget it was made for. Notes made for a bigger budget (another model) that don't
+    fit this one are made again; notes that fit are reused.
+    """
     if len(text) <= budget:
         return text
-    if cache.exists():
-        return json.loads(cache.read_text(encoding="utf-8"))["notes"]
+    cached = _cached_notes(cache)
+    if cached is not None:
+        notes, made_for = cached
+        if len(notes) <= budget or made_for == budget:
+            return notes
     pieces = chunks(text, budget)
     # Each part's notes get a share of the budget, so all the notes fit together (~6 characters a word).
     words = max(80, budget // len(pieces) // 6)
@@ -45,5 +52,16 @@ async def source_for(model, text: str, budget: int, cache: Path, system: str = "
         notes.append(f"Notes on part {i} of {len(pieces)}:\n{note.strip()}")
     joined = "\n\n".join(notes)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps({"notes": joined}, ensure_ascii=False), encoding="utf-8")
+    cache.write_text(json.dumps({"notes": joined, "budget": budget}, ensure_ascii=False), encoding="utf-8")
     return joined
+
+
+def _cached_notes(cache: Path) -> tuple[str, int | None] | None:
+    """(notes, the budget they were made for) from the cache, or None when there are none to use."""
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # missing or half-written: make the notes again
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("notes"), str):
+        return None
+    return data["notes"], data.get("budget")

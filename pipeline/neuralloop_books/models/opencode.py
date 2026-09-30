@@ -3,18 +3,19 @@
 opencode is a coding agent: left to its defaults, `opencode run` lets the model run shell commands and edit
 files. The chapter is part of the prompt, so a book could ask the model to do exactly that. NeuralLoop only
 needs text back, so every tool is denied (the model isn't even offered one), the person's project config is
-ignored, and it runs in an empty folder. opencode 2 serves every `run` from one background service with the
-person's own settings; where `--standalone` exists, a private server is used instead so these rules apply.
+ignored, and it runs in an empty folder with a minimal environment (none of our providers' keys). opencode 2
+serves every `run` from one background service with the person's own settings, where these rules wouldn't
+apply; so a private server (`--standalone`) is required, and an opencode without it must be updated first.
 """
 
 import asyncio
 import json
-import os
 import re
 import shutil
 import tempfile
 
-from . import QuotaError, SetupError, communicate
+from ..prompts import wrap_chapter
+from . import QuotaError, SetupError, agent_env, communicate
 
 TIMEOUT = 1800.0
 PROBE_TIMEOUT = 20.0
@@ -22,10 +23,15 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _QUOTA_HINTS = ("rate limit", "ratelimit", "quota", "429", "insufficient", "credit")
 NO_TOOLS = json.dumps({"permission": {"*": "deny"}})
 _standalone: dict[str, bool] = {}  # executable -> whether its `run` has --standalone
+UPDATE = (
+    "Update opencode to use it safely: this version can't run on a private server, so NeuralLoop can't "
+    "switch its tools off. Run: opencode upgrade"
+)
 
 
 def locked_down_env() -> dict[str, str]:
-    return {**os.environ, "OPENCODE_CONFIG_CONTENT": NO_TOOLS, "OPENCODE_DISABLE_PROJECT_CONFIG": "1"}
+    """Only the basics, and none of the person's own opencode settings (they could turn tools back on)."""
+    return {**agent_env(), "OPENCODE_CONFIG_CONTENT": NO_TOOLS, "OPENCODE_DISABLE_PROJECT_CONFIG": "1"}
 
 
 class OpencodeModel:
@@ -42,6 +48,8 @@ class OpencodeModel:
         self.executable = self.executable or shutil.which("opencode")
         if not self.executable:
             raise SetupError("opencode isn't installed. Install it from https://opencode.ai, then run again.")
+        if not await self._has_standalone():
+            raise SetupError(UPDATE)
 
     async def _has_standalone(self) -> bool:
         if self.executable not in _standalone:
@@ -52,10 +60,11 @@ class OpencodeModel:
                     "--help",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=locked_down_env(),
                 )
                 stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
                 _standalone[self.executable] = b"--standalone" in stdout + stderr
-            except (OSError, asyncio.TimeoutError, TimeoutError):  # an old or odd opencode: run it plainly
+            except (OSError, asyncio.TimeoutError, TimeoutError):  # an old or odd opencode: not safe to run
                 _standalone[self.executable] = False
         return _standalone[self.executable]
 
@@ -63,9 +72,8 @@ class OpencodeModel:
         self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
     ) -> str:
         await self.check()
-        message = f"{system}\n\n<chapter>\n{source}\n</chapter>\n\n{prompt}"
-        standalone = ["--standalone"] if await self._has_standalone() else []
-        argv = [self.executable, "run", *standalone, *(["-m", self.model] if self.model else []), message]
+        message = f"{system}\n\n{wrap_chapter(source)}\n\n{prompt}"
+        argv = [self.executable, "run", "--standalone", *(["-m", self.model] if self.model else []), message]
         with tempfile.TemporaryDirectory(prefix="neuralloop-opencode-") as empty:
             process = await asyncio.create_subprocess_exec(
                 *argv,

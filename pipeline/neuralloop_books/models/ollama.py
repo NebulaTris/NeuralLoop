@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.request
 
+from ..prompts import wrap_chapter
 from ..schemas import SCHEMAS
 from ..setup import local_model_for_memory, ollama_host, total_memory
 from . import QuotaError, SetupError
@@ -75,7 +76,7 @@ class OllamaModel:
             "options": {"num_ctx": CONTEXT_TOKENS, "num_predict": MAX_OUTPUT_TOKENS},
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": f"<chapter>\n{source}\n</chapter>\n\n{prompt}"},
+                {"role": "user", "content": f"{wrap_chapter(source)}\n\n{prompt}"},
             ],
         }
         try:

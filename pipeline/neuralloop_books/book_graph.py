@@ -20,6 +20,7 @@ def normalise_name(name: str) -> str:
 def build(chapters: list[dict]) -> dict:
     nodes, edges, layers, tour = [], [], [], []
     ids_by_name: dict[str, list[str]] = {}
+    seen: set[str] = set()  # a graph saved by an older version may repeat a concept id
     for chapter in chapters:
         graph = chapter.get("graph")
         if not graph:
@@ -29,6 +30,9 @@ def build(chapters: list[dict]) -> dict:
         layers.append({"id": f"c{chapter['n']}", "name": f"{chapter['n']}. {chapter['title']}"[:48]})
         for concept in graph["concepts"]:
             node_id = prefix + concept["id"]
+            if node_id in seen:
+                continue
+            seen.add(node_id)
             nodes.append(
                 {
                     "id": node_id,

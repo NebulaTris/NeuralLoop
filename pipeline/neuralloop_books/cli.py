@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import re
@@ -87,7 +88,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ai-config", help="this person's AI choices (ai.json from Settings)")
     parser.add_argument("--title")
     parser.add_argument("--out")
-    parser.add_argument("--retry", action="store_true", help="retry failed and quota-limited items")
+    parser.add_argument(
+        "--retry", action="store_true", help="retry failed items (items waiting for a limit always are)"
+    )
     parser.add_argument(
         "--no-open", action="store_true", help="(does nothing; kept so older callers still work)"
     )
@@ -117,7 +120,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("the book must be a PDF or an EPUB")
     args.out = args.out or f"neuralloop-{_slug(book.stem)}"
     if args.dry_run:
+        # Offline and free: nothing from ai.json may reach a real model (or a real key).
         args.engine, args.provider, args.speech = "local", "fake", "fake"
+        args.model = args.base_url = None
+        args.config = dataclasses.replace(
+            args.config, make=aiconfig.ModelChoice("fake"), tasks={}, recall=aiconfig.ModelChoice("fake")
+        )
     return args
 
 
@@ -152,17 +160,17 @@ def _local_engine(opts: Options):
         async def before_start() -> None:  # awaited by the engine, inside whatever loop is running
             await setup.ensure_ollama(setup.ollama_host(), opts.log)
 
-    model = make_model(opts.provider, opts.model, env)
-    task_models = {task: _model_for(choice) for task, choice in opts.task_choices.items()}
+    model = make_model(opts.provider, opts.model, env, allow_agent_tools=opts.hermes_tools)
+    task_models = {task: _model_for(choice, opts.hermes_tools) for task, choice in opts.task_choices.items()}
     speech = make_speech(opts.speech, opts.voices, opts.voice_quality)
     return LocalEngine.from_options(opts, model, speech, task_models, before_start=before_start)
 
 
-def _model_for(choice: aiconfig.ModelChoice):
+def _model_for(choice: aiconfig.ModelChoice, hermes_tools: bool = False):
     from .models import make_model
 
     env = {**os.environ, **({"NEURALLOOP_BASE_URL": choice.base_url} if choice.base_url else {})}
-    return make_model(choice.provider, choice.model, env)
+    return make_model(choice.provider, choice.model, env, allow_agent_tools=hermes_tools)
 
 
 async def _check_ai(config: aiconfig.AIConfig) -> dict:
@@ -178,7 +186,7 @@ async def _check_ai(config: aiconfig.AIConfig) -> dict:
     async def one(choice: aiconfig.ModelChoice) -> dict:
         started = time.monotonic()
         try:
-            model = _model_for(choice)
+            model = _model_for(choice, config.hermes_tools)
             await model.check()
             await asyncio.wait_for(
                 model.complete("check", "Reply with JSON only.", "", 'Reply with {"ok": true}'), 90
@@ -210,7 +218,7 @@ def _grade_recall(args: argparse.Namespace) -> int:
     if args.provider:
         choice = aiconfig.ModelChoice(args.provider, args.model, args.base_url)
     try:
-        model = _model_for(choice)
+        model = _model_for(choice, args.config.hermes_tools)
     except SetupError:
         model = None  # no grader available: word matching still answers
     if model is None:
@@ -345,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         voices=args.voices,
         base_url=args.base_url,
         task_choices=dict(args.config.tasks),
+        hermes_tools=args.config.hermes_tools,
         voice_quality=args.config.voice_quality,
         title=args.title,
         retry=args.retry,
@@ -372,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     if counts.get(WAITING):
         print(
             "Some items are waiting for the AI provider's limit. "
-            "Run the same command again later to continue."
+            "Run the same command again once it resets, and Pip will pick them up."
         )
     if counts.get(FAILED):
         print("Some items failed. Run again with --retry to try them again.")

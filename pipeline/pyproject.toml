@@ -3,7 +3,7 @@ name = "neuralloop-books-pipeline"
 version = "0.2.0"
 description = "Turn a PDF or EPUB into learning loops, made with any AI model (or NotebookLM)"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 dependencies = ["pypdf>=4"]
 
 [project.optional-dependencies]
@@ -15,8 +15,15 @@ video = ["av>=18", "playwright>=1.50"]  # explainer videos: an animated scene re
 all = ["neuralloop-books-pipeline[anthropic,openai,rumik,notebooklm,video]"]
 dev = ["pytest>=8", "ruff>=0.6", "anthropic>=1.8", "openai>=3", "av>=18"]
 
-[tool.setuptools]
-packages = ["neuralloop_books"]
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["neuralloop_books*"]
+
+[tool.setuptools.package-data]
+neuralloop_books = ["assets/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

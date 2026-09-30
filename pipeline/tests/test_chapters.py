@@ -214,3 +214,25 @@ def test_hostile_markdown_like_text_does_not_slow_down_figures(tmp_path):
     split_book(book, tmp_path / "out")
     _chapter_text(tmp_path / "out" / "01.md")
     assert time.monotonic() - started < 10
+
+
+def test_bookmarks_pointing_nowhere_are_skipped(tmp_path, monkeypatch):
+    from pypdf import PdfReader
+
+    book = write_pdf(
+        tmp_path / "b.pdf",
+        12,
+        [("Intro", 0, []), ("Broken", 2, []), ("Caching", 4, []), ("Beyond", 5, []), ("Queues", 8, [])],
+    )
+    real = PdfReader.get_destination_page_number
+
+    def page_of(self, item):
+        return {"Broken": None, "Beyond": 99}.get(item.title, real(self, item))
+
+    monkeypatch.setattr(PdfReader, "get_destination_page_number", page_of)
+    chapters = split_book(book, tmp_path / "out")
+    assert [(c["title"], c["pages"]) for c in chapters] == [
+        ("Intro", [1, 4]),
+        ("Caching", [5, 8]),
+        ("Queues", [9, 12]),
+    ]

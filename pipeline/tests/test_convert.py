@@ -220,3 +220,30 @@ def test_quiz_and_cards_keep_only_text():
     assert convert.flashcards({"cards": [{"front": ["x"], "back": "y"}, {"front": "f", "back": "b"}]}) == [
         {"front": "f", "back": "b"}
     ]
+
+
+def test_a_list_field_given_as_one_string_is_one_item_never_letters():
+    study = convert.study({"recall": [{"prompt": "Why cache?", "keyPoints": "Speed matters"}]})
+    assert study["recall"][0]["keyPoints"] == ["Speed matters"]
+    slides = convert.explainer({"slides": [{"title": "T", "narration": "N", "points": "One idea"}]})
+    assert slides["slides"][0]["points"] == ["One idea"]
+    odd = convert.study({"recall": [{"prompt": "Why?", "keyPoints": {"a": 1}}]})
+    assert odd is None or not odd["recall"]
+
+
+def test_a_concept_graph_keeps_the_first_of_repeated_ids():
+    graph = convert.concept_graph(
+        {
+            "concepts": [
+                {"id": "cache", "name": "Caching"},
+                {"id": "cache", "name": "Cache again"},
+                {"id": "queue", "name": "Queues"},
+            ],
+            "edges": [
+                {"source": "queue", "target": "cache"},
+                {"source": "queue", "target": "ghost"},
+            ],
+        }
+    )
+    assert [c["name"] for c in graph["concepts"]] == ["Caching", "Queues"]
+    assert [(e["source"], e["target"]) for e in graph["edges"]] == [("queue", "cache")]

@@ -64,6 +64,43 @@ def safe_message(text: object, limit: int = 200, env: Mapping[str, str] | None =
     return _KEY_SHAPES.sub("[key hidden]", line)[:limit]
 
 
+# What an agent's command line (opencode, Hermes) needs from our environment to start and reach its own
+# service; everything else, above all the keys for our other providers, stays with us.
+_AGENT_ENV = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TERM",
+    "LANG",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+
+def agent_env(own_prefixes: tuple[str, ...] = (), env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """A minimal environment for an agent's command line: the basics, locale and XDG folders, plus
+    variables starting with `own_prefixes` (the agent's own settings). Never our providers' keys."""
+    env = os.environ if env is None else env
+    keep = {
+        name: value
+        for name, value in env.items()
+        if name in _AGENT_ENV or name.startswith(("LC_", "XDG_", *own_prefixes))
+    }
+    for variable in KEY_VARIABLES:
+        keep.pop(variable, None)
+    return keep
+
+
 def resolve_provider(provider: str, env: Mapping[str, str]) -> str:
     """`auto` picks the first provider with a key set, or local Ollama when there are none."""
     if provider != "auto":
@@ -71,7 +108,15 @@ def resolve_provider(provider: str, env: Mapping[str, str]) -> str:
     return next((name for name, variable in PROVIDER_KEYS.items() if env.get(variable)), "ollama")
 
 
-def make_model(provider: str, model: str | None, env: Mapping[str, str] | None = None) -> TextModel:
+def make_model(
+    provider: str,
+    model: str | None,
+    env: Mapping[str, str] | None = None,
+    *,
+    allow_agent_tools: bool = False,
+) -> TextModel:
+    """`allow_agent_tools`: the person's explicit opt-in (ai.json `hermesTools`) to run Hermes Agent even
+    though its tools can't be turned off."""
     env = os.environ if env is None else env
     provider = resolve_provider(provider, env)
     model = model or DEFAULT_MODELS.get(provider)
@@ -101,7 +146,7 @@ def make_model(provider: str, model: str | None, env: Mapping[str, str] | None =
     if provider == "hermes":
         from .hermes import HermesModel
 
-        return HermesModel(model)
+        return HermesModel(model, allow_tools=allow_agent_tools)
     if provider == "ollama":
         from .ollama import OllamaModel
 

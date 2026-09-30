@@ -50,3 +50,25 @@ def test_same_idea_in_two_chapters_is_linked():
 
 def test_chapters_without_graph_are_skipped():
     assert book_graph.build([{"n": 1, "title": "t"}])["nodes"] == []
+
+
+def test_the_book_map_never_repeats_a_node_id():
+    """A graph saved by an older version may repeat a concept id."""
+    concept = {
+        "id": "cache",
+        "name": "Caching",
+        "type": "concept",
+        "summary": "",
+        "detail": "",
+        "complexity": "simple",
+        "layer": "core",
+    }
+    graph = {
+        "concepts": [concept, {**concept, "name": "Cache again"}],
+        "layers": [{"id": "core", "name": "Core"}],
+        "edges": [],
+        "tour": [],
+    }
+    built = book_graph.build([{"n": 1, "title": "One", "graph": graph}])
+    ids = [node["id"] for node in built["nodes"]]
+    assert ids == ["c1:cache"]

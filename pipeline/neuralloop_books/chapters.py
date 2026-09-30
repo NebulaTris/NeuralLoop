@@ -127,9 +127,12 @@ def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
             continue
         children = items[i + 1] if i + 1 < len(items) and isinstance(items[i + 1], list) else []
         try:
-            level.append((str(item.title).strip(), reader.get_destination_page_number(item), children))
+            page = reader.get_destination_page_number(item)
+            title = str(item.title).strip()
         except Exception:  # broken bookmark: skip it rather than fail the book
             continue
+        if isinstance(page, int) and 0 <= page < len(reader.pages):  # None or past the end: points nowhere
+            level.append((title, page, children))
     return level
 
 
@@ -157,7 +160,7 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             file = out_dir / f"{number:02d}.md"
             text = _save_images(book, text, out_dir / "img", number)
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
-            chapters.append({"n": number, "title": title, "file": file.name, "chars": len(text)})
+            chapters.append({"n": number, "title": title, "file": file.name})
         return chapters
 
 

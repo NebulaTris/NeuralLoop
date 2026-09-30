@@ -297,3 +297,87 @@ def test_the_graph_fallback_and_the_mind_map_item_make_the_mind_map_once(tmp_pat
     graph, mind_map = asyncio.run(both())
     assert graph["graph"] and mind_map["mindmap"]["name"] == "Caching"
     assert [k for k, _ in engine.model.calls].count("mindmap") == 1
+
+
+class SmallContextModel(FakeModel):
+    """A task model with a small context window (like a local Ollama model)."""
+
+    provider = "ollama"
+    name = "Small"
+
+
+def test_each_model_gets_the_chapter_in_its_own_budget(tmp_path, monkeypatch):
+    from neuralloop_books.engines import local
+
+    monkeypatch.setitem(local.CONTEXT_CHARS, "ollama", 1_000)
+    (tmp_path / "chapters").mkdir()
+    (tmp_path / "chapters" / "01.md").write_text("# Caching\n\n" + "\n\n".join([LONG] * 2))
+    chapter = {"n": 1, "title": "Caching", "file": "01.md"}
+    main, small = FakeModel(), SmallContextModel()
+    engine = LocalEngine(
+        main,
+        FakeSpeech(),
+        tmp_path,
+        budget=400_000,
+        audio="deep-dive",
+        video="explainer",
+        language="en",
+        instructions="",
+        task_models={"quiz": small},
+    )
+    seen = {}
+    for model in (main, small):
+        original = model.complete
+
+        async def spy(kind, system, source, prompt, schema=None, _model=model, _original=original):
+            seen.setdefault((_model.name, kind), source)
+            return await _original(kind, system, source, prompt, schema)
+
+        model.complete = spy
+    make(engine, "cards", chapter)
+    make(engine, "quiz", chapter)
+    assert len(seen[(main.name, "cards")]) > 4_000  # the whole chapter
+    assert len(seen[("Small", "quiz")]) <= 1_000  # condensed for the small model
+    assert ("Small", "condense") in seen and (main.name, "condense") not in seen
+
+
+def test_a_context_override_applies_to_every_model(tmp_path):
+    from types import SimpleNamespace
+
+    opts = SimpleNamespace(
+        out=tmp_path, context=5_000, audio="brief", video="short", language="en", instructions=""
+    )
+    engine = LocalEngine.from_options(opts, FakeModel(), FakeSpeech(), {"quiz": SmallContextModel()})
+    assert engine.budget_for(engine.model) == 5_000
+    assert engine.budget_for(engine.task_models["quiz"]) == 5_000
+
+
+class CheckedSpeech(FakeSpeech):
+    def __init__(self):
+        super().__init__()
+        self.checked = 0
+
+    def check(self):
+        self.checked += 1
+
+
+def test_voices_are_checked_when_a_mid_run_fallback_takes_a_voiced_item(tmp_path, chapter):
+    """AutoEngine sets its fallback up while the item is already marked working."""
+    state = BookState.create(
+        tmp_path / "state.json", title="T", source="b.epub", chapters=[chapter], dry_run=True
+    )
+    for task, entry in state.chapters[0]["tasks"].items():
+        entry["status"] = "working" if task == "audio" else "done"
+    speech = CheckedSpeech()
+    engine = LocalEngine(
+        FakeModel(),
+        speech,
+        tmp_path,
+        budget=400_000,
+        audio="deep-dive",
+        video="explainer",
+        language="en",
+        instructions="",
+    )
+    asyncio.run(engine.prepare(state))
+    assert speech.checked == 1

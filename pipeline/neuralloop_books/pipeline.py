@@ -43,6 +43,7 @@ class Options:
     voice_quality: str = "fast"  # Rumik 4-bit ("fast", about twice as quick) or 8-bit ("best")
     # item -> aiconfig.ModelChoice, from the person's ai.json
     task_choices: dict = field(default_factory=dict)
+    hermes_tools: bool = False  # ai.json `hermesTools`: the person accepts that Hermes runs with its tools on
     title: str | None = None
     retry: bool = False
     dry_run: bool = False
@@ -135,13 +136,15 @@ def _book_lock(out: Path):
 
 async def _run(opts: Options, engine) -> BookState:
     state = prepare_state(opts)
-    bookdata.write(opts.out, state, book_options(opts))
+    await bookdata.write_async(opts.out, state, book_options(opts))
     async with engine:
         await engine.prepare(state)
         pending = state.pending()
         opts.log(f"Making {len(pending)} items with {engine.name}, chapter by chapter.")
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
-        quota_hit: dict[str, str] = {}  # item kind -> the engine that hit its limit
+        # (engine, item kind) pairs that hit a limit: later items of that kind made by the same engine wait.
+        # Keyed by engine, so a limit on auto's fallback never stops NotebookLM trying the next ones.
+        quota_hit: set[tuple[str, str]] = set()
         tasks = [
             asyncio.ensure_future(
                 _make(opts, state, engine, lanes["media" if t in MEDIA_TASKS else "text"], quota_hit, c, t)
@@ -156,24 +159,24 @@ async def _run(opts: Options, engine) -> BookState:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
-    bookdata.write(opts.out, state, book_options(opts))
+    await bookdata.write_async(opts.out, state, book_options(opts))
     return state
 
 
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
     entry = chapter["tasks"][task]
-    if task in quota_hit:
-        entry.update(status=WAITING, error=quota_message(quota_hit[task]))
+    if (engine.name, task) in quota_hit:
+        entry.update(status=WAITING, error=quota_message(engine.name))
         state.save()
         return
     async with limiter:
-        if task in quota_hit:  # another item of this kind hit the limit while we waited
-            entry.update(status=WAITING, error=quota_message(quota_hit[task]))
+        if (engine.name, task) in quota_hit:  # another item of this kind hit the limit while we waited
+            entry.update(status=WAITING, error=quota_message(engine.name))
             state.save()
             return
         entry["status"] = WORKING
         state.save()
-        bookdata.write(opts.out, state, book_options(opts))
+        await bookdata.write_async(opts.out, state, book_options(opts))
         started = time.monotonic()
         try:
             result = await engine.make(task, chapter)
@@ -186,11 +189,11 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
-                quota_hit[task] = who
+                quota_hit.add((who, task))
                 entry.update(status=WAITING, error=quota_message(who))
                 opts.log(f"  … chapter {chapter['n']} {task}: {who} limit reached; will continue next run")
             else:
                 entry.update(status=FAILED, error=f"{type(error).__name__}: {safe_message(error)}")
                 opts.log(f"  ✗ chapter {chapter['n']} {task}: {entry['error']}")
         state.save()
-        bookdata.write(opts.out, state, book_options(opts))
+        await bookdata.write_async(opts.out, state, book_options(opts))

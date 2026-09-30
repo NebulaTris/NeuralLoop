@@ -54,11 +54,15 @@ class BookState:
     def apply_selection(
         self, chapters: set[int], media: set[int], *, audio: bool, video: bool, retry: bool
     ) -> None:
-        """Mark what this run should make. Finished work is never redone."""
+        """Mark what this run should make. Finished work is never redone.
+
+        Items that waited for a limit are tried again on every run (the limit may have reset); failed items
+        only with `retry`, so one that keeps failing doesn't slow every run down.
+        """
         wanted_media = {"audio": audio, "video": video}
         for chapter in self.chapters:
             for task, entry in chapter["tasks"].items():
-                if retry and entry["status"] in (WAITING, FAILED):
+                if entry["status"] == WAITING or (retry and entry["status"] == FAILED):
                     entry["status"] = TODO
                 excluded = chapter["n"] not in chapters or (
                     task in MEDIA_TASKS and (chapter["n"] not in media or not wanted_media[task])

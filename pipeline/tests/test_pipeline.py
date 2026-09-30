@@ -354,3 +354,32 @@ def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):
     saved = (options.out / "state.json").read_text() + (options.out / "book.json").read_text()
     assert key not in saved and not any(key in line for line in lines)
     assert not any(line.startswith("Study site:") for printed in lines for line in printed.splitlines())
+
+
+class FailsFirstChapter(Failing):
+    async def make(self, task, chapter):
+        if self.error and task == "quiz" and chapter["n"] == 1:
+            raise self.error
+        return {}
+
+
+def test_a_limit_on_the_fallback_does_not_stop_notebooklm_making_later_items(options):
+    from neuralloop_books.engines.auto import AutoEngine
+
+    options.parallel = 1
+    engine = AutoEngine(
+        lambda: FailsFirstChapter("NotebookLM", RuntimeError("boom")),
+        lambda: Failing("Ollama", QuotaError("slow down")),
+        options.log,
+    )
+    state = asyncio.run(run(options, engine))
+    first, second = (c["tasks"]["quiz"] for c in state.chapters)
+    assert first["status"] == WAITING and first["error"].startswith("Ollama")
+    assert second["status"] == DONE and second["by"] == "NotebookLM"
+
+
+def test_a_limit_on_the_engine_itself_still_stops_later_items_of_that_kind(options):
+    options.parallel = 1
+    options.media = "none"
+    state = run_local(options, LimitedModel())
+    assert [c["tasks"]["quiz"]["status"] for c in state.chapters] == [WAITING, WAITING]

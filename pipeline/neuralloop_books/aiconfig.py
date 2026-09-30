@@ -1,5 +1,6 @@
 """Each person's AI choices (ai.json, written by the app's Settings): which engine, which model makes study
-material (optionally a different one per item), which model checks recall, and Rumik's two voices.
+material (optionally a different one per item), which model checks recall, Rumik's two voices, and whether
+Hermes Agent may run with its tools on (`hermesTools`, off unless the person turns it on).
 
 Everything has a default, so a missing or broken file still works out of the box. Keys never live here.
 """
@@ -32,6 +33,8 @@ class AIConfig:
         "auto"  # podcast length: "auto" (short for short chapters), "short", "default", "long"
     )
     voice_quality: str = "fast"  # "fast" (Rumik 4-bit, ~2x quicker) or "best" (8-bit)
+    # Hermes Agent's tools can't be turned off, and a book's text could steer them: only with this opt-in.
+    hermes_tools: bool = False
 
     def task(self, name: str) -> ModelChoice:
         return self.tasks.get(name, self.make)
@@ -72,4 +75,5 @@ def load(path: Path | None = None) -> AIConfig:
         voices=tuple(voices) if isinstance(voices, list) and len(voices) == 2 else defaults.voices,
         voice_quality="best" if data.get("voiceQuality") == "best" else "fast",
         audio_length=data.get("audioLength") if data.get("audioLength") in AUDIO_LENGTHS else "auto",
+        hermes_tools=data.get("hermesTools") is True,
     )

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import openai
 
+from ..prompts import wrap_chapter
 from . import QuotaError, SetupError
 
 # A "thinking" model behind an OpenAI-compatible server can't be told to skip thinking; don't let one request
@@ -53,28 +54,33 @@ class OpenAICompatModel:
     ) -> str:
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"<chapter>\n{source}\n</chapter>\n\n{prompt}"},
+            {"role": "user", "content": f"{wrap_chapter(source)}\n\n{prompt}"},
         ]
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                max_tokens=MAX_OUTPUT_TOKENS,
-            )
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                )
+            except openai.BadRequestError:
+                # Some OpenRouter models don't support JSON mode; our converters parse loose JSON anyway.
+                response = await self.client.chat.completions.create(
+                    model=self.model, messages=messages, max_tokens=MAX_OUTPUT_TOKENS
+                )
         except openai.RateLimitError as error:
             raise QuotaError(f"rate limit: {error}") from error
-        except openai.BadRequestError:
-            # Some OpenRouter models don't support JSON mode; our converters parse loose JSON anyway.
-            response = await self.client.chat.completions.create(
-                model=self.model, messages=messages, max_tokens=MAX_OUTPUT_TOKENS
-            )
         except openai.AuthenticationError as error:
             raise SetupError(f"{self.name} didn't accept your key. Check it in Settings.") from error
         except openai.NotFoundError as error:
             raise SetupError(f"{self.name} doesn't have a model called {self.model}.") from error
         except openai.PermissionDeniedError as error:
             raise SetupError(f"{self.name} says your key can't use {self.model}.") from error
+        except openai.APITimeoutError as error:
+            # A slow answer (or a dropped connection) fails this one item, which can be tried again;
+            # only check() stops a run over the connection.
+            raise RuntimeError(f"{self.name} took too long to answer") from error
         except openai.APIConnectionError as error:
-            raise SetupError(self._unreachable()) from error
+            raise RuntimeError(self._unreachable()) from error
         return response.choices[0].message.content or ""

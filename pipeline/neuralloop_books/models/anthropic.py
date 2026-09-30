@@ -2,6 +2,7 @@
 
 import anthropic
 
+from ..prompts import wrap_chapter
 from . import QuotaError, SetupError
 
 MAX_TOKENS = 64_000  # streamed, so a long podcast script never hits an HTTP timeout
@@ -33,7 +34,7 @@ class AnthropicModel:
             # The chapter comes first and is cached, so a chapter's other items reuse it.
             {
                 "type": "text",
-                "text": f"<chapter>\n{source}\n</chapter>",
+                "text": wrap_chapter(source),
                 "cache_control": {"type": "ephemeral"},
             },
             {"type": "text", "text": prompt},

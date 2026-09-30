@@ -13,7 +13,7 @@ from .. import audio, context, convert, prompts
 from ..chapters import chapter_size
 from ..config import CONTEXT_CHARS, audio_length
 from ..notebook import UnusableAnswer
-from ..state import BookState
+from ..state import TODO, WORKING, BookState
 
 LANGUAGES = {
     "en": "English",
@@ -61,15 +61,17 @@ class LocalEngine:
         task_models: dict | None = None,
         before_start=None,
         audio_length: str = "auto",
+        context: int | None = None,
     ):
         self.before_start = before_start  # e.g. start Ollama; awaited in prepare(), inside the run's loop
         self.model, self.speech, self.out_dir, self.budget = model, speech, out_dir, budget
+        self.context = context  # the person's --context: every model's budget when set
         self.audio_format, self.video_format, self.instructions = audio, video, instructions
         self.audio_length = audio_length
         self.system = prompts.SYSTEM.format(language=LANGUAGES.get(language, language))
         self.name = model.name
         self.task_models = task_models or {}  # a different model for some items, e.g. {"quiz": claude}
-        self._sources: dict[int, str] = {}
+        self._sources: dict[tuple[int, int], str] = {}  # (chapter, budget) -> what the model reads
         self._mind_maps: dict[int, dict] = {}
         self._source_locks: dict[int, asyncio.Lock] = {}
         self._mind_map_locks: dict[int, asyncio.Lock] = {}  # the graph fallback and the item share one
@@ -79,16 +81,12 @@ class LocalEngine:
     def from_options(
         cls, opts, model, speech, task_models: dict | None = None, before_start=None
     ) -> "LocalEngine":
-        budget = opts.context or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
-        if getattr(model, "local", False):
-            budget = min(
-                budget, LOCAL_SERVER_CHARS
-            )  # LM Studio and friends often run with a ~4k-token context
         return cls(
             model,
             speech,
             opts.out,
-            budget=budget,
+            budget=model_budget(model, opts.context),
+            context=opts.context,
             audio=opts.audio,
             audio_length=getattr(opts, "audio_length", "auto"),
             video=opts.video,
@@ -110,8 +108,9 @@ class LocalEngine:
         for model in {id(m): m for m in (self.model, *self.task_models.values())}.values():
             await model.check()
         voiced = ("audio", "video")
+        # "working" too: AutoEngine sets this engine up mid-run, once the item has already started.
         if any(
-            c["tasks"][t]["status"] == "todo"
+            c["tasks"][t]["status"] in (TODO, WORKING)
             for c in state.chapters
             for t in voiced
             if t in c.get("tasks", {})
@@ -125,21 +124,25 @@ class LocalEngine:
     async def make(self, task: str, chapter: dict) -> dict:
         return await getattr(self, f"_{task}")(chapter)
 
+    def budget_for(self, model) -> int:
+        """How much chapter text `model` gets at once: the main model's budget, or a task model's own."""
+        return self.budget if model is self.model else model_budget(model, self.context)
+
     # ---- the chapter text, condensed when it doesn't fit ----
 
-    async def _source(self, chapter: dict) -> str:
-        n = chapter["n"]
-        async with self._source_locks.setdefault(n, asyncio.Lock()):
-            if n not in self._sources:
+    async def _source(self, chapter: dict, model) -> str:
+        n, budget = chapter["n"], self.budget_for(model)
+        async with self._source_locks.setdefault(n, asyncio.Lock()):  # one notes file per chapter
+            if (n, budget) not in self._sources:
                 text = await asyncio.to_thread(_chapter_text, self.out_dir / "chapters" / chapter["file"])
                 cache = self.out_dir / "raw" / f"{n:02d}-notes.json"
-                self._sources[n] = await context.source_for(self.model, text, self.budget, cache, self.system)
-        return self._sources[n]
+                self._sources[n, budget] = await context.source_for(model, text, budget, cache, self.system)
+        return self._sources[n, budget]
 
     async def _ask(self, kind: str, chapter: dict, prompt: str, check, label: str):
         """Ask for one JSON item; if it's unusable or skimpy, ask once more saying exactly what was wrong."""
-        source = await self._source(chapter)
         model = self.task_models.get(kind, self.model)
+        source = await self._source(chapter, model)
         answer = await model.complete(kind, self.system, source, prompt)
         result, problem = self._judge(kind, answer, check)
         if problem:
@@ -349,6 +352,13 @@ class LocalEngine:
     async def _say(self, text: str, voice: str, delivery: str, path: Path) -> None:
         async with self._speaking:
             await asyncio.to_thread(self.speech.synth, text, voice, delivery, path)
+
+
+def model_budget(model, override: int | None = None) -> int:
+    """Characters of chapter text a model gets at once: the person's --context, or its provider's size;
+    a local OpenAI-compatible server (LM Studio and friends) often runs with a ~4k-token context."""
+    budget = override or CONTEXT_CHARS.get(getattr(model, "provider", ""), 400_000)
+    return min(budget, LOCAL_SERVER_CHARS) if getattr(model, "local", False) else budget
 
 
 def _strings(value) -> list[str]:

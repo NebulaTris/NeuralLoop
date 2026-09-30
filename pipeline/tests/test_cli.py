@@ -128,3 +128,26 @@ def test_only_real_sign_in_problems_are_reported_as_not_signed_in(epub, tmp_path
     monkeypatch.setattr(cli, "run", fails_with(RuntimeError("couldn't write to storage")))
     with pytest.raises(RuntimeError, match="storage"):
         main(args)
+
+
+def test_a_dry_run_never_uses_the_models_named_in_ai_json(epub, tmp_path, monkeypatch):
+    import json
+
+    from neuralloop_books import models
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key-000000")
+    config = tmp_path / "ai.json"
+    config.write_text(
+        json.dumps(
+            {
+                "make": {"provider": "anthropic"},
+                "tasks": {"quiz": {"provider": "anthropic"}, "audio": {"provider": "openai"}},
+                "recall": {"provider": "anthropic"},
+            }
+        )
+    )
+    made = []
+    real = models.make_model
+    monkeypatch.setattr(models, "make_model", lambda p, *a, **k: made.append(p) or real(p, *a, **k))
+    code = main([str(epub), "--dry-run", "--ai-config", str(config), "--out", str(tmp_path / "o")])
+    assert code == 0 and set(made) == {"fake"}

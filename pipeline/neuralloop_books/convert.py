@@ -87,9 +87,9 @@ def study(data: Any) -> dict | None:
         if g.get("section")
     ]
     recall = [
-        {"prompt": str(r["prompt"]), "keyPoints": [str(k) for k in r["keyPoints"]][:6]}
+        {"prompt": str(r["prompt"]), "keyPoints": _texts(r.get("keyPoints"))[:6]}
         for r in _list(data, "recall")
-        if r.get("prompt") and r.get("keyPoints")
+        if r.get("prompt") and _texts(r.get("keyPoints"))
     ][:4]
     return {"guide": guide, "recall": recall} if guide or recall else None
 
@@ -102,7 +102,7 @@ def concept_graph(data: Any) -> dict | None:
     """
     if not isinstance(data, dict):
         return None
-    concepts = [
+    concepts = _first_of_each_id(
         {
             "id": _text(c["id"]),
             "name": _text(c["name"]),
@@ -114,7 +114,7 @@ def concept_graph(data: Any) -> dict | None:
         }
         for c in _list(data, "concepts")
         if _text(c.get("id")) and _text(c.get("name"))
-    ][:_MAX_CONCEPTS]
+    )[:_MAX_CONCEPTS]
     if not concepts:
         return None
     layers = [
@@ -152,6 +152,24 @@ def concept_graph(data: Any) -> dict | None:
                 }
             )
     return {"concepts": concepts, "layers": layers, "edges": edges, "tour": tour}
+
+
+def _first_of_each_id(concepts) -> list[dict]:
+    """Concepts with a repeated id are dropped (the first one stays), so every id names one idea."""
+    seen: set[str] = set()
+    kept = []
+    for concept in concepts:
+        if concept["id"] not in seen:
+            seen.add(concept["id"])
+            kept.append(concept)
+    return kept
+
+
+def _texts(value: Any) -> list[str]:
+    """A list of strings from a model's list field. One string is one item (never split into letters);
+    anything that isn't a list or a string gives nothing."""
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [text for text in (_text(item) for item in items) if text]
 
 
 def _text(value: Any) -> str:
@@ -252,7 +270,7 @@ def explainer(data: Any) -> dict | None:
         title, narration = str(slide.get("title", "")).strip(), str(slide.get("narration", "")).strip()
         if not title or not narration:
             continue
-        points = [str(p).strip() for p in slide.get("points") or [] if str(p).strip()][:5]
+        points = _texts(slide.get("points"))[:5]
         pose = slide.get("pose") if slide.get("pose") in _POSES else "read"
         slides.append({"title": title[:90], "points": points, "narration": narration, "pose": pose})
     return {"slides": slides[:_MAX_SLIDES]} if slides else None

@@ -165,3 +165,32 @@ def test_a_limit_on_the_local_fallback_is_named_after_the_fallback():
     with pytest.raises(QuotaError) as caught:
         asyncio.run(go())
     assert made_by(caught.value, "Auto") == "Ollama"
+
+
+def test_a_limited_fallback_is_skipped_but_notebooklm_still_tries_the_item():
+    primary = Recorder("NotebookLM", fail_make={"quiz": RuntimeError("boom")})
+    fallback = Recorder("Ollama", fail_make={"quiz": QuotaError("slow down")})
+    tries = []
+    original = fallback.make
+
+    async def counting(task, chapter):
+        tries.append(task)
+        return await original(task, chapter)
+
+    fallback.make = counting
+    engine = AutoEngine(lambda: primary, lambda: fallback, lambda _: None)
+
+    async def go():
+        async with engine:
+            await engine.prepare(State())
+            with pytest.raises(QuotaError):
+                await engine.make("quiz", {"n": 1})
+            with pytest.raises(RuntimeError, match="boom") as second:
+                await engine.make("quiz", {"n": 2})
+            primary.fail_make = {}
+            return second.value, await engine.make("quiz", {"n": 3})
+
+    second, third = asyncio.run(go())
+    assert tries == ["quiz"]  # the limited fallback wasn't asked again
+    assert made_by(second, "Auto") == "NotebookLM"
+    assert third == {"quiz": "NotebookLM", "_by": "NotebookLM"}
