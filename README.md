@@ -84,7 +84,7 @@ fills in a little square for every day you study.
 
 **Mac** (Apple silicon, macOS 14 or later)
 
-1. Download the latest `NeuralLoop.dmg` from [Releases](../../releases).
+1. Download the `.dmg` from the [latest release](../../releases/latest).
 2. Drag Pip into your Applications folder (the window shows you where 🐾).
 3. Open NeuralLoop. The first time, macOS double-checks with you: **System Settings → Privacy & Security → Open Anyway**.
 
