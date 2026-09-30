@@ -22,6 +22,10 @@ final class DriveSync {
     @ObservationIgnored var onArrived: (URL, String?) -> Bool = { _, _ in false }
     /// Something changed on disk: the library should look again.
     @ObservationIgnored var onChanged: () -> Void = {}
+    /// Another device removed a book: let go of it here too.
+    @ObservationIgnored var onRemovedElsewhere: (String) -> Void = { _ in }
+    /// Books removed on any device (a new book never reuses one of their ids).
+    private(set) var removedBooks: Set<String> = []
 
     static let root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("app.neuralloop.books", isDirectory: true)
@@ -73,6 +77,28 @@ final class DriveSync {
         #endif
     }
 
+    /// The engine, made on first use (making it touches nothing on the network).
+    private func sharedEngine() -> SyncEngine {
+        if let engine { return engine }
+        let account = DriveAccount.shared
+        let store: GoogleDrive = Self.fakeDrive.map { GoogleDrive(base: $0) { "development" } }
+            ?? GoogleDrive { try await account.accessToken() }
+        let made = SyncEngine(root: Self.root, device: Self.device, role: Self.role, store: store)
+        engine = made
+        Task { removedBooks = await made.removedBooks }
+        return made
+    }
+
+    /// A book was removed here: it leaves the Drive (and every other device) on the next sync, even if that's later.
+    func removed(book id: String) {
+        removedBooks.insert(id)
+        let engine = sharedEngine()
+        Task {
+            await engine.remove(book: id)
+            await syncNow()
+        }
+    }
+
     /// Something changed here (you studied, reviewed a card): sync a few seconds later, once things settle.
     func soon() {
         soonTask?.cancel()
@@ -91,12 +117,11 @@ final class DriveSync {
             syncing = false
             if again { again = false; Task { await syncNow() } }
         }
-        let store: GoogleDrive = Self.fakeDrive.map { GoogleDrive(base: $0) { "development" } }
-            ?? GoogleDrive { try await account.accessToken() }
-        let engine = self.engine ?? SyncEngine(root: Self.root, device: Self.device, role: Self.role, store: store)
-        self.engine = engine
+        let engine = sharedEngine()
         do {
             let report = try await engine.sync(wantedMedia: wantedMedia)
+            removedBooks = await engine.removedBooks
+            for id in report.removedElsewhere { onRemovedElsewhere(id) }
             for book in report.arrived {
                 let sidecar = book.deletingPathExtension().appendingPathExtension("json")
                 let details = (try? JSONSerialization.jsonObject(with: Data(contentsOf: sidecar))) as? [String: Any]
@@ -105,7 +130,7 @@ final class DriveSync {
             lastReport = report
             lastSync = Date()
             problem = report.problems.first
-            if report.downloaded > 0 || !report.arrived.isEmpty { onChanged() }
+            if report.downloaded > 0 || !report.arrived.isEmpty || !report.removedElsewhere.isEmpty { onChanged() }
         } catch {
             problem = error.localizedDescription
         }

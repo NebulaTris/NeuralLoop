@@ -120,3 +120,46 @@ private func read(_ root: URL, _ path: String) -> String? {
 @Test func md5MatchesDrivesChecksums() throws {
     #expect(FileHash.md5(Data("hello".utf8)) == "5d41402abc4b2a76b9719d911017c592")
 }
+
+@Test func aBookRemovedOnOneDeviceLeavesEveryDeviceAndNeverComesBack() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write(#"{"title":"Keep"}"#, mac, "books/keep/book.json")
+    try write(#"{"title":"Gone"}"#, mac, "books/gone/book.json")
+    try write("# One", mac, "books/gone/chapters/01.md")
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive)
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await macSync.sync()
+    _ = try await padSync.sync()
+    #expect(read(pad, "books/gone/book.json") != nil)
+
+    // Removed on the iPad: the Drive loses it, the Mac is told to let go, and nothing comes back.
+    await padSync.remove(book: "gone")
+    try FileManager.default.removeItem(at: pad.appendingPathComponent("books/gone"))
+    _ = try await padSync.sync()
+    let left = try await drive.list().map(\.path)
+    #expect(!left.contains { $0.hasPrefix("books/gone/") } && left.contains("removed/gone.json") && left.contains("books/keep/book.json"))
+    let macReport = try await macSync.sync()
+    #expect(macReport.removedElsewhere == ["gone"] && macReport.uploaded == 0)
+    let afterMac = try await drive.list().map(\.path)
+    #expect(!afterMac.contains { $0.hasPrefix("books/gone/") })   // the Mac's copy isn't uploaded again
+    #expect(await macSync.removedBooks.contains("gone"))
+    _ = try await padSync.sync()
+    #expect(read(pad, "books/gone/book.json") == nil && read(pad, "books/keep/book.json") != nil)
+}
+
+@Test func removingWorksOfflineAndLeavesTheDriveOnTheNextSync() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write(#"{"title":"Gone"}"#, mac, "books/gone/book.json")
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive)
+    _ = try await macSync.sync()
+    await macSync.remove(book: "gone")
+    try FileManager.default.removeItem(at: mac.appendingPathComponent("books/gone"))
+    let report = try await macSync.sync()
+    #expect(report.deleted == 1)
+    let padReport = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
+    #expect(padReport.downloaded == 0 && read(pad, "books/gone/book.json") == nil)
+}

@@ -11,6 +11,7 @@ import AppKit
 struct LibraryView: View {
     @Environment(Library.self) private var library
     @State private var dropping = false
+    @State private var removing: BookEntry?
 
     private let columns = [GridItem(.adaptive(minimum: 250, maximum: 320), spacing: 20)]
 
@@ -34,6 +35,8 @@ struct LibraryView: View {
                                         #if os(macOS)
                                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
                                         #endif
+                                        Divider()
+                                        Button("Remove book…", role: .destructive) { removing = entry }
                                     }
                             }
                             addCard
@@ -67,6 +70,13 @@ struct LibraryView: View {
         }
         .alert(library.message ?? "", isPresented: Binding(get: { library.message != nil }, set: { if !$0 { library.message = nil } })) {
             Button("OK", role: .cancel) {}
+        }
+        .confirmationDialog("Remove “\(removing?.title ?? "this book")”?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove book", role: .destructive) { if let id = removing?.id { library.removeBook(id) }; removing = nil }
+            Button("Keep it", role: .cancel) { removing = nil }
+        } message: {
+            Text("Its chapters, podcasts, videos, and your progress go to the Trash, and it leaves your other devices too.")
         }
         .navigationTitle("Library")
         .toolbar { ToolbarItem(placement: .primaryAction) { ProfileButton() } }

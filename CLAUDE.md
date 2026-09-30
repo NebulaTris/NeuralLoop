@@ -154,7 +154,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
 - **Drive app folder** (spec 07): files flat, named by path: `books/<id>/…` (only the Mac uploads these; never logs, locks,
   state, meta, source copies, or `devices/`), `books/<id>/progress/<device>.json` (each device uploads only its own; others are
   downloaded to `books/<id>/devices/<device>.json`), `inbox/<uuid>.{pdf,epub}` + `inbox/<uuid>.json` (`{title, addedAt}`; the Mac
-  downloads, prepares under the title, then deletes). A pad downloads media only for opened chapters.
+  downloads, prepares under the title, then deletes). A pad downloads media only for opened chapters. `removed/<id>.json` marks a book removed on
+  any device: it leaves the Drive, every device drops its copy, and its id is never reused (`Library.removeBook`, `removeAllBooks`).
 - **Auto-resume**: the app starts a run on its own only when there's work (`AutoResume.hasWork`) and the last run allows it:
   after exit 2 or 3 it waits until settings change; other failures back off 5 minutes, doubling, up to 6 hours.
 

@@ -137,6 +137,7 @@ struct AccountPage: View {
             if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
         }
         CardBox { DriveSyncCard() }  // the card has its own title
+        CardBox { LibraryDataCard() }
         UsageCard()
     }
 }

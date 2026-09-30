@@ -42,6 +42,15 @@ public enum SyncLayout {
 
     public static func progressPath(book: String, device: String) -> String { "books/\(book)/progress/\(device).json" }
 
+    /// "removed/<id>.json": a book removed on some device. Every device drops it and never brings it back.
+    public static func removedBook(_ path: String) -> String? {
+        guard path.hasPrefix("removed/"), path.hasSuffix(".json") else { return nil }
+        let id = String(path.dropFirst(8).dropLast(5))
+        return BookID.isValid(id) ? id : nil
+    }
+
+    public static func removedPath(_ id: String) -> String { "removed/\(id).json" }
+
     /// "inbox/<name>.{pdf,epub,json}": one file, its name made only of letters, digits, and dashes (a pad uses a UUID).
     public static func isInbox(_ path: String) -> Bool {
         guard path.hasPrefix("inbox/") else { return false }
@@ -59,7 +68,7 @@ public enum SyncLayout {
     public static func isSafeRemote(_ path: String) -> Bool {
         let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         guard !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") || $0.contains("\0") }) else { return false }
-        if isInbox(path) { return true }
+        if isInbox(path) || removedBook(path) != nil { return true }
         if progressDevice(path) != nil { return book(path) != nil }
         guard book(path) != nil else { return false }
         return !isPrivate(parts.dropFirst(2).joined(separator: "/"))
@@ -95,13 +104,14 @@ extension SyncPlan {
     /// - local: this device's files in Drive layout (its own progress already at books/<id>/progress/<device>.json).
     /// - wantedMedia: "bookId:chapter" keys whose media this device wants (a pad fetches media on demand).
     /// - takenInbox: inbox paths this Mac has already turned into books (to delete remotely).
+    /// - removed: books removed on any device: nothing of theirs goes up or comes down again.
     public static func make(local: [SyncFile], remote: [SyncFile], device: String, role: SyncRole,
-                            wantedMedia: Set<String> = [], takenInbox: Set<String> = []) -> SyncPlan {
+                            wantedMedia: Set<String> = [], takenInbox: Set<String> = [], removed: Set<String> = []) -> SyncPlan {
         var plan = SyncPlan()
         let localByPath = Dictionary(local.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         let remoteByPath = Dictionary(remote.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
 
-        for file in local {
+        for file in local where !(SyncLayout.book(file.path).map(removed.contains) ?? false) {
             let theirs = remoteByPath[file.path]
             if let owner = SyncLayout.progressDevice(file.path) {
                 // Only ever our own progress goes up.
@@ -113,7 +123,8 @@ extension SyncPlan {
             }
         }
 
-        for file in remote where SyncLayout.isSafeRemote(file.path) && file.size <= SyncLayout.maxDownloadBytes {
+        for file in remote where SyncLayout.isSafeRemote(file.path) && file.size <= SyncLayout.maxDownloadBytes
+            && SyncLayout.removedBook(file.path) == nil && !(SyncLayout.book(file.path).map(removed.contains) ?? false) {
             let mine = localByPath[file.path]
             if let owner = SyncLayout.progressDevice(file.path) {
                 if owner != device, mine?.md5 != file.md5 { plan.downloads.append(file) }

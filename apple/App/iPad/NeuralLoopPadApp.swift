@@ -14,6 +14,7 @@ struct NeuralLoopPadApp: App {
         library.start()
         // Books and progress come from the Drive; books added here go to the Mac through the inbox.
         DriveSync.shared.onChanged = { library.reload() }
+        DriveSync.shared.onRemovedElsewhere = { library.removedElsewhere($0) }
         DriveSync.shared.start()
         // Podcasts keep playing with the silent switch on and the screen locked.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)

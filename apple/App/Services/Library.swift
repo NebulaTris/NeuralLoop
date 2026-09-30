@@ -288,6 +288,61 @@ final class Library {
     nonisolated static let inbox: URL = root.deletingLastPathComponent().appendingPathComponent("inbox", isDirectory: true)
 
     /// The iPad's "Add a book": keep a copy in inbox/ with a {title, addedAt} sidecar, for the Mac to prepare.
+    // MARK: removing books
+
+    /// Removes a book from this device (its folder goes to the Trash) and, through sync, from every device.
+    func removeBook(_ id: String) {
+        guard BookID.isValid(id), let entry = entry(id) else { return }
+        #if os(macOS)
+        runs[id]?.stop()
+        runs[id] = nil
+        #endif
+        forget(entry.folder)
+        DriveSync.shared.removed(book: id)
+        if path.contains(id) { path.removeAll() }
+        reload()
+    }
+
+    /// Every book goes: folders to the Trash, books waiting in the inbox, and how their runs ended.
+    func removeAllBooks() {
+        for entry in entries { removeBook(entry.id) }
+        forget(DriveSync.root.appendingPathComponent("inbox", isDirectory: true))
+        #if os(macOS)
+        try? FileManager.default.removeItem(at: Self.recordsFile)
+        records = [:]
+        #endif
+    }
+
+    /// Another device removed this book: stop preparing it and let the folder go here too.
+    func removedElsewhere(_ id: String) {
+        guard BookID.isValid(id) else { return }
+        #if os(macOS)
+        runs[id]?.stop()
+        runs[id] = nil
+        #endif
+        forget(Self.root.appendingPathComponent(id, isDirectory: true))
+        reload()
+    }
+
+    /// To the Trash when there is one (so a slip can be undone), otherwise removed.
+    private func forget(_ folder: URL) {
+        guard FileManager.default.fileExists(atPath: folder.path) else { return }
+        if (try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)) == nil {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// How much room the library takes on this device.
+    nonisolated static func librarySize() -> Int64 {
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in walker {
+            total += Int64((try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+
     func addToInbox(_ file: URL) {
         guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
             message = "Pip can read PDF and EPUB books."
@@ -340,7 +395,7 @@ final class Library {
             message = "Pip can read PDF and EPUB books."
             return false
         }
-        let taken = Set(entries.map(\.id))
+        let taken = Set(entries.map(\.id)).union(DriveSync.shared.removedBooks)  // never reuse a removed book's id
         let id = BookID.unique(base: BookID.slug(title ?? file.deletingPathExtension().lastPathComponent), taken: taken)
         let folder = Self.root.appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

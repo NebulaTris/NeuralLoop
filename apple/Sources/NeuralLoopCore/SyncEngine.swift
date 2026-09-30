@@ -28,6 +28,8 @@ public struct SyncReport: Equatable, Sendable {
     public var bytes: Int64 = 0
     /// Mac: inbox books that just arrived, ready to prepare (the book file; its sidecar JSON sits next to it).
     public var arrived: [URL] = []
+    /// Books another device removed: this device should let go of them too (stop preparing, remove the folder).
+    public var removedElsewhere: [String] = []
     public var problems: [String] = []
     public init() {}
 }
@@ -37,6 +39,18 @@ struct SyncState: Codable {
     var hashes: [String: Hash] = [:]
     var taken: Set<String> = []   // Mac: inbox paths already turned into books
     var sent: Set<String> = []    // pad: inbox paths uploaded
+    var removed: Set<String> = []          // books removed on any device (never synced again)
+    var removeFromDrive: Set<String> = []  // removed here, still to be taken out of the Drive
+
+    init() {}
+    init(from decoder: Decoder) throws {  // older state files lack the newer fields
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hashes = (try? c.decode([String: Hash].self, forKey: .hashes)) ?? [:]
+        taken = (try? c.decode(Set<String>.self, forKey: .taken)) ?? []
+        sent = (try? c.decode(Set<String>.self, forKey: .sent)) ?? []
+        removed = (try? c.decode(Set<String>.self, forKey: .removed)) ?? []
+        removeFromDrive = (try? c.decode(Set<String>.self, forKey: .removeFromDrive)) ?? []
+    }
 }
 
 public actor SyncEngine {
@@ -66,13 +80,43 @@ public actor SyncEngine {
         save()
     }
 
+    /// Books removed on any device (so a new book never reuses one of their ids).
+    public var removedBooks: Set<String> { state.removed }
+
+    /// The person removed a book on this device: it leaves the Drive on the next sync, and every other device drops it.
+    public func remove(book id: String) {
+        guard BookID.isValid(id) else { return }
+        state.removed.insert(id)
+        state.removeFromDrive.insert(id)
+        save()
+    }
+
     public func sync(wantedMedia: Set<String> = []) async throws -> SyncReport {
-        let remote = try await store.list()
+        var remote = try await store.list()
+        var report = SyncReport()
+        // Removals: ours go up (a marker, then the book's files leave the Drive); others' come down.
+        for id in state.removeFromDrive {
+            let marker = root.appendingPathComponent(".removed-\(id).json")
+            try? Data(#"{"removedBy":"\#(device)"}"#.utf8).write(to: marker)
+            defer { try? FileManager.default.removeItem(at: marker) }
+            do {
+                if !remote.contains(where: { $0.path == SyncLayout.removedPath(id) }) {
+                    try await store.upload(marker, as: SyncLayout.removedPath(id), replacing: nil)
+                }
+                for file in remote where SyncLayout.book(file.path) == id { try await store.delete(file); report.deleted += 1 }
+                remote.removeAll { SyncLayout.book($0.path) == id }
+                state.removeFromDrive.remove(id)
+            } catch { report.problems.append("removing \(id): \(error.localizedDescription)") }
+        }
+        for id in remote.compactMap({ SyncLayout.removedBook($0.path) }) where !state.removed.contains(id) {
+            state.removed.insert(id)
+            if FileManager.default.fileExists(atPath: books.appendingPathComponent(id).path) { report.removedElsewhere.append(id) }
+        }
         let local = scan()
         // A pad never re-sends an inbox book it already sent (once it's gone from the Drive, the Mac has it).
         let settled = role == .mac ? state.taken : state.sent
-        let plan = SyncPlan.make(local: local, remote: remote, device: device, role: role, wantedMedia: wantedMedia, takenInbox: settled)
-        var report = SyncReport()
+        let plan = SyncPlan.make(local: local, remote: remote, device: device, role: role, wantedMedia: wantedMedia,
+                                 takenInbox: settled, removed: state.removed)
         for file in plan.uploads {
             do {
                 guard let source = localURL(file.path) else { continue }

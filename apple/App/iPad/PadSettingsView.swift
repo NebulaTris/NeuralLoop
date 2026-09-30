@@ -29,6 +29,7 @@ struct PadSettingsView: View {
                         }
                     }
                     CardBox { DriveSyncCard() }  // the card has its own title
+                    CardBox { LibraryDataCard() }
                     SettingsCard(title: "Preparing books",
                                  note: "Only the chapter being prepared is ever sent to an AI; your library stays in your own Google Drive.") {
                         Label("Your Mac prepares every book, with NotebookLM or the AI you chose there. Books you add here wait for it.",

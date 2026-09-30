@@ -14,6 +14,7 @@ struct NeuralLoopApp: App {
         // Your library on every device: upload what the Mac prepares, prepare books added on the iPad.
         DriveSync.shared.onArrived = { file, title in library.addFromInbox(file, title: title) }
         DriveSync.shared.onChanged = { library.reload() }
+        DriveSync.shared.onRemovedElsewhere = { library.removedElsewhere($0) }
         DriveSync.shared.start()
     }
 
