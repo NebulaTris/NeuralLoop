@@ -12,7 +12,7 @@ For development: `pip install -e ".[dev]"`, then `pytest`.
 
 Each run writes the book's folder: `book.json` (everything the app shows), `knowledge-graph.json` (the book map in
 Understand-Anything's format), the chapters, and the media. Run the same command again to continue where it stopped;
-`--retry` tries failed and limit-waiting items again. See `CLAUDE.md` in the repo root for every flag and file.
+items waiting on a limit are tried again on every run, and `--retry` also retries failed ones. See `CLAUDE.md` in the repo root for every flag and file.
 
 The book is sent to the AI you choose (Google NotebookLM through notebooklm-py, which uses unofficial APIs that can change, or
 your own model). Use books you own.

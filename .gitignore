@@ -33,3 +33,7 @@ dist/
 *.key
 *.mobileprovision
 *.wav
+
+# your own signing team and private maintainer notes (never public)
+apple/Config/Local.xcconfig
+docs/private/

@@ -1,4 +1,4 @@
-# XcodeGen spec: `xcodegen` (or `make app-project`) writes NeuralLoop.xcodeproj; don't edit the project by hand.
+# XcodeGen spec: `xcodegen generate` (run by `make mac` and scripts/package-mac.sh) writes NeuralLoop.xcodeproj; don't edit the project by hand.
 name: NeuralLoop
 options:
   bundleIdPrefix: app.neuralloop
@@ -36,7 +36,7 @@ targets:
         CFBundleIconFile: AppIcon          # Resources/AppIcon.icns, made by design/pip/make_app_icon.py
         CFBundleShortVersionString: "0.2.0"
         LSApplicationCategoryType: public.app-category.education
-        NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
+        NSHumanReadableCopyright: "© 2026 Shambhavi Mishra. Source-available under PolyForm Noncommercial 1.0.0."
         # Development only: where the repo is, so the app can run the pipeline from source.
         NeuralLoopRepo: "$(NEURALLOOP_REPO)"
         ATSApplicationFontsPath: "."   # the fonts are copied into Resources itself
@@ -91,7 +91,7 @@ targets:
         CFBundleDisplayName: NeuralLoop
         CFBundleShortVersionString: "0.2.0"
         LSApplicationCategoryType: public.app-category.education
-        NSHumanReadableCopyright: "© 2026 NeuralLoop · MIT"
+        NSHumanReadableCopyright: "© 2026 Shambhavi Mishra. Source-available under PolyForm Noncommercial 1.0.0."
         UILaunchScreen: {}
         UIAppFonts: [atkinson-400.ttf, atkinson-700.ttf, fredoka-400.ttf, fredoka-500.ttf, fredoka-600.ttf]
         UISupportedInterfaceOrientations~ipad:
@@ -114,3 +114,4 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         SUPPORTS_MACCATALYST: NO
         CODE_SIGN_STYLE: Automatic        # installed from Xcode with your own Apple ID (spec 07)
+        DEVELOPMENT_TEAM: $(NEURALLOOP_TEAM)   # from Config/Local.xcconfig (not committed)

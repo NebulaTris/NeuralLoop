@@ -1,7 +1,9 @@
 # CLAUDE.md — working in the NeuralLoop repo
 
 Read this first, every session. `docs/ARCHITECTURE.md` is the guided tour of every directory and module. Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
-(where it disagrees with this file or the specs, **this file and `docs/specs` win**; notably the repo license is **MIT**).
+(where it disagrees with this file or the specs, **this file and `docs/specs` win**; notably the repo is source-available under the **PolyForm Noncommercial License 1.0.0**: `LICENSE`, with
+`NOTICE.md` for third-party licenses (Rumik voices are CC BY-NC), `TRADEMARKS.md` for the name and Pip, `SECURITY.md`, and
+`CONTRIBUTING.md` (contributions are licensed so the project can also be offered commercially)).
 
 ## What this repo is
 
@@ -37,10 +39,10 @@ Two parts, one repo:
 ## Setup and commands
 
 ```bash
-make setup      # once: pip install -e "pipeline[dev]" + playwright + chromium
+make setup      # once: creates .venv, installs hash-locked dev tools (scripts/dev-requirements.txt) + Chromium
 make test       # all tests (pytest, swift test)
-make lint       # ruff check + ruff format --check
-make check      # lint + test (CI runs this plus an Xcode build and a Pip staleness check: .github/workflows/check.yml)
+make lint       # ruff check + format over pipeline/ scripts/ design/ (root ruff.toml), shellcheck if installed
+make check      # lint + test + check-generated (Pip rig/layers, icons, DMG background are current) (CI runs this plus an Xcode build and a Pip staleness check: .github/workflows/check.yml)
 make mac        # build and open the Mac app (needs Xcode and XcodeGen: brew install xcodegen)
 make package    # dist/NeuralLoop-<version>.dmg with the runtime inside (unsigned: "Open Anyway" once)
 make runtime    # just the self-contained runtime (build/runtime)
@@ -50,7 +52,7 @@ python pipeline/nl_book.py --dry-run --out /tmp/demo   # whole pipeline offline 
 
 Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
-For development the app runs the pipeline from the repo's `.venv` (a Python 3.12 venv: `make setup PY=$PWD/.venv/bin/python`).
+For development the app runs the pipeline from the repo's `.venv`, which `make setup` creates (override with `PY=`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
 `-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLProfile YES`, `-NLMoveIn YES` (the
 "move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
@@ -126,11 +128,14 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   `recall`; exit 3 if any fail), `--grade-recall` (stdin `{question, keyPoints, answer}`, stdout `{covered:[bool], score,
   feedback, missing, by}`). `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider,
   model, baseUrl}, tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B],
-  voiceQuality:"fast"|"best", audioLength:"auto"|"short"|"default"|"long"}` (Rumik 4-bit, about twice as fast, or 8-bit; podcast
+  voiceQuality:"fast"|"best", audioLength:"auto"|"short"|"default"|"long", hermesTools:false}` (Rumik 4-bit, about twice as fast, or 8-bit; podcast
   length for NotebookLM and the local engine, `auto` = short for chapters under ~30,000 characters); flags override it.
   Progress lines on stdout: `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM
   couldn't (…); making it with X`, `  … chapter N task: {Engine} limit reached…` (the engine that actually ran the item),
-  `  ✗ chapter N task: …`, final `Book: DIR`. Exit 2 = the book couldn't be read ("This book couldn't be read: …"), 3 = setup needed.
+  `  ✗ chapter N task: …`, final `Book: DIR`. Items waiting on a limit are retried on every run; `--retry` also retries failed
+  items. Agent providers are locked down: opencode needs `--standalone` (else setup error) and runs with every tool permission
+  denied; Hermes is refused unless ai.json `hermesTools: true`; both get an environment without API keys; chapter text is
+  wrapped as data (`prompts.wrap_chapter`). Exit 2 = the book couldn't be read ("This book couldn't be read: …"), 3 = setup needed.
 - **Book folder** (`~/Library/Application Support/app.neuralloop.books/books/<id>/`): `state.json` (pipeline state; tasks record
   `by`; `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`,
   `options:{media, dryRun}`; "Prepare more" sets `media: "all"`), `progress.json` (study progress), `book.json` (the app's data),
@@ -148,13 +153,18 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   `explainer`; making one clears what an earlier engine left. Paths in it are relative and must stay inside the book folder.
 - **Study progress** (`progress.json`): `{cards:{"n:i":{s,d,reps,last,due}}, quiz:{n:{i, results:[bool]}},
   loop:{n:{prime,read,recall,map,space,closedShown}}, recall, remake:{n:{guess, best}}, mapPos:{id:[x,y]}, mapSeen:[n],
-  last:{n,stage}, log:{"YYYY-MM-DD": seconds}, updatedAt}` (`log`: study time per local day, counted in 15 s ticks while the
+  last:{n,stage}, log:{"YYYY-MM-DD": seconds}, updatedAt, stamps:{"quiz.<n>"|"recall.<n>"|"remake.<n>"|"mapPos.<id>"|"last": ms}}` (`log`: study time per local day, counted in 15 s ticks while the
   book is in front and the app active). Decoding is lenient (a bad entry is skipped); a file that isn't JSON is kept aside as
-  `progress.json.unreadable-<time>`. Merging copies keeps the most seconds per day, so merging again never inflates it.
+  `progress.json.unreadable-<time>`. Merging: cards by latest `last`, loop steps by union, study time summed across devices (each file holds only its own), and
+  quiz/recall/remake/mapPos/last per key by newest stamp. Study ticks don't bump `updatedAt`; keys are written sorted.
 - **Drive app folder** (spec 07): files flat, named by path: `books/<id>/…` (only the Mac uploads these; never logs, locks,
   state, meta, source copies, or `devices/`), `books/<id>/progress/<device>.json` (each device uploads only its own; others are
   downloaded to `books/<id>/devices/<device>.json`), `inbox/<uuid>.{pdf,epub}` + `inbox/<uuid>.json` (`{title, addedAt}`; the Mac
-  downloads, prepares under the title, then deletes). A pad downloads media only for opened chapters. `removed/<id>.json` marks a book removed on
+  downloads, prepares under the title, then deletes; failed arrivals retry with back-off). A pad downloads media only for
+  opened chapters and stages new books in `incoming/` before moving them into `inbox/`. Drive listing fields:
+  `id,name,md5Checksum,size,modifiedTime`; duplicate names keep the newest and delete the rest. The device id lives in the
+  Keychain (`SYNC_DEVICE_ID`, this device only); a clash (someone else writing our progress file) picks a new id.
+  `sync-state.json` holds hashes, taken/sent inbox, removed books, per-progress uploaded md5s, inbox retries. `removed/<id>.json` marks a book removed on
   any device: it leaves the Drive, every device drops its copy, and its id is never reused (`Library.removeBook`, `removeAllBooks`).
 - **Auto-resume**: the app starts a run on its own only when there's work (`AutoResume.hasWork`) and the last run allows it:
   after exit 2 or 3 it waits until settings change; other failures back off 5 minutes, doubling, up to 6 hours.

@@ -2,3 +2,8 @@
 // isn't committed: copy Google.xcconfig.example to Google.xcconfig and fill it in (docs/DEVELOPMENT.md → Google Drive sync).
 GOOGLE_CLIENT_ID =
 #include? "Google.xcconfig"
+
+// Your Apple team for installing the iPad app on your own iPad (Local.xcconfig, not committed):
+//   NEURALLOOP_TEAM = ABCDE12345
+NEURALLOOP_TEAM =
+#include? "Local.xcconfig"
