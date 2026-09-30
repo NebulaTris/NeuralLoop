@@ -28,7 +28,8 @@ Two parts, one repo:
    services (`apple/App/Services`) only render, wire events, and do I/O.
 3. **Never hand-edit generated files:** `apple/App/Resources/pip-rig.json`, `apple/App/Resources/PipLayers/*.png` (each layer at 3x, redrawn only when its art hash changes), and `pipeline/neuralloop_books/assets/pip-poses.js`
    (run `make pip`, i.e. `python design/pip/generate_pip.py`; animations are data in `ANIM` there, feeding both); `apple/App/Resources/AppIcon.icns` (`python design/pip/make_app_icon.py`);
-   `design/dmg/background.tiff` (`python design/dmg/make_background.py`); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
+   `design/dmg/background.tiff` (`python design/dmg/make_background.py`); `docs/readme/*` (the README's hero, poses, and
+   demo GIF: `python design/readme/make_readme_art.py`, needs ffmpeg); `apple/NeuralLoop.xcodeproj` (XcodeGen writes it from `apple/project.yml`).
 4. **`make check` must pass before every commit.** It runs the linters and all tests (Python and Swift).
 5. **Small commits** with imperative messages (`Add book import preview`, `Fix EPUB nav with nested lists`).
 6. **Respect contracts** (section "Contracts" below). If you change one, update this file and the tests in the same commit.
@@ -110,7 +111,7 @@ in only after every check; writes `.stamp` and `.neuralloop-runtime`; `make runt
 rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgbuild and Pip's drag-to-Applications window from
 `design/dmg`, then checks it like a download) · `scripts/dev-signing-identity.sh`
 (one stable self-signed identity so macOS remembers the app's permissions across rebuilds; `make mac` uses it) ·
-`design/pip/generate_pip.py` (Pip artwork source) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
+`design/pip/generate_pip.py` (Pip artwork source) · `design/readme/make_readme_art.py` (README pictures) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
 

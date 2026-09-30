@@ -6,3 +6,4 @@ extend = "pipeline/pyproject.toml"
 [lint.extend-per-file-ignores]
 "design/pip/generate_pip.py" = ["E501"]     # Pip's SVG artwork, one drawing per line
 "design/dmg/make_background.py" = ["E501"]  # the disk image window's HTML and CSS
+"design/readme/make_readme_art.py" = ["E501"]  # the README pictures' HTML and CSS
