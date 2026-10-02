@@ -1,6 +1,8 @@
 // What a silly nudge sounds like and which Pip it shows. A sound is NeuralLoop-<name>.caf, looked for in the app (the
 // three in Resources, see NOTICE.md) and then in ~/Library/Sounds (`scripts/install-nudge-sounds.sh`); without one, the
-// usual chime plays. Notification sounds keep to Focus and the system's alert volume.
+// usual chime plays. A notification's sound keeps to Focus and the Mac's alert volume; the big on-screen Pip plays its
+// sound itself (NSSound, at Settings' volume), which Focus doesn't silence, so it only shows when `NudgeDelivery` says
+// nothing else is going on, and otherwise the notification carries the sound.
 
 #if os(macOS)
 import AppKit
@@ -26,6 +28,7 @@ enum NudgeSounds {
         return FileManager.default.fileExists(atPath: mine.path) ? mine : nil
     }
 
+    /// A missing sound file falls back to the usual chime: a nudge is never silent by accident.
     static func sound(_ mood: NudgeMood) -> UNNotificationSound {
         guard url(mood) != nil, let name = fileName(mood) else { return .default }
         return UNNotificationSound(named: UNNotificationSoundName(name))

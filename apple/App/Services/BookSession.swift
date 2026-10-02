@@ -149,6 +149,9 @@ final class BookSession {
                 self.progress.updatedAt = updatedAt
                 self.ownLog[Activity.dayKey(self.now), default: 0] += 15
                 self.save(syncSoon: false)
+                #if os(macOS)
+                Nudger.studying()  // studying counts as a visit: no silly nudges about time "away"
+                #endif
             }
         }
     }

@@ -97,8 +97,11 @@ final class Library {
         started = true
         Notifier.shared.start()
         Notifier.shared.openBook = { [weak self] id in if !id.isEmpty { self?.path = [id] } }
-        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Nudger.engaged() }
+        // A visit counts from when you leave too, so time away is measured from then.
+        for visit in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(forName: visit, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Nudger.engaged() }
+            }
         }
         Task {
             await refresh()
@@ -676,28 +679,43 @@ enum Nudger {
         let now = Date()
         let today = Activity.dayKey(now.timeIntervalSince1970 * 1000)
         let hour = Calendar.current.component(.hour, from: now)
-        guard let nudge = Nudges.decide(books: books, settings: settings, history: history,
-                                        now: now.timeIntervalSince1970 * 1000, hour: hour, today: today) else { return }
+        guard let nudge = Nudges.decide(books: books, settings: settings, history: history, now: now.timeIntervalSince1970 * 1000,
+                                        hour: hour, today: today, appActive: NSApp.isActive) else { return }
         send(nudge, day: today)
     }
 
     /// `test`: from Settings, so it isn't remembered (it doesn't use up today's nudge or a silly one).
     static func send(_ nudge: Nudge, day: String? = nil, test: Bool = false) {
+        let now = Date().timeIntervalSince1970 * 1000
         if !test {
             var h = history
-            h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000), mood: nudge.mood, step: nudge.step)
+            h.sent(nudge, now: now, day: day ?? Activity.dayKey(now))
             history = h
         }
-        let onScreen = nudge.mood != .gentle && settings.bigPip
-        if onScreen { NudgeOverlay.shared.show(nudge, volume: settings.volume) }
-        Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "",
-                             sound: onScreen ? nil : NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
+        // The big Pip only when nothing else is going on; otherwise (or if its sound won't play) the notification
+        // carries the sound, keeping to Focus.
+        let onScreen = NudgeDelivery.showsBigPip(nudge.mood, settings: settings, moment: NudgeOverlay.moment())
+        let playing = onScreen && NudgeOverlay.shared.show(nudge, volume: settings.volume)
+        let mood = nudge.mood
+        var picture: (@MainActor () -> URL?)?
+        if mood != .gentle { picture = { NudgeSounds.picture(mood) } }
+        Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "", sound: playing ? nil : NudgeSounds.sound(mood),
+                             picture: picture)
     }
 
+    private static var lastVisit = Date.distantPast
+
+    /// A visit: opening NeuralLoop, leaving it, and every minute or so of studying.
     static func engaged() {
+        lastVisit = Date()
         var h = history
-        h.engaged(now: Date().timeIntervalSince1970 * 1000)
+        h.engaged(now: lastVisit.timeIntervalSince1970 * 1000)
         history = h
+    }
+
+    /// While studying (the study clock's ticks): at most once a minute.
+    static func studying() {
+        if Date().timeIntervalSince(lastVisit) >= 60 { engaged() }
     }
 
     static func pauseUntilTomorrow() {

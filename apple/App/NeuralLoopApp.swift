@@ -112,6 +112,7 @@ struct RootView: View {
         }
         // Development builds only: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {
+            if Notifier.shared.openMainWindow == nil { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
             #if DEBUG
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }

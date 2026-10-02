@@ -204,12 +204,18 @@ struct WeekStat: View {
 
 /// Pip's head for the menu bar.
 struct MenuBarPip: View {
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
-        if let icon = PipArt.icon {
-            Image(nsImage: icon)
-        } else {
-            Image(systemName: "book.circle")
+        Group {
+            if let icon = PipArt.icon {
+                Image(nsImage: icon)
+            } else {
+                Image(systemName: "book.circle")
+            }
         }
+        // Always there while the app runs, so a nudge can bring the library back even with every window closed.
+        .onAppear { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
     }
 }
 #endif

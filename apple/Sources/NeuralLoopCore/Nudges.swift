@@ -1,7 +1,9 @@
 // Pip's nudges: at most one a day, only when something small is worth doing, never in quiet hours, and backing off
 // when ignored. Away from the app a while, they turn silly on purpose, step by step: by default a tiny sad violin after
-// 8 hours, a sad meow song after 12, and a shocked "fahhh" after a day, each once until you open the app again. The
-// steps are yours to change in Settings (sounds, hours, how many, and an optional repeat of the last one).
+// 8 hours, a sad meow song after 12, and a shocked "fahhh" after a day, each once until you open the app again, and
+// only with real news (cards due or a chapter left halfway; with nothing to do, one "Pip's ready when you are" a week
+// at most). The steps are yours to change in Settings (sounds, hours, how many, and an optional repeat of the last
+// one). Silly steps keep their own history, so they never push the usual nudge into its back-off.
 // `decide` is pure so the whole policy is tested; the app gathers the inputs and plays the sounds.
 
 import Foundation
@@ -29,8 +31,10 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         case fahhh  // read only: before steps, a switch for the fahhh step
     }
 
-    /// The steps in the order they come.
-    public var ladder: [SillyStep] { steps.sorted { $0.hours < $1.hours } }
+    /// The steps in the order they come (steps with the same hours in the order they're saved).
+    public var ladder: [SillyStep] {
+        steps.enumerated().sorted { ($0.element.hours, $0.offset) < ($1.element.hours, $1.offset) }.map(\.element)
+    }
 
     /// Settings saved by earlier versions keep what they had; anything new starts at its default.
     public init(from decoder: Decoder) throws {
@@ -42,7 +46,7 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         pausedUntil = try c.decodeIfPresent(Double.self, forKey: .pausedUntil) ?? d.pausedUntil
         sillySounds = try c.decodeIfPresent(Bool.self, forKey: .sillySounds) ?? d.sillySounds
         if let saved = try? c.decodeIfPresent([LenientStep].self, forKey: .steps) {
-            steps = Array(saved.compactMap(\.step).prefix(SillyStep.most))
+            steps = SillyStep.separated(Array(saved.compactMap(\.step).prefix(SillyStep.most)))
         } else if (try? c.decodeIfPresent(Bool.self, forKey: .fahhh)) == false {
             steps = d.steps.filter { $0.sound != .shocked }
         }
@@ -64,11 +68,12 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         try c.encode(volume, forKey: .volume)
     }
 
-    /// A saved step that may be odd (an unknown or calm sound, hours out of range): kept if it can be made sensible.
+    /// A saved step that may be odd (not a step at all, an unknown or calm sound, hours out of range): kept if it can
+    /// be made sensible, skipped on its own otherwise (one bad step never throws the others away).
     private struct LenientStep: Decodable {
         let step: SillyStep?
         init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: SillyStep.CodingKeys.self)
+            guard let c = try? decoder.container(keyedBy: SillyStep.CodingKeys.self) else { step = nil; return }
             let sound = (try? c.decode(String.self, forKey: .sound)).flatMap(NudgeMood.init(rawValue:))
             let hours = (try? c.decode(Double.self, forKey: .hours)) ?? 0
             let id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
@@ -100,6 +105,29 @@ public struct SillyStep: Codable, Equatable, Hashable, Identifiable, Sendable {
 
     static func clamp(_ hours: Double) -> Double { min(max(hours.rounded(), hourRange.lowerBound), hourRange.upperBound) }
 
+    /// Hours for a new step: four after the last one, or the nearest free hour (later first, then earlier), so no two
+    /// steps share an hour.
+    public static func freeHours(after steps: [SillyStep]) -> Double {
+        let taken = Set(steps.map(\.hours))
+        return nearestFree(clamp((steps.map(\.hours).max() ?? 4) + 4), taken: taken)
+    }
+
+    /// Saved steps sharing an hour move to the nearest free one (later first, then earlier), keeping their order.
+    static func separated(_ steps: [SillyStep]) -> [SillyStep] {
+        var taken = Set<Double>()
+        return steps.map { step in
+            var step = step
+            step.hours = nearestFree(step.hours, taken: taken)
+            taken.insert(step.hours)
+            return step
+        }
+    }
+
+    private static func nearestFree(_ hours: Double, taken: Set<Double>) -> Double {
+        let later = stride(from: hours, through: hourRange.upperBound, by: 1).first { !taken.contains($0) }
+        return later ?? stride(from: hours, through: hourRange.lowerBound, by: -1).first { !taken.contains($0) } ?? hours
+    }
+
     /// A repeat interval: off (0) or within range.
     public static func repeatChoice(_ hours: Double) -> Double {
         hours <= 0 ? 0 : min(max(hours.rounded(), repeatRange.lowerBound), repeatRange.upperBound)
@@ -107,27 +135,80 @@ public struct SillyStep: Codable, Equatable, Hashable, Identifiable, Sendable {
 }
 
 public struct NudgeHistory: Codable, Equatable, Sendable {
+    /// The last usual (gentle) nudge: these three drive the one-a-day limit and the back-off.
     public var lastSent: Double = 0
     public var lastSentDay = ""
-    public var lastEngaged: Double = 0
     public var ignoredInARow = 0
+    public var lastEngaged: Double = 0
     public var lastMood: NudgeMood?
-    /// The last Silly mode step sent (its place in the ladder). Only counts while it's newer than your last visit.
-    public var lastStep: Int?
+    /// The last Silly mode step sent, and when. Silly steps keep to their own history: they never count as an ignored
+    /// nudge or use up the day's one.
+    public var lastSillySent: Double = 0
+    public var lastStepId: UUID?
+    /// The last "Pip's ready when you are" (a silly step with nothing to do): at most one a week.
+    public var lastMissedYou: Double = 0
     public init() {}
 
-    /// Record a nudge going out; a nudge sent after the last time you opened the app counts as ignored. A usual
-    /// nudge between silly steps keeps the ladder where it was.
-    public mutating func sent(now: Double, day: String, mood: NudgeMood = .gentle, step: Int? = nil) {
-        let previousWasIgnored = lastSent > 0 && lastEngaged < lastSent
-        let newAbsence = lastSent <= lastEngaged
-        ignoredInARow = previousWasIgnored ? ignoredInARow + 1 : 0
-        (lastSent, lastSentDay, lastMood) = (now, day, mood)
-        if let step { lastStep = step } else if newAbsence { lastStep = nil }
+    enum CodingKeys: String, CodingKey {
+        case lastSent, lastSentDay, ignoredInARow, lastEngaged, lastMood, lastSillySent, lastStepId, lastMissedYou
+        case lastStep  // read only: before step ids, the sent step's place in the ladder
     }
 
-    /// The last step already sent since you last opened the app.
-    var stepSinceVisit: Int? { lastSent > lastEngaged ? lastStep : nil }
+    /// Lenient: an odd field starts at its default. History saved before silly steps had their own fields keeps the
+    /// last silly nudge's time, so the ladder doesn't start again.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastSent = (try? c.decodeIfPresent(Double.self, forKey: .lastSent)) ?? 0
+        lastSentDay = (try? c.decodeIfPresent(String.self, forKey: .lastSentDay)) ?? ""
+        ignoredInARow = (try? c.decodeIfPresent(Int.self, forKey: .ignoredInARow)) ?? 0
+        lastEngaged = (try? c.decodeIfPresent(Double.self, forKey: .lastEngaged)) ?? 0
+        lastMood = ((try? c.decodeIfPresent(String.self, forKey: .lastMood)) ?? nil).flatMap(NudgeMood.init(rawValue:))
+        lastSillySent = (try? c.decodeIfPresent(Double.self, forKey: .lastSillySent)) ?? 0
+        lastStepId = (try? c.decodeIfPresent(UUID.self, forKey: .lastStepId)) ?? nil
+        lastMissedYou = (try? c.decodeIfPresent(Double.self, forKey: .lastMissedYou)) ?? 0
+        let oldStep = (try? c.decodeIfPresent(Int.self, forKey: .lastStep)) ?? nil
+        if oldStep != nil, lastSillySent == 0, let lastMood, lastMood != .gentle { lastSillySent = lastSent }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(lastSent, forKey: .lastSent)
+        try c.encode(lastSentDay, forKey: .lastSentDay)
+        try c.encode(ignoredInARow, forKey: .ignoredInARow)
+        try c.encode(lastEngaged, forKey: .lastEngaged)
+        try c.encodeIfPresent(lastMood, forKey: .lastMood)
+        try c.encode(lastSillySent, forKey: .lastSillySent)
+        try c.encodeIfPresent(lastStepId, forKey: .lastStepId)
+        try c.encode(lastMissedYou, forKey: .lastMissedYou)
+    }
+
+    /// Record a nudge going out. A usual nudge sent after the last time you opened the app counts as ignored; a silly
+    /// step only moves the ladder along.
+    public mutating func sent(now: Double, day: String, mood: NudgeMood = .gentle, step: SillyStep? = nil, missedYou: Bool = false) {
+        lastMood = mood
+        if mood == .gentle {
+            let previousWasIgnored = lastSent > 0 && lastEngaged < lastSent
+            ignoredInARow = previousWasIgnored ? ignoredInARow + 1 : 0
+            (lastSent, lastSentDay) = (now, day)
+        } else {
+            lastSillySent = now
+            if let step { lastStepId = step.id }
+            if missedYou { lastMissedYou = now }
+        }
+    }
+
+    public mutating func sent(_ nudge: Nudge, now: Double, day: String) {
+        sent(now: now, day: day, mood: nudge.mood, step: nudge.step, missedYou: nudge.missesYou)
+    }
+
+    /// How far along `ladder` this absence's silly steps went (the last sent step's place), or nil if none went out
+    /// since your last visit. A step since removed counts as far as what was due when it went out.
+    func sentPlace(in ladder: [SillyStep]) -> Int? {
+        guard lastSillySent > lastEngaged else { return nil }
+        if let lastStepId, let place = ladder.firstIndex(where: { $0.id == lastStepId }) { return place }
+        let hoursThen = (lastSillySent - lastEngaged) / Nudges.hourMs
+        return ladder.lastIndex { $0.hours <= hoursThen }
+    }
 
     public mutating func engaged(now: Double) { (lastEngaged, ignoredInARow) = (now, 0) }
 }
@@ -152,15 +233,17 @@ public struct Nudge: Equatable, Sendable {
     public let body: String
     public let mood: NudgeMood
     /// Which Silly mode step this is (recorded so it isn't sent twice), or nil.
-    public let step: Int?
+    public let step: SillyStep?
+    /// A silly step with nothing to do but say hi (at most one a week).
+    public let missesYou: Bool
     /// What's ready, without the emoji ("4 cards are ready"): a silly nudge leads its body with it.
     let headline: String
-    public init(title: String, body: String, mood: NudgeMood = .gentle, step: Int? = nil) {
-        (self.title, self.body, self.mood, self.step, headline) = (title, body, mood, step, title)
+    public init(title: String, body: String, mood: NudgeMood = .gentle, step: SillyStep? = nil, missesYou: Bool = false) {
+        (self.title, self.body, self.mood, self.step, self.missesYou, headline) = (title, body, mood, step, missesYou, title)
     }
 
     init(emoji: String, headline: String, body: String) {
-        (title, self.body, mood, step, self.headline) = ("\(emoji) \(headline)", body, .gentle, nil, headline)
+        (title, self.body, mood, step, missesYou, self.headline) = ("\(emoji) \(headline)", body, .gentle, nil, false, headline)
     }
 
     /// The title's leading emoji, shown big on screen, and the words after it.
@@ -178,7 +261,7 @@ public struct Nudge: Equatable, Sendable {
     }
 
     /// The same news, told the silly way.
-    func told(_ mood: NudgeMood, hoursAway: Double, step: Int? = nil) -> Nudge {
+    func told(_ mood: NudgeMood, hoursAway: Double, step: SillyStep? = nil, missesYou: Bool = false) -> Nudge {
         let title: String = switch mood {
         case .gentle: self.title
         case .sadViolin: "🎻 Pip is playing a tiny sad violin"
@@ -186,7 +269,7 @@ public struct Nudge: Equatable, Sendable {
         case .shocked: "😱 FAHHH! \(Self.howLong(hoursAway))?!"
         }
         guard mood != .gentle else { return self }
-        return Nudge(title: title, body: headline.isEmpty ? body : "\(headline). \(body)", mood: mood, step: step)
+        return Nudge(title: title, body: headline.isEmpty ? body : "\(headline). \(body)", mood: mood, step: step, missesYou: missesYou)
     }
 
     /// "3 hours", "A whole day", "3 days".
@@ -217,17 +300,23 @@ public enum Nudges {
         progress.cards.values.filter { $0.reps > 0 && $0.due <= now }.count
     }
 
-    /// Should Pip nudge now, and with what? `books` pairs each book with this device's progress.
+    /// Should Pip nudge now, and with what? `books` pairs each book with this device's progress; `appActive`: NeuralLoop
+    /// is the app in front (you're here, so nothing silly).
     public static func decide(books: [(book: Book, progress: StudyProgress)], settings: NudgeSettings, history: NudgeHistory,
-                              now: Double, hour: Int, today: String) -> Nudge? {
+                              now: Double, hour: Int, today: String, appActive: Bool = false) -> Nudge? {
         guard settings.enabled, now >= settings.pausedUntil,
               !inQuietHours(hour: hour, start: settings.quietStart, end: settings.quietEnd) else { return nil }
         let news = dueCardsNudge(books, now: now) ?? halfDoneChapterNudge(books, now: now)
-        // Silly mode: each step once per absence (the last may repeat), outside the one-a-day limit and the back-off.
-        if let step = sillyStep(settings: settings, history: history, now: now), !books.isEmpty {
-            let missYou = Nudge(emoji: "🐾", headline: "", body: "Your books miss you. Even five minutes counts.")
+        // Silly mode: each step once per absence (the last may repeat), outside the one-a-day limit and the back-off,
+        // and only with something to come back to; with nothing to do, a hi at most once a week.
+        if !appActive, !books.isEmpty, let place = sillyStep(settings: settings, history: history, now: now) {
+            let step = settings.ladder[place]
             let hoursAway = (now - history.lastEngaged) / hourMs
-            return (news ?? missYou).told(settings.ladder[step].sound, hoursAway: hoursAway, step: step)
+            if let news { return news.told(step.sound, hoursAway: hoursAway, step: step) }
+            if now - history.lastMissedYou >= 7 * dayMs {
+                let hi = Nudge(emoji: "🐾", headline: "", body: "Pip's ready when you are. Even five minutes counts.")
+                return hi.told(step.sound, hoursAway: hoursAway, step: step, missesYou: true)
+            }
         }
         if history.lastSentDay == today { return nil }  // at most one a day
         if history.ignoredInARow >= 2, now - history.lastSent < 2 * dayMs { return nil }  // ignored twice: every other day
@@ -236,17 +325,20 @@ public enum Nudges {
         return news
     }
 
-    /// The ladder step to send now, if any: the latest one whose hours have passed, unless it (or a later one) went out
-    /// already since your last visit; quiet hours that swallowed a step skip it.
+    /// The ladder step to send now, if any (its place in `settings.ladder`): the latest one whose hours have passed,
+    /// unless it (or a later one) went out already since your last visit; steps sharing those hours go one at a time,
+    /// in order; quiet hours that swallowed a step skip it.
     static func sillyStep(settings: NudgeSettings, history: NudgeHistory, now: Double) -> Int? {
-        guard settings.sillySounds, history.lastEngaged > 0 else { return nil }
+        guard settings.sillySounds, history.lastEngaged > 0, now >= history.lastEngaged else { return nil }
         let ladder = settings.ladder
         let hoursAway = (now - history.lastEngaged) / hourMs
-        guard let due = ladder.lastIndex(where: { $0.hours <= hoursAway }) else { return nil }
-        guard let sent = history.stepSinceVisit else { return due }
-        if due > sent { return due }
+        guard let due = ladder.lastIndex(where: { $0.hours <= hoursAway }),
+              let dueGroup = ladder.firstIndex(where: { $0.hours == ladder[due].hours }) else { return nil }
+        guard let sent = history.sentPlace(in: ladder) else { return dueGroup }
+        let next = max(sent + 1, dueGroup)
+        if next <= due { return next }
         let repeatsLast = settings.repeatHours > 0 && sent == ladder.count - 1 && due == sent
-        return repeatsLast && now - history.lastSent >= settings.repeatHours * hourMs ? due : nil
+        return repeatsLast && now - history.lastSillySent >= settings.repeatHours * hourMs ? due : nil
     }
 
     static func dueCardsNudge(_ books: [(book: Book, progress: StudyProgress)], now: Double) -> Nudge? {
