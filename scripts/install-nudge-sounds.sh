@@ -2,20 +2,26 @@
 # Sounds for Pip's silly nudges (Settings → Nudges → Silly mode):
 #
 #   scripts/install-nudge-sounds.sh VIOLIN MEOW FAHHH                      # yours, on this Mac (~/Library/Sounds)
-#   OUT=apple/App/Resources scripts/install-nudge-sounds.sh VIOLIN MEOW FAHHH  # the ones the app ships
+#   OUT=apple/App/Resources scripts/install-nudge-sounds.sh VIOLIN MEOW FAHHH  # the ones the app ships (run from the repo root)
 #
-# Each file (MP3, M4A, WAV, …) becomes NeuralLoop-<name>.caf: every tag stripped (no export or device details), an
+# A relative OUT is taken from the current directory. Each file (MP3, M4A, WAV, …) becomes NeuralLoop-<name>.caf: every tag stripped (no export or device details), an
 # even loudness, at most 12 seconds (fading out), IMA4-compressed (a format notification sounds accept). The app's own
 # sounds win over ~/Library/Sounds. Needs ffmpeg (brew install ffmpeg) and macOS's afconvert. Pass "-" to skip one.
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
   echo "Usage: $0 VIOLIN MEOW FAHHH   (use - to skip one)" >&2
+  echo "       OUT=apple/App/Resources $0 VIOLIN MEOW FAHHH   (the shipped sounds; run from the repo root)" >&2
   exit 2
 fi
 command -v ffmpeg >/dev/null || { echo "This needs ffmpeg: brew install ffmpeg" >&2; exit 3; }
+command -v afconvert >/dev/null || { echo "This needs macOS's afconvert, so run it on a Mac." >&2; exit 3; }
 
 out="${OUT:-$HOME/Library/Sounds}"
+case "$out" in
+  /*) ;;
+  *) out="$PWD/$out" ;;  # a relative OUT is from the current directory
+esac
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"

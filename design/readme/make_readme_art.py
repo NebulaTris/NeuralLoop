@@ -355,6 +355,8 @@ def main() -> None:
         page.screenshot(path=str(OUT / "poses.png"), omit_background=True)
         page.close()
         for pose in POSES:
+            if pose in ("sad", "shocked"):  # Silly mode's joke poses; the README doesn't show them
+                continue
             page = browser.new_page(viewport={"width": 240, "height": 220}, device_scale_factor=2)
             page.set_content(single_pose(pose), wait_until="load")
             page.evaluate("document.getAnimations().forEach(a => a.pause())")
