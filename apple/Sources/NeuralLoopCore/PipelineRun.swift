@@ -74,8 +74,19 @@ public enum PipelineCommand {
         if options.dryRun { args.append("--dry-run") }
         if options.retry { args.append("--retry") }
         if let engine = options.engine { args += ["--engine", engine] }
-        if let title { args += ["--title", title] }
+        if let title { args.append("--title=\(title)") }  // one argument, so a title like "-Draft" isn't read as a flag
         return args
+    }
+
+    /// What a new book is called, saved in its meta.json and passed on every run: the name the person gave it (an
+    /// iPad's inbox sidecar), else its file's name. Never an inbox file's UUID; "Your book" when nothing fits.
+    public static func bookTitle(given: String?, file: URL) -> String {
+        let given = (given ?? "").split(whereSeparator: { $0.isWhitespace || $0.isNewline || $0.asciiValue.map { $0 < 32 || $0 == 127 } == true })
+            .joined(separator: " ")
+        if !given.isEmpty { return given }
+        let stem = file.deletingPathExtension().lastPathComponent
+        if UUID(uuidString: stem) != nil { return "Your book" }
+        return title(forFile: file) ?? "Your book"
     }
 
     /// A book's name from its file name: "Agents_guide.pdf" is "Agents guide". Nil when nothing is left.

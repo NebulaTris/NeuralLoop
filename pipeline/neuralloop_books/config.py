@@ -34,15 +34,23 @@ VIDEO_STYLES = {
 }
 
 # Pages around the chapters that aren't worth a learning loop: front matter, reading guides, and back matter.
-# The last group only counts as the whole title ("Notes", but not "Notes on caching").
+# Each must be the whole title (trailing punctuation aside): "Index", but not "Index structures"; "Notes", but
+# not "Notes on caching". Reading guides are about *this* book: "How to read this book", not "How to Read a
+# Person Like a Book".
+_BACK = r"(?:notes|endnotes|references|sources|bibliography|further reading|glossary)"
 FRONT_MATTER = re.compile(
-    r"^\s*(?:(?:cover|title page|half title|copyright|table of contents|contents|brief contents|index|"
-    r"about the authors?|acknowledge?ments?|colophon|praise for|also by|dedication|other books|"
-    r"list of (?:figures|tables)|about this book|how to (?:use|read|get the most|make the most)\b.*\bbook|"
-    r"appendix|appendices|glossary|bibliography|further reading|endnotes)\b"
-    r"|(?:notes|references|sources)\s*$)",
+    r"^\s*(?:"
+    r"cover|front cover|back cover|title page|half title|copyright(?: page)?|dedication|epigraph|colophon|"
+    r"(?:table of )?contents|brief contents|contents at a glance|index|about the authors?|about this book|"
+    r"acknowledge?ments?|praise|praise for (?:this book|the book|.*\bedition)|also by\b.*|other books by\b.*|"
+    r"list of (?:figures|tables|illustrations|abbreviations)|"
+    r"how to (?:use|read|get the most (?:out )?of|make the most (?:out )?of) this book\b.*|"
+    rf"{_BACK}(?:\s*(?:and|&)\s*{_BACK})?"
+    r")[\s.:;!?]*$",
     re.IGNORECASE,
 )
+# Appendices: kept as chapters when they're substantial (a forty-page tutorial), skipped when they're short.
+APPENDIX = re.compile(r"^\s*(?:appendix\b|appendices[\s.:;!?]*$)", re.IGNORECASE)
 
 # Timeouts in seconds. NotebookLM media generation is slow.
 SOURCE_TIMEOUT = 900.0

@@ -31,10 +31,28 @@ import Testing
     // The pipeline reads the app's own copy (source.pdf), so the first run says what the book is called.
     let args = PipelineCommand.arguments(book: "/lib/agents-guide/source.pdf", out: "/lib/agents-guide", options: .init(),
                                          title: PipelineCommand.title(forFile: URL(fileURLWithPath: "/Users/me/Desktop/Agents_guide.pdf")))
-    #expect(args.suffix(2) == ["--title", "Agents guide"])
+    #expect(args.last == "--title=Agents guide")
     #expect(PipelineCommand.title(forFile: URL(fileURLWithPath: "/x/deep-learning--2nd_ed.epub")) == "deep learning 2nd ed")
     #expect(PipelineCommand.title(forFile: URL(fileURLWithPath: "/x/___.pdf")) == nil)
-    #expect(!PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init()).contains("--title"))
+    #expect(!PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init()).contains { $0.hasPrefix("--title") })
+}
+
+@Test func aTitleStartingWithADashStaysOneArgument() {
+    // "--title -Draft" would read "-Draft" as a flag; "--title=-Draft" can't be misread.
+    let args = PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init(), title: "-Draft")
+    #expect(args.last == "--title=-Draft")
+    #expect(!args.contains("--title") && !args.contains("-Draft"))
+}
+
+@Test func aBookIsNamedAfterWhatThePersonCalledItNeverTheInboxFile() {
+    let inbox = URL(fileURLWithPath: "/lib/inbox/3f2a9c1e-7b4d-4e8a-9c0f-1a2b3c4d5e6f.pdf")
+    #expect(PipelineCommand.bookTitle(given: "Designing Data-Intensive Applications", file: inbox) == "Designing Data-Intensive Applications")
+    #expect(PipelineCommand.bookTitle(given: "  Caching\nnotes ", file: inbox) == "Caching notes")
+    #expect(PipelineCommand.bookTitle(given: nil, file: inbox) == "Your book")
+    #expect(PipelineCommand.bookTitle(given: "   ", file: inbox) == "Your book")
+    #expect(PipelineCommand.bookTitle(given: nil, file: URL(fileURLWithPath: "/lib/inbox/3F2A9C1E-7B4D-4E8A-9C0F-1A2B3C4D5E6F.epub")) == "Your book")
+    #expect(PipelineCommand.bookTitle(given: nil, file: URL(fileURLWithPath: "/Users/me/Desktop/Agents_guide.pdf")) == "Agents guide")
+    #expect(PipelineCommand.bookTitle(given: nil, file: URL(fileURLWithPath: "/x/___.pdf")) == "Your book")
 }
 
 @Test func aRunCanBeToldToUseMyAIForItemsThatAreWaiting() {

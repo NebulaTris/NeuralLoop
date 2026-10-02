@@ -9,7 +9,7 @@ from posixpath import dirname, join, normpath
 from typing import ClassVar
 from urllib.parse import unquote, urldefrag
 
-from .config import FRONT_MATTER
+from .config import APPENDIX, FRONT_MATTER
 
 MIN_PDF_PAGES = 2
 MIN_EPUB_CHARS = 1500
@@ -17,8 +17,16 @@ FALLBACK_PAGES = 20
 LONG_PART_PAGES = 30  # a bookmark this long, with bookmarks inside...
 MIN_SECTION_PAGES = 4  # ...averaging this many pages each holds whole chapters (projects, say), not sections
 PART_SIZE = 3  # ...if it's also this many times as long as the book's typical chapter
-MAX_DIVIDER_PAGES = 8  # a "Part II" bookmark this short is the part's title page and intro, not a chapter
-_CHAPTER = re.compile(r"^\s*chapter\b", re.IGNORECASE)
+MAX_DIVIDER_PAGES = (
+    8  # a "Part II" bookmark this short, with chapters after it, is the part's title page and intro
+)
+DIVIDER_SHARE = 4  # ...as is one with nothing after it that's a quarter of a typical chapter or less
+PAGE_CHARS = 2_500  # a typical book page
+MIN_APPENDIX_PAGES = 8  # an appendix this long (or half a typical chapter, if that's more) is worth a loop
+MIN_APPENDIX_CHARS = MIN_APPENDIX_PAGES * PAGE_CHARS
+# "Chapter 3", "3. Storage", "3 Storage", "3: Storage": a chapter, kept whole however long. Not "3.1 Hashing".
+_CHAPTER = re.compile(r"^\s*(?:chapter\b|\d+[.:)]?\s)", re.IGNORECASE)
+_SECTION = re.compile(r"^\s*\d+\.\d+")  # "6.1", "6.2 SSTables": sections of a chapter
 _PART = re.compile(
     r"^\s*part\s+([ivxlc]+|\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE
 )
@@ -72,7 +80,18 @@ def _unreadable(error: BaseException | str) -> str:
 
 
 def is_front_matter(title: str) -> bool:
+    """Pages that are never worth a learning loop, whatever their size (contents, index, glossary...)."""
     return bool(FRONT_MATTER.match(title))
+
+
+def is_appendix(title: str) -> bool:
+    """An appendix: a chapter when it's substantial, skipped when it's short (the splitters check size)."""
+    return bool(APPENDIX.match(title))
+
+
+def _median(values: list[int]) -> int:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2] if ordered else 0
 
 
 def clean_title(title: str) -> str:
@@ -88,12 +107,12 @@ def split_pdf(path: Path, out_dir: Path) -> list[dict]:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(str(path))
-    ranges = _pdf_chapter_ranges(reader)
+    ranges = [
+        (clean_title(title) or f"Pages {first + 1}-{end}", first, end)
+        for title, first, end in _pdf_chapter_ranges(reader)
+    ]
     chapters = []
-    for title, first, end in ranges:
-        title = clean_title(title) or f"Pages {first + 1}-{end}"
-        if is_front_matter(title) or end - first < MIN_PDF_PAGES or _is_divider(title, end - first):
-            continue
+    for title, first, end in _pdf_keep(ranges, len(reader.pages)):
         number = len(chapters) + 1
         file = out_dir / f"{number:02d}.pdf"
         writer = PdfWriter()
@@ -105,25 +124,56 @@ def split_pdf(path: Path, out_dir: Path) -> list[dict]:
     return chapters
 
 
+def _pdf_keep(ranges: list[tuple[str, int, int]], page_count: int) -> list[tuple[str, int, int]]:
+    """The ranges worth a learning loop: no front matter, scraps, part title pages, or short appendices.
+    Never nothing: when every bookmark would be skipped, the book is read as it is, or in page chunks."""
+    real = [r for r in ranges if not is_front_matter(r[0]) and r[2] - r[1] >= MIN_PDF_PAGES]
+    body = [end - first for title, first, end in real if not _PART.match(title) and not is_appendix(title)]
+    typical = _median(body or [end - first for _, first, end in real])
+    kept = []
+    for i, (title, first, end) in enumerate(real):
+        if is_appendix(title) and end - first < max(MIN_APPENDIX_PAGES, typical / 2):
+            continue
+        if _is_divider(real, i, typical):
+            continue
+        kept.append((title, first, end))
+    return kept or real or _page_chunks(page_count)
+
+
+def _is_divider(real: list[tuple[str, int, int]], i: int, typical: int) -> bool:
+    """A "Part II" bookmark that's only the part's title page (and maybe a short intro): short, and followed
+    by chapters before the next part, or far shorter than the book's chapters. The last one never is: a short
+    final "Part 5: Exercises" is the book's own last chapter."""
+    title, first, end = real[i]
+    if not _PART.match(title) or end - first > MAX_DIVIDER_PAGES or i == len(real) - 1:
+        return False
+    return not _PART.match(real[i + 1][0]) or (end - first) * DIVIDER_SHARE <= typical
+
+
+def _page_chunks(page_count: int) -> list[tuple[str, int, int]]:
+    return [
+        (f"Pages {p + 1}-{min(page_count, p + FALLBACK_PAGES)}", p, min(page_count, p + FALLBACK_PAGES))
+        for p in range(0, page_count, FALLBACK_PAGES)
+    ]
+
+
 def _pdf_chapter_ranges(reader) -> list[tuple[str, int, int]]:
     """(title, first page, end page exclusive) for each chapter, from bookmarks or fixed-size chunks."""
     page_count = len(reader.pages)
-    entries = _outline_level(reader, reader.outline or [])
+    entries = _open_parts(reader, _outline_level(reader, reader.outline or []))
     real = [e for e in entries if not is_front_matter(e[0])]
-    if len(real) < 4:  # books split into "Part I, Part II": use the chapters inside the parts
-        inner = [child for _, _, kids in entries for child in _outline_level(reader, kids)]
-        if len(inner) >= 4:
-            entries = inner
+    inner = [child for _, _, kids in entries for child in _outline_level(reader, kids)]
+    # Still only a few top-level bookmarks ("Foundations", "Practice"), or just one (the book's own title):
+    # the chapters are inside them.
+    if (len(real) < 4 and len(inner) >= 4) or (len(real) <= 1 and len(inner) >= 2):
+        entries = inner
     entries = _open_long_parts(reader, entries, page_count)
     first_on_page: dict[int, tuple[str, int]] = {}
     for title, page, _ in entries:
         first_on_page.setdefault(page, (title, page))  # a parent and its first child: the parent names it
     starts = sorted(first_on_page.values(), key=lambda e: e[1])
     if len(starts) < 2:
-        return [
-            (f"Pages {p + 1}-{min(page_count, p + FALLBACK_PAGES)}", p, min(page_count, p + FALLBACK_PAGES))
-            for p in range(0, page_count, FALLBACK_PAGES)
-        ]
+        return _page_chunks(page_count)
     ranges = []
     for i, (title, page) in enumerate(starts):
         end = starts[i + 1][1] if i + 1 < len(starts) else page_count
@@ -134,20 +184,36 @@ def _pdf_chapter_ranges(reader) -> list[tuple[str, int, int]]:
 Entry = tuple[str, int, list]  # (title, page index, child items)
 
 
+def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
+    """A "Part II" bookmark with chapters inside becomes those chapters, whatever else sits beside it (a
+    preface, an index). Its own title page stays, ahead of its first chapter, for `_is_divider` to skip."""
+    opened: list[Entry] = []
+    for title, page, kids in entries:
+        inside = sorted(_outline_level(reader, kids), key=lambda c: c[1]) if _PART.match(title) else []
+        if len(inside) < 2:
+            opened.append((title, page, kids))
+            continue
+        if inside[0][1] > page:
+            opened.append((title, page, []))
+        opened.extend(inside)
+    return opened
+
+
 def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entry]:
     """A bookmark far longer than the book's other chapters, whose inner bookmarks are chapter-sized
     ("Projects" holding twelve projects next to five-page chapters), becomes those chapters; its own opening
     pages stay a chapter only if there are enough of them. A chapter ("Chapter 3", or one about as long as the
-    rest) stays whole, however many sections it has."""
+    rest) stays whole, however many sections it has, and so does one whose bookmarks are numbered sections
+    ("6.1", "6.2")."""
     ordered = sorted(entries, key=lambda e: e[1])
     starts = [page for _, page, _ in ordered]
     ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
     lengths = sorted(
         end - page
         for (title, page, _), end in zip(ordered, ends, strict=True)
-        if not is_front_matter(title) and not _is_divider(title, end - page)
+        if not is_front_matter(title) and not (_PART.match(title) and end - page <= MAX_DIVIDER_PAGES)
     )
-    typical = lengths[len(lengths) // 2] if lengths else 0
+    typical = _median(lengths)
     opened: list[Entry] = []
     for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted((c for c in _outline_level(reader, kids) if page <= c[1] < end), key=lambda c: c[1])
@@ -156,6 +222,7 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
             and end - page >= max(LONG_PART_PAGES, PART_SIZE * typical)
             and len(inside) >= 2
             and (end - inside[0][1]) / len(inside) >= MIN_SECTION_PAGES
+            and sum(bool(_SECTION.match(child)) for child, _, _ in inside) * 2 < len(inside)
         ):
             if inside[0][1] > page:
                 opened.append((title, page, []))
@@ -163,10 +230,6 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
         else:
             opened.append((title, page, kids))
     return opened
-
-
-def _is_divider(title: str, pages: int) -> bool:
-    return bool(_PART.match(title)) and pages <= MAX_DIVIDER_PAGES
 
 
 def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
@@ -201,13 +264,17 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
         spine, toc = _epub_spine_and_toc(book)
         documents = _Documents(book)
         starts = _toc_starts(spine, toc, documents) or [(f"Part {i + 1}", i, 0) for i in range(len(spine))]
-        chapters = []
+        found = []
         for i, (title, _, _) in enumerate(starts):
             title = clean_title(title) or f"Part {i + 1}"
-            pieces = _pieces(spine, starts, i)
-            text = _html_to_markdown(documents, pieces)
-            if is_front_matter(title) or len(text) < MIN_EPUB_CHARS:
-                continue
+            text = _html_to_markdown(documents, _pieces(spine, starts, i))
+            if not is_front_matter(title) and len(text) >= MIN_EPUB_CHARS:
+                found.append((title, text))
+        typical = _median([len(text) for title, text in found if not is_appendix(title)])
+        chapters = []
+        for title, text in found:
+            if is_appendix(title) and len(text) < max(MIN_APPENDIX_CHARS, typical / 2):
+                continue  # a short appendix: reference pages, not a chapter
             number = len(chapters) + 1
             file = out_dir / f"{number:02d}.md"
             text = _save_images(book, text, out_dir / "img", number)
@@ -474,9 +541,6 @@ def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) ->
 
     cleaned = _IMAGE_REF.sub(replace, text)
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-
-
-PAGE_CHARS = 2_500  # a typical book page
 
 
 def chapter_size(chapter: dict, out_dir: Path) -> int:

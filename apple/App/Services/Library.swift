@@ -406,7 +406,7 @@ final class Library {
             message = "Pip can read PDF and EPUB books."
             return
         }
-        let title = file.deletingPathExtension().lastPathComponent
+        let title = PipelineCommand.bookTitle(given: nil, file: file)
         let id = UUID().uuidString.lowercased()
         let ext = file.pathExtension.lowercased()
         let staged = Self.incoming.appendingPathComponent("\(id).\(ext)")
@@ -466,6 +466,7 @@ final class Library {
     /// A book added on another device, waiting in the inbox: prepare it like a dropped book. Returns true once it's on
     /// the shelf (so sync can take it out of the inbox); the copy is quick (same disk) and done before answering.
     func addFromInbox(_ file: URL, title: String?) -> Bool {
+        let title = PipelineCommand.bookTitle(given: title, file: file)  // never the inbox file's UUID
         guard let (id, folder, copy) = newBook(file, title: title) else { return false }
         guard Self.copySource(file, to: copy) else {
             couldNotCopy(file, folder: folder)
@@ -479,6 +480,7 @@ final class Library {
     /// starts preparing it. Returns false only when it isn't a book Pip can read.
     @discardableResult
     func add(_ file: URL, practice: Bool = false, title: String? = nil) -> Bool {
+        let title = PipelineCommand.bookTitle(given: title, file: file)
         guard let (id, folder, copy) = newBook(file, title: title) else { return false }
         adding.insert(id)
         reload()
@@ -491,14 +493,14 @@ final class Library {
     }
 
     /// A fresh id (never one on disk, on the shelf, or removed on any device) and its folder.
-    private func newBook(_ file: URL, title: String?) -> (id: String, folder: URL, copy: URL)? {
+    private func newBook(_ file: URL, title: String) -> (id: String, folder: URL, copy: URL)? {
         guard ["pdf", "epub"].contains(file.pathExtension.lowercased()) else {
             message = "Pip can read PDF and EPUB books."
             return nil
         }
         let onDisk = ((try? FileManager.default.contentsOfDirectory(atPath: Self.root.path)) ?? [])
         let taken = Set(entries.map(\.id)).union(DriveSync.shared.removedBooks).union(onDisk).union(adding).union(removing)
-        let id = BookID.unique(base: BookID.slug(title ?? file.deletingPathExtension().lastPathComponent), taken: taken)
+        let id = BookID.unique(base: BookID.slug(title), taken: taken)
         let folder = Self.root.appendingPathComponent(id, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Keep our own copy: the book still works if the original moves, and later runs never need to reach into
@@ -517,12 +519,13 @@ final class Library {
         reload()
     }
 
-    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool, title: String?) {
+    /// The chosen title goes into meta.json, so every later run (resumed, "Prepare more") names the book the same way,
+    /// even when the first run stopped before the pipeline saved anything.
+    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool, title: String) {
         let meta: [String: Any] = ["path": copy.path, "originalPath": original.path, "addedAt": Date().timeIntervalSince1970 * 1000,
-                                   "options": ["media": "1-2", "dryRun": practice]]
+                                   "title": title, "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
-        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice),
-                title: title ?? PipelineCommand.title(forFile: original))
+        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice), title: title)
         reload()
     }
 
@@ -559,8 +562,16 @@ final class Library {
         return true
     }
 
+    /// The title saved when the book was added; books added before that was saved are named after their original file.
+    nonisolated private static func savedTitle(_ folder: URL) -> String? {
+        let meta = (try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("meta.json")))) as? [String: Any]
+        if let title = meta?["title"] as? String { return PipelineCommand.bookTitle(given: title, file: folder) }
+        return (meta?["originalPath"] as? String).map { PipelineCommand.bookTitle(given: nil, file: URL(fileURLWithPath: $0)) }
+    }
+
     private func prepare(id: String, book: URL, options: PipelineCommand.Options, title: String? = nil) {
         let out = Self.root.appendingPathComponent(id, isDirectory: true)
+        let title = title ?? Self.savedTitle(out)
         let runner = PipelineRunner()
         runs[id] = runner
         do {

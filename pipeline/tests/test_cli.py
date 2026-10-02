@@ -151,3 +151,8 @@ def test_a_dry_run_never_uses_the_models_named_in_ai_json(epub, tmp_path, monkey
     monkeypatch.setattr(models, "make_model", lambda p, *a, **k: made.append(p) or real(p, *a, **k))
     code = main([str(epub), "--dry-run", "--ai-config", str(config), "--out", str(tmp_path / "o")])
     assert code == 0 and set(made) == {"fake"}
+
+
+def test_a_title_starting_with_a_dash_is_read_as_the_title(epub):
+    """The app sends `--title=<t>` as one argument, so a book called "-Draft" isn't taken for a flag."""
+    assert parse_args([str(epub), "--title=-Draft"]).title == "-Draft"

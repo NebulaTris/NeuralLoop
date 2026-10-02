@@ -3,7 +3,7 @@ import zipfile
 
 import pytest
 
-from neuralloop_books.chapters import UnsafeBookError, is_front_matter, split_book
+from neuralloop_books.chapters import UnsafeBookError, is_appendix, is_front_matter, split_book
 from neuralloop_books.testing import LONG, write_epub, write_pdf
 
 
@@ -18,17 +18,54 @@ def test_reading_guides_and_back_matter_are_not_chapters():
         "How to use this book",
         "How to read this book",
         "About this book",
-        "Appendix B: Setting up Python",
-        "Appendices",
         "Glossary",
         "Bibliography",
         "Further reading",
         "Notes",
+        "Notes.",
+        "Notes and references",
         "References",
+        "Index",
+        "Index.",
+        "Contents",
+        "Cover",
+        "Copyright",
+        "Dedication",
+        "Colophon",
+        "About the authors",
+        "Praise for this book",
+        "Also by Martin Kleppmann",
     ):
         assert is_front_matter(title), title
     for title in ("How to build an agent", "Notes on caching", "Referential integrity", "About agents"):
         assert not is_front_matter(title), title
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Index structures",
+        "Index-free adjacency",
+        "Contents of the cache",
+        "Cover letters",
+        "Copyright law for developers",
+        "Dedication to craft",
+        "Praise for the reviewers",
+        "How to Read a Person Like a Book",
+    ],
+)
+def test_chapters_that_merely_start_like_front_matter_are_kept(title, tmp_path):
+    assert not is_front_matter(title)
+    pdf = write_pdf(tmp_path / "b.pdf", 12, [("Intro", 0, []), (title, 4, []), ("Queues", 8, [])])
+    assert [c["title"] for c in split_book(pdf, tmp_path / "pdf")] == ["Intro", title, "Queues"]
+    epub = write_epub(tmp_path / "b.epub", [("Intro", LONG), (title, LONG), ("Queues", LONG)])
+    assert [c["title"] for c in split_book(epub, tmp_path / "epub")] == ["Intro", title, "Queues"]
+
+
+def test_appendices_are_recognised_but_left_to_their_size():
+    for title in ("Appendix B: Setting up Python", "Appendix A", "Appendices"):
+        assert is_appendix(title) and not is_front_matter(title), title
+    assert not is_appendix("Apples and pears")
 
 
 class TestEpub:
@@ -44,6 +81,12 @@ class TestEpub:
     def test_ncx_table_of_contents_also_works(self, tmp_path):
         book = write_epub(tmp_path / "b.epub", [("One", LONG), ("Two", LONG)], nav=False)
         assert [c["title"] for c in split_book(book, tmp_path / "out")] == ["One", "Two"]
+
+    def test_a_substantial_appendix_is_kept_and_a_short_one_skipped(self, tmp_path):
+        chapters = [("One", LONG * 10), ("Two", LONG * 10), ("Three", LONG * 10)]
+        chapters += [("Appendix A: Full SQL tutorial", LONG * 20), ("Appendix B: Setting up", LONG)]
+        made = split_book(write_epub(tmp_path / "b.epub", chapters), tmp_path / "out")
+        assert [c["title"] for c in made] == ["One", "Two", "Three", "Appendix A: Full SQL tutorial"]
 
     def test_unsafe_paths_are_rejected(self, tmp_path):
         bad = tmp_path / "bad.epub"
@@ -143,6 +186,106 @@ class TestPdf:
             ("Chapter 4. Topic 4", [123, 168]),
             ("Chapter 5. Topic 5", [169, 220]),
             ("Chapter 6. Topic 6", [223, 270]),
+        ]
+
+    def test_a_book_made_of_short_parts_keeps_every_part(self, tmp_path):
+        """ "Part 1" to "Part 6", six pages each and nothing inside: the parts are the chapters."""
+        outline = [(f"Part {n}", (n - 1) * 6, []) for n in range(1, 7)]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 36, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            (f"Part {n}", [(n - 1) * 6 + 1, n * 6]) for n in range(1, 7)
+        ]
+
+    def test_a_short_last_part_is_kept_even_before_the_index(self, tmp_path):
+        outline = [
+            ("Part One: Basics", 0, []),
+            ("Part Two: Tools", 20, []),
+            ("Part Three: Practice", 40, []),
+            ("Part 4: Projects", 60, []),
+            ("Part 5: Exercises", 80, []),
+            ("Index", 84, []),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 86, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters][-1] == "Part 5: Exercises"
+        assert len(chapters) == 5 and chapters[-1]["pages"] == [81, 84]
+
+    def test_when_every_bookmark_is_skipped_pages_are_chunked_rather_than_nothing(self, tmp_path):
+        outline = [("Contents", 0, []), ("Index", 1, [])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 30, outline), tmp_path / "out")
+        assert [c["pages"] for c in chapters] == [[1, 20], [21, 30]]
+
+    def test_parts_with_front_matter_around_them_open_into_their_chapters(self, tmp_path):
+        def part(name, page):
+            return (f"Part {name}", page, [(f"{name}.{k} Chapter", page + 2 + 10 * k) for k in range(3)])
+
+        outline = [
+            ("Preface", 0, []),
+            ("Foreword", 4, []),
+            part("I", 8),
+            part("II", 40),
+            part("III", 72),
+            ("Index", 104, []),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 110, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == [
+            "Preface",
+            "Foreword",
+            *(f"{name}.{k} Chapter" for name in ("I", "II", "III") for k in range(3)),
+        ]
+        assert chapters[4]["pages"] == [31, 40]  # the last chapter of Part I ends where Part II begins
+
+    def test_a_child_bookmark_earlier_than_its_part_is_still_its_own_chapter(self, tmp_path):
+        outline = [
+            ("Intro", 0, []),
+            ("Part I", 4, [("Ch 1", 5), ("Ch 2", 10)]),
+            ("Part II", 16, [("Ch 3", 15), ("Ch 4", 20)]),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 26, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            ("Intro", [1, 4]),
+            ("Ch 1", [6, 10]),
+            ("Ch 2", [11, 15]),
+            ("Ch 3", [16, 20]),
+            ("Ch 4", [21, 26]),
+        ]
+
+    def test_a_single_bookmark_with_chapters_inside_uses_them(self, tmp_path):
+        outline = [("The whole book", 0, [("One", 0), ("Two", 10), ("Three", 20)])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 30, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            ("One", [1, 10]),
+            ("Two", [11, 20]),
+            ("Three", [21, 30]),
+        ]
+
+    @pytest.mark.parametrize(
+        "title", ["6. Storage and Retrieval", "6 Storage and Retrieval", "6: Storage and Retrieval"]
+    )
+    def test_long_numbered_chapters_stay_whole(self, tmp_path, title):
+        outline = [(f"{n}. Topic {n}", (n - 1) * 10, []) for n in range(1, 6)]
+        outline += [(title, 50, [("Hash indexes", 52), ("SSTables", 70), ("B-trees", 90)])]
+        outline += [("7. Encoding", 110, [])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 120, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == [
+            *(f"{n}. Topic {n}" for n in range(1, 6)),
+            title,
+            "7. Encoding",
+        ]
+
+    def test_a_long_chapter_whose_bookmarks_are_numbered_sections_stays_whole(self, tmp_path):
+        outline = [(f"Topic {n}", (n - 1) * 10, []) for n in range(1, 6)]
+        outline += [("Storage", 50, [("6.1 Hash indexes", 52), ("6.2 SSTables", 70), ("6.3 B-trees", 90)])]
+        outline += [("Encoding", 110, [])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 120, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == [*(f"Topic {n}" for n in range(1, 6)), "Storage", "Encoding"]
+
+    def test_a_substantial_appendix_is_kept_and_a_short_one_skipped(self, tmp_path):
+        outline = [(f"Chapter {n}", (n - 1) * 20, []) for n in range(1, 5)]
+        outline += [("Appendix A: Full SQL tutorial", 80, []), ("Appendix B: Setting up", 120, [])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 123, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == [
+            *(f"Chapter {n}" for n in range(1, 5)),
+            "Appendix A: Full SQL tutorial",
         ]
 
     def test_without_bookmarks_pages_are_chunked(self, tmp_path):
