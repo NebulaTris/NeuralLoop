@@ -49,5 +49,15 @@ enum NudgeSounds {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("pip-\(UUID().uuidString).png")
         return (try? png.write(to: file)) != nil ? file : nil
     }
+
+    private static var previewing: NSSound?
+
+    /// Settings → Nudges: hear the volume without sending anything.
+    static func preview(_ mood: NudgeMood, volume: Double) {
+        previewing?.stop()
+        previewing = url(mood).flatMap { NSSound(contentsOf: $0, byReference: true) }
+        previewing?.volume = Float(volume)
+        previewing?.play()
+    }
 }
 #endif

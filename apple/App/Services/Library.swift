@@ -668,7 +668,7 @@ enum Nudger {
             history = h
         }
         let onScreen = nudge.mood != .gentle && settings.bigPip
-        if onScreen { NudgeOverlay.shared.show(nudge) }
+        if onScreen { NudgeOverlay.shared.show(nudge, volume: settings.volume) }
         Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "",
                              sound: onScreen ? nil : NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
     }

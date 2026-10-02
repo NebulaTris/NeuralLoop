@@ -147,7 +147,7 @@ private func away(hours: Double, sent: NudgeMood? = nil) -> NudgeHistory {
 
 @Test func settingsSavedBeforeSillySoundsKeepTheirQuietHours() throws {
     let old = try JSONDecoder().decode(NudgeSettings.self, from: Data(#"{"enabled":true,"quietStart":21,"quietEnd":9,"pausedUntil":0}"#.utf8))
-    #expect(old.quietStart == 21 && old.quietEnd == 9 && old.sillySounds && old.fahhh && old.bigPip)
+    #expect(old.quietStart == 21 && old.quietEnd == 9 && old.sillySounds && old.fahhh && old.bigPip && old.volume == 0.8)
     let history = try JSONDecoder().decode(NudgeHistory.self, from: Data(#"{"lastSent":1,"lastSentDay":"d","lastEngaged":2,"ignoredInARow":0}"#.utf8))
     #expect(history.lastMood == nil)
 }

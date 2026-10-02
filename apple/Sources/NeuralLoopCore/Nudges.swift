@@ -14,11 +14,14 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
     public var sillySounds = true
     /// The shocked "fahhh" after a day away (off: the sad meow song instead).
     public var fahhh = true
-    /// Silly nudges also pop up a big Pip in the middle of the screen while the sound plays.
+    /// Silly nudges also pop up a big Pip in the middle of the screen while the sound plays (off: a notification only,
+    /// with its sound at the Mac's alert volume).
     public var bigPip = true
+    /// How loud the big Pip plays its sound, 0…1.
+    public var volume = 0.8
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case enabled, quietStart, quietEnd, pausedUntil, sillySounds, fahhh, bigPip }
+    enum CodingKeys: String, CodingKey { case enabled, quietStart, quietEnd, pausedUntil, sillySounds, fahhh, bigPip, volume }
 
     /// Settings saved by earlier versions keep what they had; anything new starts at its default.
     public init(from decoder: Decoder) throws {
@@ -31,6 +34,7 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         sillySounds = try c.decodeIfPresent(Bool.self, forKey: .sillySounds) ?? d.sillySounds
         fahhh = try c.decodeIfPresent(Bool.self, forKey: .fahhh) ?? d.fahhh
         bigPip = try c.decodeIfPresent(Bool.self, forKey: .bigPip) ?? d.bigPip
+        volume = min(max(try c.decodeIfPresent(Double.self, forKey: .volume) ?? d.volume, 0), 1)
     }
 }
 

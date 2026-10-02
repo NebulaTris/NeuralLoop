@@ -18,7 +18,7 @@ final class NudgeOverlay: NSObject, NSSoundDelegate {
     private var closing: Task<Void, Never>?
     private let state = OverlayState()
 
-    func show(_ nudge: Nudge) {
+    func show(_ nudge: Nudge, volume: Double) {
         hide(now: true)
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let size = CGSize(width: 560, height: 640)
@@ -43,6 +43,7 @@ final class NudgeOverlay: NSObject, NSSoundDelegate {
         // Gone once the sound ends (or after a few seconds without one).
         let played = NudgeSounds.url(nudge.mood).flatMap { NSSound(contentsOf: $0, byReference: true) }
         played?.delegate = self
+        played?.volume = Float(volume)
         sound = played
         let seconds = (played?.play() == true ? played?.duration : nil) ?? 4
         closing = Task { [weak self] in

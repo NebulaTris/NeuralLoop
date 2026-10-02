@@ -457,8 +457,25 @@ struct NudgesPage: View {
             Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
             Toggle("Include the “fahhh” after a day", isOn: $settings.fahhh).toggleStyle(.switch)
                 .disabled(!settings.sillySounds)
-            Toggle("Pop up a big Pip on screen while the sound plays", isOn: $settings.bigPip).toggleStyle(.switch)
-                .disabled(!settings.sillySounds)
+            Field(label: "Arrives as") {
+                Picker("", selection: $settings.bigPip) {
+                    Text("A big Pip on screen, plus a notification").tag(true)
+                    Text("Just a notification, like the others").tag(false)
+                }
+                .labelsHidden().pickerStyle(.radioGroup)
+            }
+            .disabled(!settings.sillySounds)
+            Field(label: "Volume") {
+                Slider(value: $settings.volume, in: 0.1...1) { editing in
+                    if !editing { NudgeSounds.preview(.sadViolin, volume: settings.volume) }
+                }
+                .frame(width: 220)
+                Text("\(Int((settings.volume * 100).rounded()))%").font(Theme.body(12)).foregroundStyle(Theme.ink2).monospacedDigit()
+            }
+            .disabled(!settings.sillySounds || !settings.bigPip)
+            Text(settings.bigPip ? "Let go of the slider to hear it. A notification on its own plays at your Mac's alert volume (System Settings → Sound)."
+                                 : "Notifications play at your Mac's alert volume: System Settings → Sound.")
+                .font(Theme.body(11)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
             HStack {
                 ForEach([NudgeMood.sadViolin, .sadMeow, .shocked], id: \.self) { mood in
                     Button(Self.label(mood)) {
