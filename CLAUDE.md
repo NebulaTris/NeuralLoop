@@ -39,6 +39,11 @@ Two parts, one repo:
    time away a nudge is a joke, step by step (default: tiny sad violin at 8 h, sad meow song at 12 h, a shocked "fahhh" at 24 h;
    the steps' sounds, hours, and count are the person's, plus an optional repeat of the last; each once per absence, never in quiet hours) with the `sad` or
    `shocked` pose; it always says what's ready, never scolds, and any step (the fahhh too) can be removed in the steps editor. No other screen uses those poses.
+   A silly step only comes when something is ready (cards due or a half-done chapter); otherwise at most one warm "Pip's ready when you are" a week.
+   Steps due at the same hour play one after another; silly steps never count toward the usual nudge's one-a-day limit or back-off; nothing silly
+   comes while NeuralLoop is in front; leaving the app and studying count as a visit. The big on-screen Pip only shows when the screen isn't locked,
+   nothing full-screen is in front, and the microphone is idle (otherwise the notification carries the sound, which keeps to Focus; Focus itself
+   can't be read without an entitlement).
 
 ## Setup and commands
 
@@ -69,7 +74,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `nl_book.py` | Entry point; friendly exit on Python < 3.10; calls `cli.main()` |
 | `neuralloop_books/cli.py` | Argument parsing, engine choice, exit codes (0 ok, 2 invalid or unreadable book, 3 setup needed: key, model, Ollama, sign-in; 130 interrupted), final summary |
 | `neuralloop_books/pipeline.py` | `Options`, `prepare_state` (split or resume, apply selection), `run(opts, engine)` (the book's OS lock, a text lane and a media lane, quota handling, book.json after every item; a setup error cancels the other items cleanly) |
-| `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, chapters split at `#anchors` when several share one file, safety limits); blank bookmarks ignored, "Part II" divider pages skipped, a part far longer than the typical chapter whose bookmarks are chapter-sized (a "Projects" part) opened into those chapters ("Chapter N" and normal-length chapters always stay whole); front matter, reading guides, and back matter (appendices, glossary…) skipped (`config.FRONT_MATTER`); `UnreadableBookError`; `chapter_size` |
+| `neuralloop_books/chapters.py` | `split_book` → `split_pdf` (bookmarks, parts, 20-page fallback) and `split_epub` (nav/NCX TOC, chapters split at `#anchors` when several share one file, safety limits); blank bookmarks ignored; "Part II" pages skipped only when they're a title page in front of chapters (never the last part), and a split that would skip everything falls back to the bookmarks as they are, or page chunks; parts with chapters inside always open into them, and a single top-level bookmark opens into its children; a part far longer than the typical chapter whose bookmarks are chapter-sized (a "Projects" part) opens into those chapters, but "Chapter N", numbered ("6. …") chapters, chapters with "6.1"-style sections, and normal-length chapters stay whole; front matter, reading guides, and back matter (glossary, bibliography…) skipped only when the whole title matches (`config.FRONT_MATTER`); appendices kept when substantial (at least max(8 pages, half a typical chapter); EPUB at least max(20,000 characters, half typical)), skipped when short (`config.APPENDIX`, `is_appendix`); `UnreadableBookError`; `chapter_size` |
 | `neuralloop_books/engines/local.py` | `LocalEngine`: any text model writes each item (checked, retried once with the reason); podcasts and explainers voiced by a speech engine |
 | `neuralloop_books/engines/notebooklm.py` | `NotebookLMEngine`: adds chapters as sources, then `ChapterMaker` makes each item; a stale session is refreshed and the item retried once |
 | `neuralloop_books/engines/auto.py` | `AutoEngine`: NotebookLM first, local engine for the whole run or per failed item (an item fails on its own if the fallback can't be set up); results tagged with who made them (`tasks.*.by`) |
@@ -96,11 +101,11 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
-| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`, `SillyStep`: Silly mode's editable steps by hours away), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AccountSummary` (who's signed in, same account or not, what to press next), `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
+| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`, `SillyStep`: Silly mode's editable steps by hours away), `NudgeDelivery` (+ `NudgeMoment`: whether the big Pip shows), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AccountSummary` (who's signed in, same account or not, what to press next), `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments, `bookTitle`) |
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
-| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift`, `NudgeSounds.swift`, `NudgeOverlay.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications (and the permission: asked on the welcome screen, shown in Settings → Nudges); each nudge mood's sound (`NeuralLoop-<name>.caf` in the app's Resources, else `~/Library/Sounds`, else the chime) and Pip picture; the big on-screen Pip for silly nudges (zooms in on the screen you're using, plays the sound, shrinks away when it ends) |
+| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift`, `NudgeSounds.swift`, `NudgeOverlay.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications (and the permission: asked on the welcome screen, shown in Settings → Nudges); each nudge mood's sound (`NeuralLoop-<name>.caf` in the app's Resources, else `~/Library/Sounds`, else the chime) and Pip picture; the big on-screen Pip for silly nudges (zooms in on the screen you're using, plays the sound, shrinks away when it ends; only when `NudgeDelivery.showsBigPip` says the moment is right; clicking it opens the library) |
 | `App/Views/` | `GuidedTour` (first launch and Help → Take the Tour: seven pages with animated scenes, the last one signs in), `AccountCards` (Settings → Account: `GoogleAccountCard` with one sign-in for NotebookLM and the library, `DevicesCard`), `LibraryView` (shelf, resume card, year log; the empty shelf's animated how-to is `EmptyShelfGuide`), `BookView` (chapters, five steps, book map), `Steps` (Listen, Read, Recall + quiz, Map, Remember), `StudyViews` (quiz, mind map, remake, book map), `GraphExplorer`, `QuickPanel`, `SettingsView` (Account, Your AI, Voices, Nudges), `PipView`, `Theme` |
 | `Sources/NeuralLoopCore/Sync*.swift`, `DriveStore.swift`, `GoogleOAuth.swift` | Drive sync (spec 07): `SyncPlan` (who uploads/downloads what), `SyncEngine` (scan, plan, carry out; MD5 cache in `sync-state.json`), `GoogleDrive` REST client and `MemoryDrive` for tests, Google sign-in with PKCE |
 | `App/Services/DriveAccount.swift`, `DriveSync.swift` | Google sign-in for Drive (tokens in the Keychain) and the sync loop (every 2 min, after studying, when a chapter opens); `-NLFakeDrive URL` (Debug only) uses `scripts/fake_drive.py` |
@@ -121,7 +126,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
 - **Pipeline CLI** (used by `apple/App/Services`): `nl_book.py BOOK --out DIR [--no-open] --media SPEC --style S --audio A
   --video V --language L [--engine auto|local|notebooklm] [--provider auto|anthropic|openai|openrouter|custom|ollama|opencode|hermes|fake]
   [--model M] [--base-url URL] [--context CHARS] [--audio-length auto|short|default|long] [--speech auto|rumik|fake] [--voices A,B] [--title T] [--dry-run] [--retry]`.
-  `--title` names the book when it's first split (the app passes the original file's name, since it hands over its copy `source.pdf`; later runs keep the saved title).
+  `--title` names the book when it's first split (later runs keep the saved title). The app sends it as one argument, `--title=T`, on every run,
+  from meta.json `title` (it hands over its copy `source.pdf`, so the file name would be wrong).
   `--no-open` does nothing (kept for older callers). `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless
   a key is set) for the whole run when not, and per item when NotebookLM fails or hits its limit (a stale NotebookLM session is
   refreshed and the item retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
@@ -142,8 +148,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   denied; Hermes is refused unless ai.json `hermesTools: true`; both get an environment without API keys; chapter text is
   wrapped as data (`prompts.wrap_chapter`). Exit 2 = the book couldn't be read ("This book couldn't be read: …"), 3 = setup needed.
 - **Book folder** (`~/Library/Application Support/app.neuralloop.books/books/<id>/`): `state.json` (pipeline state; tasks record
-  `by`; `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`,
-  `options:{media, dryRun}`; "Prepare more" sets `media: "all"`), `progress.json` (study progress), `book.json` (the app's data),
+  `by`; `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`, `title`
+  (the inbox sidecar's, else the original file's name, else "Your book"; never an inbox UUID; `PipelineCommand.bookTitle`), `options:{media, dryRun}`; "Prepare more" sets `media: "all"`), `progress.json` (study progress), `book.json` (the app's data),
   `knowledge-graph.json`, `.running` (an OS lock (`flock`) held by the run for its whole length and released even if it's killed;
   it holds the pid; a leftover file never blocks; interrupted `working` items go back to `todo` on the next run),
   `source.{pdf,epub}` (the app's own copy of the book), `chapters/NN.{pdf,md}` (EPUB Markdown keeps figures as
@@ -169,8 +175,12 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   opened chapters and stages new books in `incoming/` before moving them into `inbox/`. Drive listing fields:
   `id,name,md5Checksum,size,modifiedTime`; duplicate names keep the newest and delete the rest. The device id lives in the
   Keychain (`SYNC_DEVICE_ID`, this device only); a clash (someone else writing our progress file) picks a new id.
-  `sync-state.json` holds hashes, taken/sent inbox, removed books, per-progress uploaded md5s, inbox retries. `deviceinfo/<device>.json` (`{name, kind, lastSync}`: each device rewrites its own every 15 minutes while syncing; read for
-  Settings → Account's device list, never placed on disk). `removed/<id>.json` marks a book removed on
+  `sync-state.json` holds hashes, taken/sent inbox, removed books, per-progress uploaded md5s, inbox retries, and this device's note state
+  (`noteAt`, `noteName`, `noteDevice`) plus cached copies of other devices' notes (`notes`, re-read when their md5 changes). `deviceinfo/<device>.json`
+  (`{name, kind, lastSync}`): each device writes only its own, when it's missing, when the name or id changes, or every 15 minutes while syncing;
+  duplicates are tidied by any device (newest kept); after a clash the new id writes its note and the old id's is deleted; notes older than 90 days
+  are hidden and deleted by any device; Drive sign-out deletes this device's note (best effort). Names are shown cleaned (no control or format
+  characters, at most 60) and `lastSync` is clamped to [0, now + 1 day]. Read for Settings → Account's device list, never placed on disk. `removed/<id>.json` marks a book removed on
   any device: it leaves the Drive, every device drops its copy, and its id is never reused (`Library.removeBook`, `removeAllBooks`).
 - **Auto-resume**: the app starts a run on its own only when there's work (`AutoResume.hasWork`) and the last run allows it:
   after exit 2 or 3 it waits until settings change; other failures back off 5 minutes, doubling, up to 6 hours.

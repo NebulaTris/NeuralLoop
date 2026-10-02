@@ -256,7 +256,7 @@ public struct Nudge: Equatable, Sendable {
 
     /// What a nudge of each mood looks and sounds like (Settings → Nudges sends these as tests).
     public static func sample(_ mood: NudgeMood) -> Nudge {
-        let test = Nudge(emoji: "🐾", headline: "Hi from Pip", body: "This is how a nudge looks. Pip will only ever send one a day.")
+        let test = Nudge(emoji: "🐾", headline: "Hi from Pip", body: "This is how a nudge looks and sounds.")
         return test.told(mood, hoursAway: 24)
     }
 
