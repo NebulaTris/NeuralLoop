@@ -81,7 +81,9 @@ CHEEK_L = fluffy(16, 14, [(100, 250)], 5, step=15)
 
 
 def ear(side, droop=False):
-    tilt, end = ('<g transform="translate(2,12) rotate(-48 -40 -10) scale(.92)">', "</g>") if droop else ("", "")
+    tilt, end = (
+        ('<g transform="translate(2,12) rotate(-48 -40 -10) scale(.92)">', "</g>") if droop else ("", "")
+    )
     return f'<g transform="scale({side},1)">{tilt}<path d="M-48,-6 C-63,-42 -48,-62 -21,-46 C-30,-30 -36,-16 -48,-6 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><path d="M-43,-13 C-53,-37 -44,-50 -28,-42 C-33,-31 -37,-22 -43,-13 Z" fill="{CREAM}"/><path d="M-40,-18 L-44,-30 M-36,-20 L-37,-34" stroke="{RING}" stroke-width="2" stroke-linecap="round"/>{end}</g>'
 
 
