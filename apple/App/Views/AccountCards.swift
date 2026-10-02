@@ -16,7 +16,7 @@ struct DevicesCard: View {
                 Text(sync.syncing ? "Looking for your devices…" : "Your devices appear here after the first sync.")
                     .font(Theme.body(13)).foregroundStyle(Theme.ink2)
             }
-            ForEach(sync.devices) { device in
+            ForEach(DeviceInfo.unique(sync.devices)) { device in  // never one device twice (ForEach needs unique ids)
                 HStack(spacing: 12) {
                     Image(systemName: device.kind == .mac ? "laptopcomputer" : "ipad.landscape")
                         .font(.system(size: 20)).foregroundStyle(Theme.accent).frame(width: 30)
@@ -121,19 +121,25 @@ struct GoogleAccountCard: View {
                     }
                 }
                 Spacer()
-                switch summary.next {
-                case .signIn?:
-                    Button { Task { await GoogleSignIn.everything(settings) } } label: {
-                        Label(settings.signingIn || drive.signingIn ? "Waiting for Google…" : "Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                VStack(alignment: .trailing, spacing: 6) {
+                    switch summary.next {
+                    case .signIn?:
+                        Button { Task { await GoogleSignIn.everything(settings) } } label: {
+                            Label(settings.signingIn || drive.signingIn ? "Waiting for Google…" : "Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.large).disabled(settings.signingIn || drive.signingIn)
+                    case .connectLibrary?:
+                        Button { Task { await GoogleSignIn.everything(settings) } } label: {
+                            Label(drive.signingIn ? "Waiting for Google…" : "Connect your library", systemImage: "icloud.and.arrow.up")
+                        }
+                        .buttonStyle(.borderedProminent).disabled(drive.signingIn)
+                    case nil:
+                        EmptyView()
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(settings.signingIn || drive.signingIn)
-                case .connectLibrary?:
-                    Button { Task { await GoogleSignIn.everything(settings) } } label: {
-                        Label(drive.signingIn ? "Waiting for Google…" : "Connect your library", systemImage: "icloud.and.arrow.up")
+                    if summary.canSignOut {
+                        Button("Sign out") { Task { await GoogleSignIn.signOutEverywhere(settings) } }
+                            .disabled(settings.signingIn || drive.signingIn)
                     }
-                    .buttonStyle(.borderedProminent).disabled(drive.signingIn)
-                case nil:
-                    Button("Sign out") { Task { await GoogleSignIn.signOutEverywhere(settings) } }
                 }
             }
             Divider()

@@ -4,23 +4,33 @@
 import SwiftUI
 
 struct ProfileButton: View {
+    @Environment(Library.self) private var library
+    @State private var drive = DriveAccount.shared
     #if DEBUG
     @State private var open = UserDefaults.standard.bool(forKey: "NLOpenSettings")  // development: `-NLOpenSettings YES`
     #else
     @State private var open = false
     #endif
+    /// "Take the tour" was pressed: the tour opens once Settings has finished closing (one sheet at a time).
+    @State private var tourNext = false
 
     var body: some View {
-        Button { open = true } label: { Avatar(email: DriveAccount.shared.email, size: 30) }
+        Button { open = true } label: { Avatar(email: drive.email, size: 30) }
             .buttonStyle(.plain)
             .accessibilityLabel("Profile and settings")
-            .sheet(isPresented: $open) { PadSettingsView() }
+            .sheet(isPresented: $open, onDismiss: {
+                if tourNext { tourNext = false; library.requestTour() }
+            }) {
+                PadSettingsView { tourNext = true }
+            }
     }
 }
 
 struct PadSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(Library.self) private var library
+    @State private var drive = DriveAccount.shared
+    /// Asks for the tour, which opens after this sheet closes.
+    var takeTour: () -> Void = {}
 
     var body: some View {
         NavigationStack {
@@ -34,10 +44,10 @@ struct PadSettingsView: View {
                         }
                     }
                     CardBox { DriveSyncCard() }  // the card has its own title
-                    if DriveAccount.shared.isSignedIn { DevicesCard() }
+                    if drive.isSignedIn { DevicesCard() }
                     Button {
+                        takeTour()
                         dismiss()
-                        Task { try? await Task.sleep(for: .milliseconds(450)); library.showingTour = true }  // after this sheet closes
                     } label: { Label("Take the tour", systemImage: "sparkles") }
                     CardBox { LibraryDataCard() }
                     SettingsCard(title: "Preparing books",
