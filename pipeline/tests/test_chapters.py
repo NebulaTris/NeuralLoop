@@ -112,6 +112,39 @@ class TestPdf:
         assert [c["title"] for c in chapters] == ["One", "Two", "Projects", "Alpha", "Beta", "Gamma"]
         assert chapters[2]["pages"] == [11, 13]
 
+    def test_a_textbook_keeps_whole_chapters_and_skips_part_dividers(self, tmp_path):
+        """Shaped like Designing Data-Intensive Applications: parts as their own short bookmarks, then long
+        chapters whose bookmarks are sections (each ending in "Summary"). Chapters stay whole."""
+
+        def chapter(n, page, length):
+            step = length // 4
+            sections = [("Idea A", page + 1), ("Idea B", page + 1 + step), ("Idea C", page + 1 + 2 * step)]
+            return (f"Chapter {n}. Topic {n}", page, [*sections, ("Summary", page + length - 4)])
+
+        outline = [
+            ("Cover", 0, []),
+            ("Table of Contents", 2, []),
+            ("About this Book", 6, [("Who Should Read this Book?", 7)]),
+            ("Part I. Foundations", 10, []),
+            chapter(1, 12, 24),
+            chapter(2, 36, 42),
+            chapter(3, 78, 40),
+            ("Part II. Distributed Data", 118, []),
+            chapter(4, 122, 46),
+            chapter(5, 168, 52),
+            ("Part III. Derived Data", 220, []),
+            chapter(6, 222, 48),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 270, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            ("Chapter 1. Topic 1", [13, 36]),
+            ("Chapter 2. Topic 2", [37, 78]),
+            ("Chapter 3. Topic 3", [79, 118]),
+            ("Chapter 4. Topic 4", [123, 168]),
+            ("Chapter 5. Topic 5", [169, 220]),
+            ("Chapter 6. Topic 6", [223, 270]),
+        ]
+
     def test_without_bookmarks_pages_are_chunked(self, tmp_path):
         chapters = split_book(write_pdf(tmp_path / "b.pdf", 45, []), tmp_path / "out")
         assert [c["pages"] for c in chapters] == [[1, 20], [21, 40], [41, 45]]

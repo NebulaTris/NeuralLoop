@@ -16,6 +16,12 @@ MIN_EPUB_CHARS = 1500
 FALLBACK_PAGES = 20
 LONG_PART_PAGES = 30  # a bookmark this long, with bookmarks inside...
 MIN_SECTION_PAGES = 4  # ...averaging this many pages each holds whole chapters (projects, say), not sections
+PART_SIZE = 3  # ...if it's also this many times as long as the book's typical chapter
+MAX_DIVIDER_PAGES = 8  # a "Part II" bookmark this short is the part's title page and intro, not a chapter
+_CHAPTER = re.compile(r"^\s*chapter\b", re.IGNORECASE)
+_PART = re.compile(
+    r"^\s*part\s+([ivxlc]+|\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE
+)
 MAX_EPUB_ENTRY = 50_000_000
 MAX_EPUB_TOTAL = 500_000_000
 MAX_EPUB_ENTRIES = 5000
@@ -86,7 +92,7 @@ def split_pdf(path: Path, out_dir: Path) -> list[dict]:
     chapters = []
     for title, first, end in ranges:
         title = clean_title(title) or f"Pages {first + 1}-{end}"
-        if is_front_matter(title) or end - first < MIN_PDF_PAGES:
+        if is_front_matter(title) or end - first < MIN_PDF_PAGES or _is_divider(title, end - first):
             continue
         number = len(chapters) + 1
         file = out_dir / f"{number:02d}.pdf"
@@ -129,16 +135,25 @@ Entry = tuple[str, int, list]  # (title, page index, child items)
 
 
 def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entry]:
-    """A long bookmark whose inner bookmarks are chapter-sized ("Projects" holding twelve projects) becomes
-    those chapters; its own opening pages stay a chapter only if there are enough of them. A chapter whose
-    inner bookmarks are short sections stays whole."""
+    """A bookmark far longer than the book's other chapters, whose inner bookmarks are chapter-sized
+    ("Projects" holding twelve projects next to five-page chapters), becomes those chapters; its own opening
+    pages stay a chapter only if there are enough of them. A chapter ("Chapter 3", or one about as long as the
+    rest) stays whole, however many sections it has."""
     ordered = sorted(entries, key=lambda e: e[1])
+    starts = [page for _, page, _ in ordered]
+    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
+    lengths = sorted(
+        end - page
+        for (title, page, _), end in zip(ordered, ends, strict=True)
+        if not is_front_matter(title) and not _is_divider(title, end - page)
+    )
+    typical = lengths[len(lengths) // 2] if lengths else 0
     opened: list[Entry] = []
-    for i, (title, page, kids) in enumerate(ordered):
-        end = next((p for _, p, _ in ordered[i + 1 :] if p > page), page_count)
+    for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted((c for c in _outline_level(reader, kids) if page <= c[1] < end), key=lambda c: c[1])
         if (
-            end - page >= LONG_PART_PAGES
+            not _CHAPTER.match(title)
+            and end - page >= max(LONG_PART_PAGES, PART_SIZE * typical)
             and len(inside) >= 2
             and (end - inside[0][1]) / len(inside) >= MIN_SECTION_PAGES
         ):
@@ -148,6 +163,10 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
         else:
             opened.append((title, page, kids))
     return opened
+
+
+def _is_divider(title: str, pages: int) -> bool:
+    return bool(_PART.match(title)) and pages <= MAX_DIVIDER_PAGES
 
 
 def _outline_level(reader, items: list) -> list[tuple[str, int, list]]:
