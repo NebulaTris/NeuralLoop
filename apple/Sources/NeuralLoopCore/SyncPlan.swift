@@ -160,12 +160,13 @@ extension SyncPlan {
 
 extension SyncPlan {
     /// One file per name: the newest (by Drive's modified time, then id, so every device picks the same one) is kept;
-    /// the others are duplicates to delete. Only names this app writes are tidied.
+    /// the others are duplicates to delete. Only names this app writes are tidied (library files and the devices'
+    /// notes, which any device may tidy).
     public static func deduplicated(_ remote: [SyncFile]) -> (kept: [SyncFile], duplicates: [SyncFile]) {
         var kept: [SyncFile] = []
         var duplicates: [SyncFile] = []
         for (path, group) in Dictionary(grouping: remote, by: \.path) {
-            guard group.count > 1, SyncLayout.isSafeRemote(path) else { kept += group; continue }
+            guard group.count > 1, SyncLayout.isSafeRemote(path) || SyncLayout.deviceInfo(path) != nil else { kept += group; continue }
             let ordered = group.sorted { a, b in
                 let (ta, tb) = (a.modified ?? .distantPast, b.modified ?? .distantPast)
                 return ta != tb ? ta > tb : (a.id ?? "") > (b.id ?? "")

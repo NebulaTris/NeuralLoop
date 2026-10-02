@@ -32,7 +32,7 @@ struct NeuralLoopApp: App {
                 Button("Add a Book…") { library.isPicking = true }.keyboardShortcut("o")
             }
             CommandGroup(replacing: .help) {
-                Button("Take the Tour") { library.showingTour = true }
+                TourCommand(library: library)
             }
         }
         Settings {
@@ -68,6 +68,24 @@ struct NeuralLoopApp: App {
     }
 }
 
+/// Help → Take the Tour: the tour shows on the main window, so that window opens first if it's closed.
+struct TourCommand: View {
+    let library: Library
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Take the Tour") {
+            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible }) {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                openWindow(id: "main")
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            library.requestTour()
+        }
+    }
+}
+
 struct RootView: View {
     @Environment(Library.self) private var library
     @Environment(\.openSettings) private var openSettings
@@ -87,7 +105,8 @@ struct RootView: View {
         .tint(Theme.accent)
         // First things first: move into Applications (when running from Downloads or the disk image), then the welcome.
         .sheet(isPresented: $movingIn) { MoveInView() }
-        .sheet(isPresented: Binding(get: { (!welcomed && !movingIn) || library.showingTour },
+        // Never on top of the move-in sheet; once that closes, the tour follows if it's wanted.
+        .sheet(isPresented: Binding(get: { (!welcomed || library.showingTour) && !movingIn },
                                     set: { if !$0 { welcomed = true; library.showingTour = false } })) {
             GuidedTour { welcomed = true; library.showingTour = false }
         }

@@ -48,6 +48,14 @@ final class Library {
     /// The guided tour, asked for from Help (Mac) or Settings (iPad).
     var showingTour = false
     var message: String?
+
+    /// Show the guided tour. Asking again always works, even if an earlier request never made it on screen (the flag
+    /// is lowered first, so the sheet sees it rise again).
+    func requestTour() {
+        guard showingTour else { showingTour = true; return }
+        showingTour = false
+        Task { @MainActor in self.showingTour = true }
+    }
     /// NotebookLM's live usage (five-hour and weekly windows), refreshed every few minutes.
     var usage: NotebookLMUsage?
 

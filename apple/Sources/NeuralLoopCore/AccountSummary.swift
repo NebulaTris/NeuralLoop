@@ -42,6 +42,10 @@ public struct AccountSummary: Equatable, Sendable {
         return a.lowercased() != b.lowercased()
     }
 
+    /// Either service is signed in, so "Sign out" belongs on the card (next to `next`, when there is one).
+    public var canSignOut: Bool { notebookLM != nil || library != nil }
+
+    /// The main thing to press, if any.
     public var next: Next? {
         if notebookLM == nil { return .signIn }
         if library == nil, librarySetUp { return .connectLibrary }

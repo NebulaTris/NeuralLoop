@@ -31,7 +31,8 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
     }
 
     var isConfigured: Bool { Self.clientID != nil }
-    var isSignedIn: Bool { tokens?.refresh != nil }
+    /// Kept in step with the tokens (which aren't observed), so views showing signed-in things update on sign-in and out.
+    private(set) var isSignedIn = false
 
     override init() {
         super.init()
@@ -39,6 +40,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
             tokens = try? JSONDecoder().decode(GoogleOAuth.Tokens.self, from: data)
             email = tokens?.email
             name = tokens?.name
+            isSignedIn = tokens?.refresh != nil
         }
     }
 
@@ -82,11 +84,15 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         }
     }
 
-    func signOut() async {
+    /// `removeNote`: take this device off the library's device list first (best effort, while the tokens still work).
+    /// Not when Google has already refused the tokens: there's nothing left to delete it with.
+    func signOut(removeNote: Bool = true) async {
+        if removeNote, isSignedIn { await DriveSync.shared.signingOut() }
         if let token = tokens?.refresh ?? tokens?.access, let clientID = Self.clientID {
             _ = try? await URLSession.shared.data(for: GoogleOAuth(clientID: clientID).revokeRequest(token: token))  // best effort: the local tokens go regardless
         }
         tokens = nil
+        isSignedIn = false
         email = nil
         name = nil
         Keychain.save(Self.keychainName, "")
@@ -99,7 +105,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         let (data, response) = try await URLSession.shared.data(for: GoogleOAuth(clientID: clientID).refreshRequest(refreshToken: refresh))
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, let fresh = GoogleOAuth.tokens(from: data, previous: current) else {
-            if status == 400 || status == 401 { await signOut() }  // revoked or expired for good: sign in again
+            if status == 400 || status == 401 { await signOut(removeNote: false) }  // revoked or expired for good: sign in again
             throw DriveError.http(status, "token refresh")
         }
         store(fresh)
@@ -108,6 +114,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
 
     private func store(_ fresh: GoogleOAuth.Tokens) {
         tokens = fresh
+        isSignedIn = fresh.refresh != nil
         email = fresh.email
         name = fresh.name
         if let data = try? JSONEncoder().encode(fresh), let text = String(data: data, encoding: .utf8) {

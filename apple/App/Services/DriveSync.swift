@@ -107,6 +107,15 @@ final class DriveSync {
         if started { Task { await syncNow() } } else { start() }
     }
 
+    /// Signing out of the library: this device's note leaves the Drive (best effort; a note left behind stops being
+    /// listed after 90 days), and the device list here empties.
+    func signingOut() async {
+        if DriveAccount.shared.isSignedIn || Self.fakeDrive != nil {
+            try? await sharedEngine().removeNote()
+        }
+        devices = []
+    }
+
     /// "Remove all books": books waiting in the inbox leave the Drive too (the caller empties the local inbox).
     func forgetInbox() {
         let engine = sharedEngine()
@@ -164,7 +173,7 @@ final class DriveSync {
             }
             lastReport = report
             lastSync = Date()
-            if !report.devices.isEmpty { devices = report.devices }
+            if !report.devices.isEmpty, account.isSignedIn || Self.fakeDrive != nil { devices = DeviceInfo.unique(report.devices) }
             problem = report.problems.first
             if report.downloaded > 0 {
                 NotificationCenter.default.post(name: BookSession.progressArrived, object: nil)  // open books merge it in
