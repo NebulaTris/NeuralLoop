@@ -660,10 +660,13 @@ enum Nudger {
         send(nudge, day: today)
     }
 
-    static func send(_ nudge: Nudge, day: String? = nil) {
-        var h = history
-        h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000))
-        history = h
+    /// `test`: from Settings, so it isn't remembered (it doesn't use up today's nudge or a silly one).
+    static func send(_ nudge: Nudge, day: String? = nil, test: Bool = false) {
+        if !test {
+            var h = history
+            h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000), mood: nudge.mood)
+            history = h
+        }
         Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "",
                              sound: NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
     }

@@ -36,7 +36,8 @@ Two parts, one repo:
 7. **No secrets, no user books, no generated media in git.** `.gitignore` covers build output, `.env`, media, and book folders.
 8. **Copy for people is warm and plain.** Sentence case, no guilt ("You missed…" is never OK), errors say what happened and how
    to fix it. Pip is never angry or disappointed. The one exception is Silly mode (on by default, Settings → Nudges): after
-   2+ days away a nudge is a joke (tiny sad violin, sad meow song, then a shocked "fahhh" after a week) with the `sad` or
+   time away a nudge is a joke (tiny sad violin at 8 h, sad meow song at 12 h, a shocked "fahhh" at 24 h, each once per absence
+   and never in quiet hours) with the `sad` or
    `shocked` pose; it always says what's ready, never scolds, and the fahhh has its own switch. No other screen uses those poses.
 
 ## Setup and commands
@@ -95,7 +96,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
-| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`: the silly ladder by days away), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
+| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`: the silly ladder by hours away), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |

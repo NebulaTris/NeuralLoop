@@ -452,14 +452,14 @@ struct NudgesPage: View {
 
     private var silly: some View {
         SettingsCard(title: "Silly mode",
-                     note: "After a couple of days away, Pip gets dramatic, just for laughs: a tiny sad violin, then a sad little song, and after a whole week a shocked “fahhh”. Open NeuralLoop and Pip cheers right up.") {
+                     note: "When you’ve been away a while, Pip gets dramatic, just for laughs: a tiny sad violin after 8 hours, a sad little song after 12, and a shocked “fahhh” after a whole day. Each plays once, never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
             Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
-            Toggle("Include the “fahhh” after a week", isOn: $settings.fahhh).toggleStyle(.switch)
+            Toggle("Include the “fahhh” after a day", isOn: $settings.fahhh).toggleStyle(.switch)
                 .disabled(!settings.sillySounds)
             HStack {
                 ForEach([NudgeMood.sadViolin, .sadMeow, .shocked], id: \.self) { mood in
                     Button(Self.label(mood)) {
-                        Nudger.send(Nudge.sample(mood))
+                        Nudger.send(Nudge.sample(mood), test: true)
                         note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
                     }
                     .help("Send a test nudge with this sound")
@@ -492,7 +492,7 @@ struct NudgesPage: View {
             .disabled(!settings.enabled)
             HStack {
                 Button("Send a test nudge") {
-                    Nudger.send(Nudge.sample(.gentle))
+                    Nudger.send(Nudge.sample(.gentle), test: true)
                     note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
                 }
                 Button("Pause until tomorrow") {

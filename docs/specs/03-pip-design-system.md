@@ -43,7 +43,7 @@ when the person renamed Pip, replace the name in the label. Helpers already exis
 
 Rules: Pip is **never** angry, disappointed, or hungry. No guilt copy. Only one Pip per screen region. The only sad Pip is a joke:
 the `sad` (droopy ears, a tear, its own rain cloud) and `shocked` (paws on cheeks, "!") poses appear only in Silly mode's
-nudges after a few days away, which always say what's ready and can be turned off in Settings → Nudges.
+nudges (8, 12, and 24 hours away), which always say what's ready and can be turned off in Settings → Nudges.
 
 ## Sizes
 

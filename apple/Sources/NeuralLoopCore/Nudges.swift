@@ -1,7 +1,7 @@
 // Pip's nudges: at most one a day, only when something small is worth doing, never in quiet hours, and backing off
-// when ignored. After a few days away they turn silly on purpose (a tiny sad violin, a sad meow song, then a shocked
-// "fahhh" after a week), which Settings can turn down or off. `decide` is pure so the whole policy is tested; the app
-// gathers the inputs and plays the sounds.
+// when ignored. Away from the app a while, they turn silly on purpose: a tiny sad violin after 8 hours, a sad meow song
+// after 12, a shocked "fahhh" after a day, each once until you open the app again (Settings can turn them down or
+// off). `decide` is pure so the whole policy is tested; the app gathers the inputs and plays the sounds.
 
 import Foundation
 
@@ -36,14 +36,19 @@ public struct NudgeHistory: Codable, Equatable, Sendable {
     public var lastSentDay = ""
     public var lastEngaged: Double = 0
     public var ignoredInARow = 0
+    /// The last nudge's mood: while it's newer than your last visit, the silly ones already sent aren't sent again.
+    public var lastMood: NudgeMood?
     public init() {}
 
     /// Record a nudge going out; a nudge sent after the last time you opened the app counts as ignored.
-    public mutating func sent(now: Double, day: String) {
+    public mutating func sent(now: Double, day: String, mood: NudgeMood = .gentle) {
         let previousWasIgnored = lastSent > 0 && lastEngaged < lastSent
         ignoredInARow = previousWasIgnored ? ignoredInARow + 1 : 0
-        (lastSent, lastSentDay) = (now, day)
+        (lastSent, lastSentDay, lastMood) = (now, day, mood)
     }
+
+    /// The silliest nudge already sent since you last opened the app.
+    var sillySinceVisit: NudgeMood { lastSent > lastEngaged ? lastMood ?? .gentle : .gentle }
 
     public mutating func engaged(now: Double) { (lastEngaged, ignoredInARow) = (now, 0) }
 }
@@ -52,15 +57,18 @@ public struct NudgeHistory: Codable, Equatable, Sendable {
 public enum NudgeMood: String, Codable, CaseIterable, Sendable {
     case gentle, sadViolin, sadMeow, shocked
 
-    /// Days away before each silly mood (the shocked one also needs `fahhh` on).
-    static let violinDays = 2.0, meowDays = 4.0, shockedDays = 7.0
+    /// Hours away before each silly mood (the shocked one also needs `fahhh` on).
+    static let violinHours = 8.0, meowHours = 12.0, shockedHours = 24.0
 
-    public static func after(daysAway: Double, settings: NudgeSettings) -> NudgeMood {
+    public static func after(hoursAway: Double, settings: NudgeSettings) -> NudgeMood {
         guard settings.sillySounds else { return .gentle }
-        if daysAway >= shockedDays { return settings.fahhh ? .shocked : .sadMeow }
-        if daysAway >= meowDays { return .sadMeow }
-        return daysAway >= violinDays ? .sadViolin : .gentle
+        if hoursAway >= shockedHours { return settings.fahhh ? .shocked : .sadMeow }
+        if hoursAway >= meowHours { return .sadMeow }
+        return hoursAway >= violinHours ? .sadViolin : .gentle
     }
+
+    /// Sillier moods come later on the ladder.
+    var rank: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
 
 public struct Nudge: Equatable, Sendable {
@@ -80,16 +88,16 @@ public struct Nudge: Equatable, Sendable {
     /// What a nudge of each mood looks and sounds like (Settings → Nudges sends these as tests).
     public static func sample(_ mood: NudgeMood) -> Nudge {
         let test = Nudge(emoji: "🐾", headline: "Hi from Pip", body: "This is how a nudge looks. Pip will only ever send one a day.")
-        return test.told(mood, daysAway: Int(NudgeMood.shockedDays))
+        return test.told(mood)
     }
 
     /// The same news, told the silly way.
-    func told(_ mood: NudgeMood, daysAway: Int) -> Nudge {
+    func told(_ mood: NudgeMood) -> Nudge {
         let title: String = switch mood {
         case .gentle: self.title
         case .sadViolin: "🎻 Pip is playing a tiny sad violin"
         case .sadMeow: "😿 Pip wrote you a sad little song"
-        case .shocked: "😱 FAHHH! \(daysAway) days?!"
+        case .shocked: "😱 FAHHH! A whole day?!"
         }
         guard mood != .gentle else { return self }
         return Nudge(title: title, body: headline.isEmpty ? body : "\(headline). \(body)", mood: mood)
@@ -98,6 +106,7 @@ public struct Nudge: Equatable, Sendable {
 
 public enum Nudges {
     static let dayMs = 86_400_000.0
+    static let hourMs = 3_600_000.0
     static let minimumDueCards = 3
     static let secondsPerCard = 15
     static let nextStep: [Stage: String] = [
@@ -120,16 +129,19 @@ public enum Nudges {
                               now: Double, hour: Int, today: String) -> Nudge? {
         guard settings.enabled, now >= settings.pausedUntil,
               !inQuietHours(hour: hour, start: settings.quietStart, end: settings.quietEnd) else { return nil }
+        let news = dueCardsNudge(books, now: now) ?? halfDoneChapterNudge(books, now: now)
+        // The silly ladder: each step once per absence, outside the one-a-day limit and the back-off.
+        let hoursAway = history.lastEngaged > 0 ? (now - history.lastEngaged) / hourMs : 0
+        let mood = NudgeMood.after(hoursAway: hoursAway, settings: settings)
+        if mood.rank > history.sillySinceVisit.rank, !books.isEmpty {
+            let missYou = Nudge(emoji: "🐾", headline: "", body: "Your books miss you. Even five minutes counts.")
+            return (news ?? missYou).told(mood)
+        }
         if history.lastSentDay == today { return nil }  // at most one a day
         if history.ignoredInARow >= 2, now - history.lastSent < 2 * dayMs { return nil }  // ignored twice: every other day
         let awayAWeek = history.lastEngaged > 0 && now - history.lastEngaged > 7 * dayMs
         if awayAWeek, now - history.lastSent < 7 * dayMs { return nil }  // away a week: weekly only
-        let daysAway = history.lastEngaged > 0 ? (now - history.lastEngaged) / dayMs : 0
-        let mood = NudgeMood.after(daysAway: daysAway, settings: settings)
-        let missYou = mood == .gentle || books.isEmpty ? nil
-            : Nudge(emoji: "🐾", headline: "", body: "Your books miss you. Even five minutes counts.")
-        let news = dueCardsNudge(books, now: now) ?? halfDoneChapterNudge(books, now: now) ?? missYou
-        return news?.told(mood, daysAway: Int(daysAway))
+        return news
     }
 
     static func dueCardsNudge(_ books: [(book: Book, progress: StudyProgress)], now: Double) -> Nudge? {

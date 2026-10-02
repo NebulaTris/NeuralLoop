@@ -78,7 +78,7 @@ fills in a little square for every day you study.
   <img src="docs/readme/poses.png" alt="Pip's poses: reading, happy hop, preparing, playing, loop closed, proud, welcome back, napping" width="100%">
 </p>
 
-<p align="center"><sub>Pip reads with you, hops when you get it right, naps while it waits, and is <b>never</b> cross or disappointed. Stay away a few days and Pip gets dramatic, just for laughs (a tiny sad violin 🎻, then a shocked “fahhh” after a week). Silly mode switches off in Settings.</sub></p>
+<p align="center"><sub>Pip reads with you, hops when you get it right, naps while it waits, and is <b>never</b> cross or disappointed. Stay away too long and Pip gets dramatic, just for laughs (a tiny sad violin 🎻, a sad song 😿, then a shocked “fahhh” after a whole day). Silly mode switches off in Settings.</sub></p>
 
 ## 🚀 Get it
 

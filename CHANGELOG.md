@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1: chapters that make sense, and a dramatic Pip 🎻
+
+- **Books split into the right chapters.** Guidebooks skip their "how to read this book" pages, contents, and
+  appendices; blank bookmarks no longer rename or cut chapters; a long "Projects" part becomes one chapter per project;
+  and textbooks keep each chapter whole instead of cutting it into sections. "Part II" title pages aren't chapters.
+- **Books are named after their file** ("Agents guide"), not "source".
+- **Silly mode** (on by default, Settings → Nudges): if you've been away a while, Pip gets dramatic, just for laughs.
+  A tiny sad violin after 8 hours, a sad little song after 12, and a shocked "fahhh" after a whole day, each with a sad
+  or shocked Pip in the notification. Each plays once, never in quiet hours, and opening NeuralLoop resets it. The
+  "fahhh" has its own switch. This download plays the usual chime for each; add your own sounds with
+  `scripts/install-nudge-sounds.sh`.
+
 ## 0.2.0: the first public preview 🐾
 
 NeuralLoop turns a book you own (PDF or EPUB) into five-step learning loops, one chapter at a time:
