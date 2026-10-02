@@ -1,19 +1,28 @@
 // The empty shelf, as a little picture of what to do (like the disk image's "drag me into Applications"): your book
 // on the left, a dotted "whee!" arc with paw prints, and Pip waiting in a dashed drop zone on the right. A tiny copy
 // of the book flies along the arc and Pip hops when it lands, on a loop. Reduce Motion shows it resting mid-flight.
+// Narrower than the scene needs (iPad Slide Over, a thin Split View), the whole picture shrinks to fit.
 
 import SwiftUI
 
 struct EmptyShelfGuide: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     static let period = 3.6  // seconds per flight
+    static let height: CGFloat = 250
+    static let minWidth: CGFloat = 440  // two 150 pt tiles and the narrowest arc between them
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
             let t = reduceMotion ? 0.45 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period) / Self.period
-            GeometryReader { geo in scene(width: geo.size.width, t: t) }
+            FitWidth(minWidth: Self.minWidth, height: Self.height) {
+                GeometryReader { geo in
+                    let width = max(geo.size.width, Self.minWidth)
+                    scene(width: width, t: t)
+                        .frame(width: width, height: Self.height)
+                        .scaleEffect(Self.scale(for: geo.size.width), anchor: .topLeading)
+                }
+            }
         }
-        .frame(height: 250)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Drag a PDF or EPUB book onto this window, and Pip puts it on your shelf.")
     }
@@ -73,6 +82,11 @@ struct EmptyShelfGuide: View {
     private var tileBackground: some View {
         RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Theme.surface)
             .shadow(color: .black.opacity(0.08), radius: 14, y: 6)
+    }
+
+    /// How much the scene shrinks to fit `width` (1 when it fits as drawn).
+    static func scale(for width: CGFloat) -> CGFloat {
+        width > 0 ? min(1, width / minWidth) : 1
     }
 
     /// Where the flying book is along the arc (0…1), or outside it while it waits or after it lands.
@@ -136,6 +150,22 @@ private struct BookFile: View {
     }
 }
 
+/// Takes the width it's offered and is as tall as the scene at that width: `height`, or less once it has to shrink.
+private struct FitWidth: Layout {
+    let minWidth: CGFloat, height: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews _: Subviews, cache _: inout ()) -> CGSize {
+        let width = proposal.width.map { $0.isFinite ? $0 : minWidth } ?? minWidth
+        return CGSize(width: width, height: height * EmptyShelfGuide.scale(for: width))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+        for view in subviews {
+            view.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        }
+    }
+}
+
 private struct Arc: Shape {
     let start: CGPoint, control: CGPoint, end: CGPoint
     func path(in _: CGRect) -> Path {
@@ -160,20 +190,29 @@ private struct ArrowHead: Shape {
     }
 }
 
-/// The three steps under the picture.
+/// The three steps under the picture: side by side, or one under another when there isn't room.
 struct EmptyShelfSteps: View {
     let steps: [String]
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(i + 1)").font(Theme.display(14, .bold)).foregroundStyle(.white)
-                        .frame(width: 24, height: 24).background(Theme.accent, in: Circle())
-                    Text(step).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                    // Ideally 170 pt each, so the row stays until a step would be squeezed narrower than that.
+                    item(i, step).frame(idealWidth: 170, maxWidth: 230, alignment: .leading)
                 }
-                .frame(maxWidth: 230, alignment: .leading)
             }
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { i, step in item(i, step) }
+            }
+        }
+    }
+
+    private func item(_ i: Int, _ step: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(i + 1)").font(Theme.display(14, .bold)).foregroundStyle(.white)
+                .frame(width: 24, height: 24).background(Theme.accent, in: Circle())
+            Text(step).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
