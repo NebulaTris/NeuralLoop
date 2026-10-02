@@ -35,7 +35,9 @@ Two parts, one repo:
 6. **Respect contracts** (section "Contracts" below). If you change one, update this file and the tests in the same commit.
 7. **No secrets, no user books, no generated media in git.** `.gitignore` covers build output, `.env`, media, and book folders.
 8. **Copy for people is warm and plain.** Sentence case, no guilt ("You missed…" is never OK), errors say what happened and how
-   to fix it. Pip is never sad, angry, or disappointed.
+   to fix it. Pip is never angry or disappointed. The one exception is Silly mode (on by default, Settings → Nudges): after
+   2+ days away a nudge is a joke (tiny sad violin, sad meow song, then a shocked "fahhh" after a week) with the `sad` or
+   `shocked` pose; it always says what's ready, never scolds, and the fahhh has its own switch. No other screen uses those poses.
 
 ## Setup and commands
 
@@ -55,7 +57,7 @@ Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
 For development the app runs the pipeline from the repo's `.venv`, which `make setup` creates (override with `PY=`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
-`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLProfile YES`, `-NLMoveIn YES` (the
+`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLNudgePictures <folder>` (each silly nudge's Pip picture as a PNG), `-NLProfile YES`, `-NLMoveIn YES` (the
 "move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
 
 ## File map
@@ -93,11 +95,11 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
-| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges`, `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
+| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`: the silly ladder by days away), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments) |
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
-| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications |
+| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift`, `NudgeSounds.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications; each nudge mood's sound (`NeuralLoop-<name>.caf` in the app, else `~/Library/Sounds`, else the chime) and Pip picture |
 | `App/Views/` | `LibraryView` (shelf, resume card, year log), `BookView` (chapters, five steps, book map), `Steps` (Listen, Read, Recall + quiz, Map, Remember), `StudyViews` (quiz, mind map, remake, book map), `GraphExplorer`, `QuickPanel`, `SettingsView` (Account, Your AI, Voices, Nudges), `PipView`, `Theme` |
 | `Sources/NeuralLoopCore/Sync*.swift`, `DriveStore.swift`, `GoogleOAuth.swift` | Drive sync (spec 07): `SyncPlan` (who uploads/downloads what), `SyncEngine` (scan, plan, carry out; MD5 cache in `sync-state.json`), `GoogleDrive` REST client and `MemoryDrive` for tests, Google sign-in with PKCE |
 | `App/Services/DriveAccount.swift`, `DriveSync.swift` | Google sign-in for Drive (tokens in the Keychain) and the sync loop (every 2 min, after studying, when a chapter opens); `-NLFakeDrive URL` (Debug only) uses `scripts/fake_drive.py` |
@@ -111,7 +113,7 @@ in only after every check; writes `.stamp` and `.neuralloop-runtime`; `make runt
 rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgbuild and Pip's drag-to-Applications window from
 `design/dmg`, then checks it like a download) · `scripts/dev-signing-identity.sh`
 (one stable self-signed identity so macOS remembers the app's permissions across rebuilds; `make mac` uses it) ·
-`design/pip/generate_pip.py` (Pip artwork source) · `design/readme/make_readme_art.py` (README pictures) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
+`scripts/install-nudge-sounds.sh` (your own sounds for Silly mode into `~/Library/Sounds`; none ship until a licence allows it) · `design/pip/generate_pip.py` (Pip artwork source) · `design/readme/make_readme_art.py` (README pictures) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
 

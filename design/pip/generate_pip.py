@@ -80,11 +80,29 @@ HEAD_D = fluffy(51, 43, [(18, 70), (110, 162)], 9)
 CHEEK_L = fluffy(16, 14, [(100, 250)], 5, step=15)
 
 
-def ear(side):
-    return f'<g transform="scale({side},1)"><path d="M-48,-6 C-63,-42 -48,-62 -21,-46 C-30,-30 -36,-16 -48,-6 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><path d="M-43,-13 C-53,-37 -44,-50 -28,-42 C-33,-31 -37,-22 -43,-13 Z" fill="{CREAM}"/><path d="M-40,-18 L-44,-30 M-36,-20 L-37,-34" stroke="{RING}" stroke-width="2" stroke-linecap="round"/></g>'
+def ear(side, droop=False):
+    tilt, end = ('<g transform="rotate(-62 -40 -12)">', "</g>") if droop else ("", "")
+    return f'<g transform="scale({side},1)">{tilt}<path d="M-48,-6 C-63,-42 -48,-62 -21,-46 C-30,-30 -36,-16 -48,-6 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><path d="M-43,-13 C-53,-37 -44,-50 -28,-42 C-33,-31 -37,-22 -43,-13 Z" fill="{CREAM}"/><path d="M-40,-18 L-44,-30 M-36,-20 L-37,-34" stroke="{RING}" stroke-width="2" stroke-linecap="round"/>{end}</g>'
 
 
 def eyes(expr):
+    if expr == "shock":  # wide white eyes with tiny pupils, brows shot up
+        s = "".join(
+            f'<ellipse cx="{x}" cy="-3" rx="11" ry="12.5" fill="#FFFFFF" stroke="{EYE}" stroke-width="2.6"/><circle cx="{x}" cy="-2" r="4" fill="{EYE}"/><circle cx="{x + 1.5}" cy="-3.5" r="1.3" fill="#FFFFFF"/>'
+            for x in (-21, 21)
+        )
+        return (
+            s
+            + f'<path d="M-31,-22 Q-21,-29 -11,-23 M11,-23 Q21,-29 31,-22" fill="none" stroke="{OUT}" stroke-width="3" stroke-linecap="round"/>'
+        )
+    if expr == "sad":  # big wet eyes, brows tipped up in the middle, and one tear on its way down
+        s = eyes("open").replace('r="3.9"', 'r="4.8"')
+        s += f'<path d="M-31,-14 Q-23,-16 -13,-22 M13,-22 Q23,-16 31,-14" fill="none" stroke="{OUT}" stroke-width="3" stroke-linecap="round"/>'
+        s += '<path d="M-31,7 Q-21,11 -11,7 M11,7 Q21,11 31,7" fill="none" stroke="#7FB8F0" stroke-width="2.4" stroke-linecap="round" opacity=".9"/>'
+        return (
+            s
+            + '<g class="tear"><path d="M-27,10 Q-31,17 -27,20 Q-23,17 -27,10 Z" fill="#8CC4F5" stroke="#4E8FD0" stroke-width="1.4"/></g>'
+        )
     if expr in ("open", "proud"):
         s = ""
         for x in (-21, 21):
@@ -97,10 +115,11 @@ def eyes(expr):
 
 
 def head(cx, cy, s=1, expr="open", rot=0, glasses=False, cls="tilt"):
+    droop = expr == "sad"
     g = [
         f'<g transform="translate({cx},{cy}) rotate({rot}) scale({s})"><g class="{cls}">',
-        f'<g class="twitch-l">{ear(1)}</g>',
-        f'<g class="twitch-r">{ear(-1)}</g>',
+        f'<g class="twitch-l">{ear(1, droop)}</g>',
+        f'<g class="twitch-r">{ear(-1, droop)}</g>',
         f'<path d="{HEAD_D}" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/>',
         f'<path d="M-30,-30 Q0,-44 30,-30" fill="none" stroke="{FUR2}" stroke-width="7" stroke-linecap="round" opacity=".7"/>',
         f'<path d="M-4,-40 Q0,-50 5,-41" fill="none" stroke="{OUT}" stroke-width="2.6" stroke-linecap="round"/>',
@@ -124,6 +143,14 @@ def head(cx, cy, s=1, expr="open", rot=0, glasses=False, cls="tilt"):
     if expr in ("happy", "proud"):
         g.append(
             f'<path d="M-8.5,22 Q0,35 8.5,22 Z" fill="{MOUTH}" stroke="{OUT}" stroke-width="2" stroke-linejoin="round"/><ellipse cx="0" cy="28.5" rx="3.6" ry="2.2" fill="{PINK}"/>'
+        )
+    elif expr == "sad":  # a wobbly little frown
+        g.append(
+            f'<path d="M-8,27 Q-4,22 0,24.5 Q4,22 8,27" fill="none" stroke="{EYE}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+    elif expr == "shock":  # jaw dropped
+        g.append(
+            f'<ellipse cx="0" cy="28" rx="6.5" ry="9" fill="{MOUTH}" stroke="{OUT}" stroke-width="2"/><ellipse cx="0" cy="32.5" rx="3.6" ry="2.6" fill="{PINK}"/>'
         )
     elif expr == "yawn":
         g.append(
@@ -331,6 +358,65 @@ def pose_proud():
     )
 
 
+def pose_sad():
+    """Only for the silly "Pip misses you" nudges (Settings → Nudges can turn them off): a droopy, teary Pip under
+    its own little rain cloud. Played for laughs, never for guilt."""
+    cx, cy = (120, 152)
+
+    def drop(x, y, cls):
+        return f'<g class="{cls}"><path d="M{x},{y} Q{x - 3},{y + 6} {x},{y + 8} Q{x + 3},{y + 6} {x},{y} Z" fill="#8CC4F5"/></g>'
+
+    cloud = (
+        '<g class="drift">'
+        f'<path d="M150,44 Q148,28 164,28 Q170,16 184,22 Q198,18 200,32 Q212,34 208,46 Q206,54 194,52 L160,52 Q150,52 150,44 Z" fill="#C8CFDB" stroke="{OUT}" stroke-width="2.6" stroke-linejoin="round"/>'
+        f'<path d="M160,40 Q166,34 172,38" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity=".6"/>'
+        + drop(162, 58, "drip")
+        + drop(178, 62, "drip t2")
+        + drop(194, 58, "drip t3")
+        + "</g>"
+    )
+    return svg(
+        shadow(cx, 205)
+        + tail(
+            f"M{cx + 30},{cy + 30} C{cx + 70},{cy + 44} {cx + 98},{cy + 40} {cx + 100},{cy + 22}", "tail-soft"
+        )
+        + '<g class="sigh">'
+        + body(cx, cy)
+        + "</g>"
+        + feet(cx, cy + 34)
+        + arm(cx - 22, cy + 8, 12, 14)
+        + arm(cx + 22, cy + 8, -12, 14)
+        + head(cx, cy - 54, expr="sad", rot=4, cls="sigh")
+        + cloud,
+        label="Pip sad under a little rain cloud",
+    )
+
+
+def pose_shocked():
+    """Only for the silly nudge after a week away (with the "fahhh"): fur on end, paws on cheeks."""
+    cx, cy = (120, 152)
+
+    def bang(x, y, rot, cls):
+        return f'<g class="{cls}"><g transform="rotate({rot} {x} {y})"><rect x="{x - 3}" y="{y - 14}" width="6" height="15" rx="3" fill="#E2577E"/><circle cx="{x}" cy="{y + 6}" r="3.2" fill="#E2577E"/></g></g>'
+
+    poofed = f'<path d="{fluffy(41, 35, [(0, 360)], 7, 7)}" transform="translate({cx},{cy})" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><ellipse cx="{cx}" cy="{cy + 9}" rx="23" ry="20" fill="{DARK}"/>'
+    return svg(
+        shadow(cx, 205)
+        + '<g class="shiver">'
+        + tail(f"M{cx + 30},{cy + 18} C{cx + 70},{cy + 6} {cx + 74},{cy - 50} {cx + 60},{cy - 84}", "")
+        + poofed
+        + feet(cx, cy + 34)
+        + head(cx, cy - 62, expr="shock", cls="")
+        + arm(cx - 44, cy - 54, 18, 15, True)
+        + arm(cx + 44, cy - 54, -18, 15, True)
+        + "</g>"
+        + bang(40, 54, -18, "alarm")
+        + bang(200, 50, 18, "alarm t2")
+        + bang(208, 96, 30, "alarm t3"),
+        label="Pip shocked, paws on cheeks",
+    )
+
+
 # Every animation, as data: the CSS (explainer videos) and pip-rig.json (the Mac app) are both made from this.
 # Each key is (percent, {tx, ty (px), r (deg), sx, sy, o (opacity)}); missing values are identity.
 # origin: the pivot as a percentage of the animated group's own box (CSS transform-origin with transform-box: fill-box).
@@ -529,6 +615,50 @@ ANIM = {
         keys=[(0, {}), (70, {}), (80, {"sx": 0.2}), (90, {}), (100, {})],
     ),
 }
+ANIM.update(
+    {
+        # The silly nudges: a slow sigh, one tear at a time, rain from Pip's cloud, a shiver, and "!" popping.
+        "sigh": dict(
+            origin=(50, 100), dur=4.2, ease="ease-in-out", keys=[(0, {}), (50, {"ty": 3, "r": -2}), (100, {})]
+        ),
+        "tear": dict(
+            origin=(50, 0),
+            dur=2.6,
+            ease="ease-in",
+            keys=[
+                (0, {"sy": 0.4, "o": 0}),
+                (25, {"o": 1}),
+                (70, {"ty": 10, "o": 1}),
+                (100, {"ty": 16, "o": 0}),
+            ],
+        ),
+        "drip": dict(
+            origin=(50, 50),
+            dur=1.3,
+            ease="ease-in",
+            keys=[(0, {"o": 0}), (20, {"o": 1}), (100, {"ty": 26, "o": 0})],
+        ),
+        "drift": dict(
+            origin=(50, 50), dur=5, ease="ease-in-out", keys=[(0, {}), (50, {"tx": -4, "ty": 1}), (100, {})]
+        ),
+        "shiver": dict(
+            origin=(50, 100),
+            dur=0.5,
+            ease="linear",
+            keys=[(0, {}), (25, {"tx": -1.6, "r": -1}), (75, {"tx": 1.6, "r": 1}), (100, {})],
+        ),
+        "alarm": dict(
+            origin=(50, 100),
+            dur=1.2,
+            ease="ease-in-out",
+            keys=[
+                (0, {"sx": 0.7, "sy": 0.7, "o": 0.3}),
+                (40, {"sx": 1.2, "sy": 1.2, "o": 1}),
+                (100, {"o": 0.3}),
+            ],
+        ),
+    }
+)
 DELAYS = {"t2": -0.6, "t3": -1.2}
 
 
@@ -578,6 +708,8 @@ POSES = {
     "hug": pose_hug,
     "study": pose_focus,
     "proud": pose_proud,
+    "sad": pose_sad,  # the silly nudges only
+    "shocked": pose_shocked,
 }
 OUTPUTS = ("pipeline/neuralloop_books/assets/pip-poses.js",)  # explainer videos (CSS animation)
 RIG = "apple/App/Resources/pip-rig.json"  # the Mac and iPad apps (layers, pivots, keyframes)

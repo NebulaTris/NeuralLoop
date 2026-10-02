@@ -1,5 +1,6 @@
 // NeuralLoop for Mac: drop a book, and Pip turns every chapter into a five-step learning loop.
 
+import NeuralLoopCore
 import SwiftUI
 
 @main
@@ -90,6 +91,15 @@ struct RootView: View {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
             if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
+            // `-NLNudgePictures <folder>` writes each silly nudge's Pip picture there (checking what notifications show).
+            if let folder = UserDefaults.standard.string(forKey: "NLNudgePictures") {
+                for mood in NudgeMood.allCases {
+                    guard let picture = NudgeSounds.picture(mood) else { continue }
+                    let target = URL(fileURLWithPath: folder).appendingPathComponent("\(mood.rawValue).png")
+                    try? FileManager.default.removeItem(at: target)
+                    try? FileManager.default.moveItem(at: picture, to: target)
+                }
+            }
             // `-NLOpenBook <id> [-NLStage map] [-NLBookMap YES]` opens a book (for screenshots and checks).
             if let id = UserDefaults.standard.string(forKey: "NLOpenBook") {
                 try? await Task.sleep(for: .seconds(1))

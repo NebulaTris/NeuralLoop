@@ -664,7 +664,8 @@ enum Nudger {
         var h = history
         h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000))
         history = h
-        Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "")
+        Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "",
+                             sound: NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
     }
 
     static func engaged() {

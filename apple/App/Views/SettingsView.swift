@@ -442,6 +442,43 @@ struct NudgesPage: View {
     @State private var note = ""
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            gentle
+            silly
+            if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true) }
+        }
+        .onChange(of: settings) { Nudger.settings = settings }
+    }
+
+    private var silly: some View {
+        SettingsCard(title: "Silly mode",
+                     note: "After a couple of days away, Pip gets dramatic, just for laughs: a tiny sad violin, then a sad little song, and after a whole week a shocked “fahhh”. Open NeuralLoop and Pip cheers right up.") {
+            Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
+            Toggle("Include the “fahhh” after a week", isOn: $settings.fahhh).toggleStyle(.switch)
+                .disabled(!settings.sillySounds)
+            HStack {
+                ForEach([NudgeMood.sadViolin, .sadMeow, .shocked], id: \.self) { mood in
+                    Button(Self.label(mood)) {
+                        Nudger.send(Nudge.sample(mood))
+                        note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
+                    }
+                    .help("Send a test nudge with this sound")
+                }
+            }
+            .disabled(!settings.enabled)
+        }
+    }
+
+    static func label(_ mood: NudgeMood) -> String {
+        switch mood {
+        case .gentle: "Try the chime"
+        case .sadViolin: "Try 🎻 sad violin"
+        case .sadMeow: "Try 😿 sad meow"
+        case .shocked: "Try 😱 fahhh"
+        }
+    }
+
+    private var gentle: some View {
         SettingsCard(title: "Let Pip nudge me",
                      note: "At most one a day, only when there's something small worth doing: cards that are due, or a chapter loop you left halfway. Never during quiet hours. If you skip two in a row, Pip backs off.") {
             Toggle("Gentle nudges", isOn: $settings.enabled).toggleStyle(.switch)
@@ -455,7 +492,7 @@ struct NudgesPage: View {
             .disabled(!settings.enabled)
             HStack {
                 Button("Send a test nudge") {
-                    Nudger.send(Nudge(title: "🐾 Hi from Pip", body: "This is how a nudge looks. Pip will only ever send one a day."))
+                    Nudger.send(Nudge.sample(.gentle))
                     note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
                 }
                 Button("Pause until tomorrow") {
@@ -469,9 +506,7 @@ struct NudgesPage: View {
                 Text("Paused until \(Date(timeIntervalSince1970: settings.pausedUntil / 1000).formatted(date: .abbreviated, time: .shortened)).")
                     .font(Theme.body(12)).foregroundStyle(Theme.ink3)
             }
-            if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true) }
         }
-        .onChange(of: settings) { Nudger.settings = settings }
     }
 
     static func hour(_ h: Int) -> String {

@@ -42,7 +42,7 @@ private func anim(_ json: String) throws -> PipRig.Anim { try JSONDecoder().deco
 @Test func theGeneratedRigIsComplete() throws {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../App/Resources/pip-rig.json")
     let rig = try JSONDecoder().decode(PipRig.self, from: Data(contentsOf: url))
-    #expect(Set(rig.poses.keys) == ["read", "hop", "nap", "stretch", "play", "hug", "study", "proud"])
+    #expect(Set(rig.poses.keys) == ["read", "hop", "nap", "stretch", "play", "hug", "study", "proud", "sad", "shocked"])
     for pose in rig.poses.values {
         #expect(!pose.layers.isEmpty && pose.viewBox.count == 4)
         for layer in pose.layers { #expect(layer.chain.allSatisfy { pose.groups.indices.contains($0) }) }

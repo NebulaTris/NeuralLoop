@@ -69,3 +69,59 @@ private func decide(_ books: [(book: Book, progress: StudyProgress)], _ history:
     p.loop["2"] = ["prime": nowMs - 1000]
     #expect(decide([(try book([2: "Caching"]), p)]) == nil)  // touched too recently
 }
+
+private func away(days: Double) -> NudgeHistory {
+    var history = NudgeHistory()
+    history.lastEngaged = nowMs - days * dayMs
+    return history
+}
+
+@Test func theLongerYoureAwayTheSillierPipGets() throws {
+    let books = [try withDueCards(reps: 1, count: 4)]
+    #expect(decide(books, away(days: 1))?.mood == .gentle)
+    #expect(decide(books, away(days: 2.5))?.mood == .sadViolin)
+    #expect(decide(books, away(days: 5))?.mood == .sadMeow)
+    #expect(decide(books, away(days: 8))?.mood == .shocked)
+    #expect(decide(books, NudgeHistory())?.mood == .gentle)  // never opened yet: nothing to miss
+}
+
+@Test func aSillyNudgeStillSaysWhatsReady() throws {
+    let books = [try withDueCards(reps: 1, count: 4)]
+    let violin = try #require(decide(books, away(days: 3)))
+    #expect(violin.title == "🎻 Pip is playing a tiny sad violin")
+    #expect(violin.body == "4 cards are ready. About 1 min with Pip, then you're done for today.")
+    let shocked = try #require(decide(books, away(days: 9)))
+    #expect(shocked.title == "😱 FAHHH! 9 days?!" && shocked.body.hasPrefix("4 cards are ready."))
+    #expect(decide(books, away(days: 1))?.title == "🐾 4 cards are ready")
+}
+
+@Test func afterAFewDaysAwayPipNudgesEvenWithNothingDue() throws {
+    let nothingDue = [(try book([1: "Caching"]), StudyProgress())]
+    #expect(decide(nothingDue, away(days: 1)) == nil)
+    let nudge = try #require(decide(nothingDue, away(days: 5)))
+    #expect(nudge.mood == .sadMeow && nudge.body == "Your books miss you. Even five minutes counts.")
+    #expect(decide([], away(days: 5)) == nil)  // no books, nothing to come back to
+}
+
+@Test func theDramaCanBeTurnedDownOrOff() throws {
+    let books = [try withDueCards(reps: 1, count: 4)]
+    var noFahhh = NudgeSettings()
+    noFahhh.fahhh = false
+    #expect(decide(books, away(days: 8), settings: noFahhh)?.mood == .sadMeow)
+    var calm = NudgeSettings()
+    calm.sillySounds = false
+    #expect(decide(books, away(days: 8), settings: calm)?.mood == .gentle)
+    #expect(decide(books, away(days: 8), settings: calm)?.title == "🐾 4 cards are ready")
+    #expect(decide([(try book([1: "Caching"]), StudyProgress())], away(days: 5), settings: calm) == nil)
+}
+
+@Test func settingsSavedBeforeSillySoundsKeepTheirQuietHours() throws {
+    let old = try JSONDecoder().decode(NudgeSettings.self, from: Data(#"{"enabled":true,"quietStart":21,"quietEnd":9,"pausedUntil":0}"#.utf8))
+    #expect(old.quietStart == 21 && old.quietEnd == 9 && old.sillySounds && old.fahhh)
+}
+
+@Test func everyMoodHasATestNudgeForSettings() {
+    for mood in NudgeMood.allCases { #expect(Nudge.sample(mood).mood == mood) }
+    #expect(Nudge.sample(.shocked).title == "😱 FAHHH! 7 days?!")
+    #expect(Nudge.sample(.gentle).title == "🐾 Hi from Pip")
+}

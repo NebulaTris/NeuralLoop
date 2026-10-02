@@ -11,7 +11,7 @@ import SwiftUI
 import AppKit
 #endif
 
-enum PipPose: String, CaseIterable { case read, hop, nap, stretch, play, hug, study, proud }
+enum PipPose: String, CaseIterable { case read, hop, nap, stretch, play, hug, study, proud, sad, shocked }
 
 @MainActor
 enum PipArt {
