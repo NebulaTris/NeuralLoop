@@ -58,7 +58,7 @@ Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
 For development the app runs the pipeline from the repo's `.venv`, which `make setup` creates (override with `PY=`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
-`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLNudgePictures <folder>` (each silly nudge's Pip picture as a PNG), `-NLProfile YES`, `-NLMoveIn YES` (the
+`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLNudgePictures <folder>` (each silly nudge's Pip picture as a PNG), `-NLTestNudge sadViolin|sadMeow|shocked|gentle` (sends that test nudge), `-NLProfile YES`, `-NLMoveIn YES` (the
 "move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
 
 ## File map
@@ -100,7 +100,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
-| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift`, `NudgeSounds.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications; each nudge mood's sound (`NeuralLoop-<name>.caf` in the app, else `~/Library/Sounds`, else the chime) and Pip picture |
+| `App/Services/BookSession.swift`, `MediaCenter.swift`, `AISettings.swift`, `Keychain.swift`, `Notifier.swift`, `NudgeSounds.swift`, `NudgeOverlay.swift` | One open book's progress and study clock; shared players (panel + chapter); ai.json and keys; Keychain; system notifications (and the permission: asked on the welcome screen, shown in Settings → Nudges); each nudge mood's sound (`NeuralLoop-<name>.caf` in the app's Resources, else `~/Library/Sounds`, else the chime) and Pip picture; the big on-screen Pip for silly nudges (zooms in on the screen you're using, plays the sound, shrinks away when it ends) |
 | `App/Views/` | `LibraryView` (shelf, resume card, year log), `BookView` (chapters, five steps, book map), `Steps` (Listen, Read, Recall + quiz, Map, Remember), `StudyViews` (quiz, mind map, remake, book map), `GraphExplorer`, `QuickPanel`, `SettingsView` (Account, Your AI, Voices, Nudges), `PipView`, `Theme` |
 | `Sources/NeuralLoopCore/Sync*.swift`, `DriveStore.swift`, `GoogleOAuth.swift` | Drive sync (spec 07): `SyncPlan` (who uploads/downloads what), `SyncEngine` (scan, plan, carry out; MD5 cache in `sync-state.json`), `GoogleDrive` REST client and `MemoryDrive` for tests, Google sign-in with PKCE |
 | `App/Services/DriveAccount.swift`, `DriveSync.swift` | Google sign-in for Drive (tokens in the Keychain) and the sync loop (every 2 min, after studying, when a chapter opens); `-NLFakeDrive URL` (Debug only) uses `scripts/fake_drive.py` |
@@ -114,7 +114,7 @@ in only after every check; writes `.stamp` and `.neuralloop-runtime`; `make runt
 rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgbuild and Pip's drag-to-Applications window from
 `design/dmg`, then checks it like a download) · `scripts/dev-signing-identity.sh`
 (one stable self-signed identity so macOS remembers the app's permissions across rebuilds; `make mac` uses it) ·
-`scripts/install-nudge-sounds.sh` (your own sounds for Silly mode into `~/Library/Sounds`; none ship until a licence allows it) · `design/pip/generate_pip.py` (Pip artwork source) · `design/readme/make_readme_art.py` (README pictures) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
+`scripts/install-nudge-sounds.sh` (Silly mode's sounds, tags stripped: into `~/Library/Sounds`, or `OUT=apple/App/Resources` for the shipped ones; see NOTICE.md) · `design/pip/generate_pip.py` (Pip artwork source) · `design/readme/make_readme_art.py` (README pictures) · `design/pip/app-icon.svg` · `docs/DEVELOPMENT.md` · `Makefile`.
 
 ## Contracts
 

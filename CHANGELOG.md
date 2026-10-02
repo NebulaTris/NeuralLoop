@@ -9,8 +9,11 @@
 - **Silly mode** (on by default, Settings → Nudges): if you've been away a while, Pip gets dramatic, just for laughs.
   A tiny sad violin after 8 hours, a sad little song after 12, and a shocked "fahhh" after a whole day, each with a sad
   or shocked Pip in the notification. Each plays once, never in quiet hours, and opening NeuralLoop resets it. The
-  "fahhh" has its own switch. This download plays the usual chime for each; add your own sounds with
-  `scripts/install-nudge-sounds.sh`.
+  "fahhh" has its own switch.
+- **A big Pip on screen** for silly nudges: Pip zooms in large in the middle of the screen you're using, with a big
+  emoji, while the sound plays, then shrinks away when it ends. Click it to open NeuralLoop. (Settings → Nudges.)
+- **Notifications are asked for on the welcome screen**, and Settings → Nudges shows whether they're on, with a button
+  to System Settings if they're off.
 
 ## 0.2.0: the first public preview 🐾
 

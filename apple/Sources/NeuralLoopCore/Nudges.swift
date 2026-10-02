@@ -12,11 +12,13 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
     public var pausedUntil: Double = 0  // Unix ms
     /// After a few days away, Pip gets dramatic: sad sounds and a sad (or shocked) Pip.
     public var sillySounds = true
-    /// The shocked "fahhh" after a week away (off: the sad meow song instead).
+    /// The shocked "fahhh" after a day away (off: the sad meow song instead).
     public var fahhh = true
+    /// Silly nudges also pop up a big Pip in the middle of the screen while the sound plays.
+    public var bigPip = true
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case enabled, quietStart, quietEnd, pausedUntil, sillySounds, fahhh }
+    enum CodingKeys: String, CodingKey { case enabled, quietStart, quietEnd, pausedUntil, sillySounds, fahhh, bigPip }
 
     /// Settings saved by earlier versions keep what they had; anything new starts at its default.
     public init(from decoder: Decoder) throws {
@@ -28,6 +30,7 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         pausedUntil = try c.decodeIfPresent(Double.self, forKey: .pausedUntil) ?? d.pausedUntil
         sillySounds = try c.decodeIfPresent(Bool.self, forKey: .sillySounds) ?? d.sillySounds
         fahhh = try c.decodeIfPresent(Bool.self, forKey: .fahhh) ?? d.fahhh
+        bigPip = try c.decodeIfPresent(Bool.self, forKey: .bigPip) ?? d.bigPip
     }
 }
 
@@ -84,6 +87,14 @@ public struct Nudge: Equatable, Sendable {
     init(emoji: String, headline: String, body: String) {
         (title, self.body, mood, self.headline) = ("\(emoji) \(headline)", body, .gentle, headline)
     }
+
+    /// The title's leading emoji, shown big on screen, and the words after it.
+    public var emoji: String {
+        guard let first = title.first, first.unicodeScalars.first?.properties.isEmojiPresentation == true else { return "" }
+        return String(first)
+    }
+
+    public var words: String { emoji.isEmpty ? title : String(title.dropFirst()).trimmingCharacters(in: .whitespaces) }
 
     /// What a nudge of each mood looks and sounds like (Settings → Nudges sends these as tests).
     public static func sample(_ mood: NudgeMood) -> Nudge {

@@ -74,6 +74,8 @@ targets:
           - "Services/AISettings.swift"
           - "Services/Notifier.swift"
           - "Services/NudgeSounds.swift"
+          - "Services/NudgeOverlay.swift"
+          - "Resources/NeuralLoop-*.caf"
           - "Views/MoveInView.swift"
           - "Resources/AppIcon.icns"
           - "Resources/PipLayers"

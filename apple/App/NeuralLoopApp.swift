@@ -91,6 +91,11 @@ struct RootView: View {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
             if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
+            // `-NLTestNudge sadViolin|sadMeow|shocked|gentle` sends that test nudge (sound, picture, on-screen Pip).
+            if let mood = UserDefaults.standard.string(forKey: "NLTestNudge").flatMap(NudgeMood.init(rawValue:)) {
+                try? await Task.sleep(for: .seconds(1.5))
+                Nudger.send(Nudge.sample(mood), test: true)
+            }
             // `-NLNudgePictures <folder>` writes each silly nudge's Pip picture there (checking what notifications show).
             if let folder = UserDefaults.standard.string(forKey: "NLNudgePictures") {
                 for mood in NudgeMood.allCases {

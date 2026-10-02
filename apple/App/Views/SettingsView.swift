@@ -443,6 +443,7 @@ struct NudgesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            NotificationsAllowed()
             gentle
             silly
             if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true) }
@@ -455,6 +456,8 @@ struct NudgesPage: View {
                      note: "When you’ve been away a while, Pip gets dramatic, just for laughs: a tiny sad violin after 8 hours, a sad little song after 12, and a shocked “fahhh” after a whole day. Each plays once, never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
             Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
             Toggle("Include the “fahhh” after a day", isOn: $settings.fahhh).toggleStyle(.switch)
+                .disabled(!settings.sillySounds)
+            Toggle("Pop up a big Pip on screen while the sound plays", isOn: $settings.bigPip).toggleStyle(.switch)
                 .disabled(!settings.sillySounds)
             HStack {
                 ForEach([NudgeMood.sadViolin, .sadMeow, .shocked], id: \.self) { mood in
@@ -565,6 +568,39 @@ struct VoicesPage: View {
 // MARK: Welcome
 
 /// First launch: sign in with Google for NotebookLM, or carry on with Pip's own AI.
+/// Whether macOS lets Pip's notifications through, with the one button that fixes it.
+struct NotificationsAllowed: View {
+    var compact = false
+    @State private var permission: Notifier.Permission?
+
+    var body: some View {
+        Group {
+            switch permission {
+            case .allowed?:
+                Label("Notifications are on", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.mint)
+            case .off?:
+                HStack {
+                    Label("Notifications are off for NeuralLoop", systemImage: "bell.slash").foregroundStyle(Theme.ink2)
+                    Button("Turn on in System Settings") { Notifier.openSystemSettings() }
+                }
+            case .notAsked?:
+                Button { Task { permission = await Notifier.shared.ask() } } label: {
+                    Label("Allow notifications", systemImage: "bell.badge")
+                }
+                .buttonStyle(.borderedProminent).controlSize(compact ? .regular : .large)
+            case nil:
+                EmptyView()
+            }
+        }
+        .font(Theme.body(13))
+        .task { permission = await Notifier.shared.permission() }
+        // Back from System Settings: look again.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { permission = await Notifier.shared.permission() }
+        }
+    }
+}
+
 struct WelcomeView: View {
     @Environment(AISettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
@@ -589,6 +625,10 @@ struct WelcomeView: View {
                 }
             }
             if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
+            Divider().frame(width: 300).padding(.top, 4)
+            Text("Pip tells you when a chapter is ready, and nudges you (at most once a day, unless Pip really misses you).")
+                .font(Theme.body(13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center).frame(maxWidth: 420)
+            NotificationsAllowed(compact: true)
         }
         .padding(40)
         .frame(width: 520)

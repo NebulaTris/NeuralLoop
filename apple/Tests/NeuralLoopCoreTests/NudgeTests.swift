@@ -147,7 +147,7 @@ private func away(hours: Double, sent: NudgeMood? = nil) -> NudgeHistory {
 
 @Test func settingsSavedBeforeSillySoundsKeepTheirQuietHours() throws {
     let old = try JSONDecoder().decode(NudgeSettings.self, from: Data(#"{"enabled":true,"quietStart":21,"quietEnd":9,"pausedUntil":0}"#.utf8))
-    #expect(old.quietStart == 21 && old.quietEnd == 9 && old.sillySounds && old.fahhh)
+    #expect(old.quietStart == 21 && old.quietEnd == 9 && old.sillySounds && old.fahhh && old.bigPip)
     let history = try JSONDecoder().decode(NudgeHistory.self, from: Data(#"{"lastSent":1,"lastSentDay":"d","lastEngaged":2,"ignoredInARow":0}"#.utf8))
     #expect(history.lastMood == nil)
 }
@@ -156,4 +156,10 @@ private func away(hours: Double, sent: NudgeMood? = nil) -> NudgeHistory {
     for mood in NudgeMood.allCases { #expect(Nudge.sample(mood).mood == mood) }
     #expect(Nudge.sample(.shocked).title == "😱 FAHHH! A whole day?!")
     #expect(Nudge.sample(.gentle).title == "🐾 Hi from Pip")
+}
+
+@Test func aSillyNudgeSplitsIntoABigEmojiAndItsWords() {
+    let violin = Nudge.sample(.sadViolin)
+    #expect(violin.emoji == "🎻" && violin.words == "Pip is playing a tiny sad violin")
+    #expect(Nudge(title: "No emoji here", body: "").emoji == "" && Nudge(title: "No emoji here", body: "").words == "No emoji here")
 }

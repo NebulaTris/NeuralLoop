@@ -11,6 +11,11 @@ restriction applies to anyone using the component through NeuralLoop.
 | **Rumik OSS-1** voices (`rumik-ai/rumik-oss-1-mlx-4bit`, `-8bit`), downloaded on first use | Podcast and explainer narration made on your Mac | **CC BY-NC 4.0** | **Non-commercial use only.** Anyone selling NeuralLoop, or using it commercially, needs a separate licence from Rumik or a different voice engine. |
 | **Google NotebookLM**, through `notebooklm-py` | The default way study material is made | Google's terms of service; `notebooklm-py` is MIT | `notebooklm-py` uses unofficial interfaces that can change at any time. Check Google's terms before any commercial use. |
 
+- **Nudge sounds** (`apple/App/Resources/NeuralLoop-sad-violin.caf`, `-sad-meow.caf`, `-fahhh.caf`): short meme clips
+  the maintainer chose for Silly mode, re-encoded with all metadata removed. Their source and licence are unknown, so
+  they are not covered by this project's licence; replace them with licensed sounds before any commercial release
+  (`OUT=apple/App/Resources scripts/install-nudge-sounds.sh VIOLIN MEOW FAHHH`).
+
 ## Fonts (bundled)
 
 | Font | License | Text |

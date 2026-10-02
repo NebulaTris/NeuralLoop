@@ -667,8 +667,10 @@ enum Nudger {
             h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000), mood: nudge.mood)
             history = h
         }
+        let onScreen = nudge.mood != .gentle && settings.bigPip
+        if onScreen { NudgeOverlay.shared.show(nudge) }
         Notifier.shared.post(title: nudge.title, body: nudge.body, bookId: "",
-                             sound: NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
+                             sound: onScreen ? nil : NudgeSounds.sound(nudge.mood), picture: NudgeSounds.picture(nudge.mood))
     }
 
     static func engaged() {

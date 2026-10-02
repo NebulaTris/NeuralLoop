@@ -17,7 +17,30 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    func post(title: String, body: String, bookId: String, sound: UNNotificationSound = .default, picture: URL? = nil) {
+    enum Permission { case notAsked, allowed, off }
+
+    func permission() async -> Permission {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .notDetermined: .notAsked
+        case .denied: .off
+        default: .allowed
+        }
+    }
+
+    /// Asks macOS (the first time it shows its prompt); once turned off, only System Settings can turn it back on.
+    func ask() async -> Permission {
+        if await permission() == .off { Self.openSystemSettings(); return .off }
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        return await permission()
+    }
+
+    static func openSystemSettings() {
+        let id = Bundle.main.bundleIdentifier ?? "app.neuralloop.books"
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)") { NSWorkspace.shared.open(url) }
+    }
+
+    /// `sound: nil` arrives silently (the on-screen Pip is playing it).
+    func post(title: String, body: String, bookId: String, sound: UNNotificationSound? = .default, picture: URL? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

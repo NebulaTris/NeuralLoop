@@ -1,6 +1,6 @@
-// What a silly nudge sounds like and which Pip it shows. A sound is NeuralLoop-<name>.caf, looked for in the app (none
-// ship yet: sounds need a licence that allows it) and then in ~/Library/Sounds, where `scripts/install-nudge-sounds.sh`
-// puts your own; without one, the usual chime plays. Notification sounds keep to Focus and the system's alert volume.
+// What a silly nudge sounds like and which Pip it shows. A sound is NeuralLoop-<name>.caf, looked for in the app (the
+// three in Resources, see NOTICE.md) and then in ~/Library/Sounds (`scripts/install-nudge-sounds.sh`); without one, the
+// usual chime plays. Notification sounds keep to Focus and the system's alert volume.
 
 #if os(macOS)
 import AppKit
