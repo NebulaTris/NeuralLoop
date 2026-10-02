@@ -161,22 +161,26 @@ struct LibraryView: View {
 
     private var emptyShelf: some View {
         CardBox(fill: Theme.sunk) {
-            VStack(spacing: 14) {
-                PipView(pose: .hug, size: 110)
-                Text("Your shelf is empty, and that's a fine place to start.").font(Theme.display(20))
+            VStack(spacing: 16) {
+                Text("Your shelf is empty, and that's a fine place to start.").font(Theme.display(22)).multilineTextAlignment(.center)
+                EmptyShelfGuide()
                 #if os(macOS)
-                Text("Drop a book here, or try the sample book to see how a loop feels.").font(Theme.body()).foregroundStyle(Theme.ink2)
+                EmptyShelfSteps(steps: ["Drag a PDF or EPUB onto this window (or click Add a book).",
+                                        "Pip splits it into chapters and starts preparing the first one.",
+                                        "Study each chapter's loop: listen, read, recall, map, remember."])
                 HStack {
                     Button("Add a book") { library.isPicking = true }.buttonStyle(.borderedProminent)
                     Button("Try the sample book") { addSample() }
                 }
+                .controlSize(.large)
                 #else
-                Text("Books your Mac prepares appear here. Add one from Files and your Mac will prepare it the next time it syncs.")
-                    .font(Theme.body()).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
-                Button("Add a book") { library.isPicking = true }.buttonStyle(.borderedProminent)
+                EmptyShelfSteps(steps: ["Drag a PDF or EPUB here from Files (or tap Add a book).",
+                                        "Your Mac prepares it the next time it syncs.",
+                                        "Study each chapter's loop: listen, read, recall, map, remember."])
+                Button("Add a book") { library.isPicking = true }.buttonStyle(.borderedProminent).controlSize(.large)
                 #endif
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 30)
+            .frame(maxWidth: .infinity).padding(.vertical, 26).padding(.horizontal, 20)
         }
     }
 

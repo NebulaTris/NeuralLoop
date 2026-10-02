@@ -14,6 +14,8 @@
 - **A big Pip on screen** for silly nudges: Pip zooms in large in the middle of the screen you're using, with a big
   emoji, while the sound plays, then shrinks away when it ends. Click it to open NeuralLoop. Settings → Nudges lets
   you pick the big Pip or just a notification, set its volume, and send a test of each sound.
+- **An empty shelf that shows what to do**: a little animated picture (your book flies along a dotted "whee!" arc into
+  Pip's drop zone, and Pip hops when it lands) with three numbered steps.
 - **Notifications are asked for on the welcome screen**, and Settings → Nudges shows whether they're on, with a button
   to System Settings if they're off.
 
