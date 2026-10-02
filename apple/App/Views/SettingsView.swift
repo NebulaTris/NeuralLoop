@@ -37,7 +37,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
     var blurb: String {
         switch self {
-        case .account: "Google sign-in for NotebookLM"
+        case .account: "Your Google account, library, and devices"
         case .ai: "Engine, models, and keys"
         case .voices: "Rumik's podcast voices"
         case .nudges: "Gentle reminders from Pip"
@@ -118,29 +118,11 @@ struct SettingsView: View {
 // MARK: Account
 
 struct AccountPage: View {
-    @Environment(AISettings.self) private var settings
+    @State private var drive = DriveAccount.shared
 
     var body: some View {
-        SettingsCard(title: "Google", note: "Sign-in happens in a real browser window (Chrome when you have it). That session is what NotebookLM uses; Pip never sees your password.") {
-            HStack(spacing: 14) {
-                Image(systemName: settings.account.signedIn ? "checkmark.seal.fill" : "person.crop.circle.badge.questionmark")
-                    .font(.system(size: 34)).foregroundStyle(settings.account.signedIn ? Theme.mint : Theme.ink3)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(settings.account.signedIn ? "Signed in" : "Not signed in").font(Theme.display(16, .medium))
-                    Text(settings.account.signedIn ? settings.account.email : "NotebookLM needs this. Without it, Pip uses your own AI.")
-                        .font(Theme.body(13)).foregroundStyle(Theme.ink2)
-                }
-                Spacer()
-                if settings.account.signedIn {
-                    Button("Sign out") { Task { await settings.signOut() } }
-                } else {
-                    Button("Sign in with Google") { Task { await settings.signIn() } }
-                        .buttonStyle(.borderedProminent).controlSize(.large).disabled(settings.signingIn)
-                }
-            }
-            if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
-        }
-        CardBox { DriveSyncCard() }  // the card has its own title
+        GoogleAccountCard()
+        if drive.isSignedIn { DevicesCard() }
         CardBox { LibraryDataCard() }
         UsageCard()
     }
@@ -643,43 +625,6 @@ struct NotificationsAllowed: View {
         }
     }
 }
-
-struct WelcomeView: View {
-    @Environment(AISettings.self) private var settings
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 16) {
-            PipView(pose: .hop, size: 170)
-            Text("Hi, I'm Pip!").font(Theme.display(30))
-            Text("Drop in a book and I'll turn every chapter into a small learning loop: listen, read, recall, map, remember.")
-                .font(Theme.body(15)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 420)
-            Text("Sign in with Google and NotebookLM makes the podcasts and quizzes. Not now? I'll use a free AI right here on your Mac.")
-                .font(Theme.body(13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center).frame(maxWidth: 420)
-            if settings.account.signedIn {
-                Label("You're signed in as \(settings.account.email)", systemImage: "checkmark.circle.fill")
-                    .font(Theme.body(14)).foregroundStyle(Theme.mint)
-                Button("Let's go") { dismiss() }.buttonStyle(.borderedProminent).controlSize(.large)
-            } else {
-                HStack {
-                    Button("Not now") { dismiss() }
-                    Button("Sign in with Google") { Task { await settings.signIn(); if settings.account.signedIn { dismiss() } } }
-                        .buttonStyle(.borderedProminent).disabled(settings.signingIn)
-                }
-            }
-            if !settings.accountNote.isEmpty { Text(settings.accountNote).font(Theme.body(12)).foregroundStyle(Theme.ink2) }
-            Divider().frame(width: 300).padding(.top, 4)
-            Text("Pip tells you when a chapter is ready, and nudges you (at most once a day, unless Pip really misses you).")
-                .font(Theme.body(13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center).frame(maxWidth: 420)
-            NotificationsAllowed(compact: true)
-        }
-        .padding(40)
-        .frame(width: 520)
-        .tint(Theme.accent)
-        .task { await settings.refreshAccount() }
-    }
-}
-
 
 /// NotebookLM's live allowance: five-hour and weekly windows, when they reset, and what it can make right now.
 struct UsageCard: View {

@@ -54,6 +54,16 @@ public enum SyncLayout {
 
     public static func removedPath(_ id: String) -> String { "removed/\(id).json" }
 
+    /// "deviceinfo/<device>.json": a device's note about itself (name, kind, last sync). Read from the Drive for
+    /// Settings → Account, never placed in the library.
+    public static func deviceInfo(_ path: String) -> String? {
+        guard path.hasPrefix("deviceinfo/"), path.hasSuffix(".json") else { return nil }
+        let id = String(path.dropFirst(11).dropLast(5))
+        return BookID.isValid(id) ? id : nil
+    }
+
+    public static func deviceInfoPath(_ id: String) -> String { "deviceinfo/\(id).json" }
+
     /// "inbox/<name>.{pdf,epub,json}": one file, its name made only of letters, digits, and dashes (a pad uses a UUID).
     public static func isInbox(_ path: String) -> Bool {
         guard path.hasPrefix("inbox/") else { return false }

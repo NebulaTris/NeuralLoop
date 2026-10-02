@@ -14,7 +14,8 @@ private let oauth = GoogleOAuth(clientID: "123-abc.apps.googleusercontent.com")
     let attempt = oauth.begin()
     let items = URLComponents(url: attempt.url, resolvingAgainstBaseURL: false)!.queryItems!
     func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
-    #expect(value("scope") == "openid email https://www.googleapis.com/auth/drive.appdata")
+    #expect(value("scope") == "openid email profile https://www.googleapis.com/auth/drive.appdata")
+    #expect(value("login_hint") == nil)
     #expect(value("code_challenge_method") == "S256" && value("code_challenge") == GoogleOAuth.challenge(for: attempt.verifier))
     #expect(value("redirect_uri") == "com.googleusercontent.apps.123-abc:/oauth2redirect")
     #expect(attempt.verifier.count == 64 && oauth.begin().verifier != attempt.verifier)
@@ -50,4 +51,17 @@ private let oauth = GoogleOAuth(clientID: "123-abc.apps.googleusercontent.com")
     #expect(first?.isFresh(now: Date(timeIntervalSince1970: 1000)) == true && first?.isFresh(now: Date(timeIntervalSince1970: 4590)) == false)
     let body = String(decoding: oauth.tokenRequest(code: "4/x y", verifier: "v").httpBody!, as: UTF8.self)
     #expect(body.contains("code=4%2Fx%20y") && body.contains("code_verifier=v") && !body.contains("client_secret"))
+}
+
+@Test func signInCanSuggestTheNotebookLMAccountAndReadsTheName() throws {
+    let items = URLComponents(url: oauth.begin(loginHint: "sam@example.com").url, resolvingAgainstBaseURL: false)!.queryItems!
+    #expect(items.first { $0.name == "login_hint" }?.value == "sam@example.com")
+    #expect(URLComponents(url: oauth.begin(loginHint: "").url, resolvingAgainstBaseURL: false)!.queryItems!.allSatisfy { $0.name != "login_hint" })
+    let claims = Data(#"{"email":"sam@example.com","name":"Sam Rivera\nX"}"#.utf8).base64EncodedString().replacingOccurrences(of: "=", with: "")
+    let tokens = try #require(GoogleOAuth.tokens(from: Data(#"{"access_token":"a","refresh_token":"r","expires_in":60,"id_token":"e30.\#(claims).s"}"#.utf8)))
+    #expect(tokens.email == "sam@example.com" && tokens.name == "Sam Rivera X")
+    let refreshed = try #require(GoogleOAuth.tokens(from: Data(#"{"access_token":"b","expires_in":60}"#.utf8), previous: tokens))
+    #expect(refreshed.name == "Sam Rivera X")
+    let old = try JSONDecoder().decode(GoogleOAuth.Tokens.self, from: Data(#"{"access":"a","expires":1,"email":"e@x.com"}"#.utf8))
+    #expect(old.name == nil)
 }

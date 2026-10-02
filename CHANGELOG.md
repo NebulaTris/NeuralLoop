@@ -16,8 +16,12 @@
   you pick the big Pip or just a notification, set its volume, and send a test of each sound.
 - **An empty shelf that shows what to do**: a little animated picture (your book flies along a dotted "whee!" arc into
   Pip's drop zone, and Pip hops when it lands) with three numbered steps.
-- **Notifications are asked for on the welcome screen**, and Settings → Nudges shows whether they're on, with a button
-  to System Settings if they're off.
+- **A guided tour** when you first open NeuralLoop: seven short pages with little animations (bring a book, how Pip
+  prepares it, the five steps, chapters unlocking, Pip in the menu bar), ending with sign-in and notifications. Help →
+  Take the Tour shows it again.
+- **One Google sign-in** in Settings → Account for NotebookLM and your library, with your name and email, which account
+  each uses, and a list of your devices with when each last synced.
+- Settings → Nudges shows whether notifications are on, with a button to System Settings if they're off.
 
 ## 0.2.0: the first public preview 🐾
 

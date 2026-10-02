@@ -31,6 +31,9 @@ struct NeuralLoopApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Add a Book…") { library.isPicking = true }.keyboardShortcut("o")
             }
+            CommandGroup(replacing: .help) {
+                Button("Take the Tour") { library.showingTour = true }
+            }
         }
         Settings {
             SettingsView().environment(settings).environment(library)
@@ -84,13 +87,17 @@ struct RootView: View {
         .tint(Theme.accent)
         // First things first: move into Applications (when running from Downloads or the disk image), then the welcome.
         .sheet(isPresented: $movingIn) { MoveInView() }
-        .sheet(isPresented: Binding(get: { !welcomed && !movingIn }, set: { if !$0 { welcomed = true } })) { WelcomeView() }
+        .sheet(isPresented: Binding(get: { (!welcomed && !movingIn) || library.showingTour },
+                                    set: { if !$0 { welcomed = true; library.showingTour = false } })) {
+            GuidedTour { welcomed = true; library.showingTour = false }
+        }
         // Development builds only: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {
             #if DEBUG
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
             if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
+            if UserDefaults.standard.bool(forKey: "NLTour") { library.showingTour = true }  // `-NLTour YES [-NLTourPage n]`
             // `-NLTestNudge sadViolin|sadMeow|shocked|gentle` sends that test nudge (sound, picture, on-screen Pip).
             if let mood = UserDefaults.standard.string(forKey: "NLTestNudge").flatMap(NudgeMood.init(rawValue:)) {
                 try? await Task.sleep(for: .seconds(1.5))

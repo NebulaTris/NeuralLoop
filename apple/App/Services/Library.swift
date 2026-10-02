@@ -45,6 +45,8 @@ final class Library {
     var entries: [BookEntry] = []
     var path: [String] = []
     var isPicking = false
+    /// The guided tour, asked for from Help (Mac) or Settings (iPad).
+    var showingTour = false
     var message: String?
     /// NotebookLM's live usage (five-hour and weekly windows), refreshed every few minutes.
     var usage: NotebookLMUsage?

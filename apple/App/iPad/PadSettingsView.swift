@@ -20,6 +20,7 @@ struct ProfileButton: View {
 
 struct PadSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(Library.self) private var library
 
     var body: some View {
         NavigationStack {
@@ -33,6 +34,11 @@ struct PadSettingsView: View {
                         }
                     }
                     CardBox { DriveSyncCard() }  // the card has its own title
+                    if DriveAccount.shared.isSignedIn { DevicesCard() }
+                    Button {
+                        dismiss()
+                        Task { try? await Task.sleep(for: .milliseconds(450)); library.showingTour = true }  // after this sheet closes
+                    } label: { Label("Take the tour", systemImage: "sparkles") }
                     CardBox { LibraryDataCard() }
                     SettingsCard(title: "Preparing books",
                                  note: "Only the chapter being prepared is ever sent to an AI; your library stays in your own Google Drive.") {

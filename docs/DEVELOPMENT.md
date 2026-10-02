@@ -55,7 +55,8 @@ public repo so forks register their own app instead of appearing as yours.
 3. **Google Auth Platform → Branding**: app name **NeuralLoop**, a support email you're happy to show people.
 4. **Audience**: user type **External**, publishing status **Testing**, and add your own Google account under **Test
    users**.
-5. **Data access → Add or remove scopes**: `openid`, `.../auth/userinfo.email`, and `.../auth/drive.appdata`.
+5. **Data access → Add or remove scopes**: `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile` (your name in
+   Settings → Account), and `.../auth/drive.appdata`.
 6. **Clients → Create client** → application type **iOS**, bundle ID `app.neuralloop.books`. Copy the **Client ID**
    (it ends in `.apps.googleusercontent.com`). One client serves both the Mac and iPad apps; there's no client secret.
 7. `cp apple/Config/Google.xcconfig.example apple/Config/Google.xcconfig` and paste the client ID there (the file is in
@@ -76,7 +77,7 @@ about once a week. That's perfect for you and a few friends.
 2. **Branding → Authorized domains**: add that domain; fill in the home page, privacy policy, and terms links; add the
    logo (Pip's icon from `design/pip/`).
 3. **Audience → Publish app** (Testing → In production).
-4. **Verification.** `drive.appdata`, `openid`, and `email` are all non-sensitive scopes, so no security assessment is
+4. **Verification.** `drive.appdata`, `openid`, `email`, and `profile` are all non-sensitive scopes, so no security assessment is
    needed. Because the consent screen shows your name and logo, Google checks the branding (home page, policy, domain
    ownership). Submit it from **Verification Center**; it usually takes a few business days. Until it's verified, people
    see your app without the logo.

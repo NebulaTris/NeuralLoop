@@ -74,7 +74,7 @@ private func read(_ root: URL, _ path: String) -> String? {
     await macSync.markTaken(arrived[0])
     let tidied = try await macSync.sync()
     #expect(tidied.deleted == 2)
-    let left = try await drive.list()
+    let left = try await libraryFiles(drive)
     #expect(left.isEmpty)
     _ = try await padSync.sync()
     #expect(read(pad, "inbox/u1.pdf") == nil)  // the pad tidies up once the Mac has it
@@ -172,7 +172,7 @@ private func read(_ root: URL, _ path: String) -> String? {
     await drive.insert(Data("new".utf8), as: "books/mcp/book.json")
     let report = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
     #expect(read(pad, "books/mcp/book.json") == "new" && report.deleted == 1)
-    let left = try await drive.list()
+    let left = try await libraryFiles(drive)
     #expect(left.count == 1)
 }
 
@@ -257,7 +257,7 @@ private struct StaleListing: DriveStore {
     try FileManager.default.removeItem(at: pad.appendingPathComponent("inbox"))
     let report = try await padSync.sync()
     #expect(report.deleted == 2 && report.uploaded == 0)
-    #expect(try await drive.list().isEmpty)
+    #expect(try await libraryFiles(drive).isEmpty)
     #expect(try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync().arrived.isEmpty)
 }
 
@@ -295,4 +295,43 @@ private struct StaleListing: DriveStore {
     _ = try await engine.sync()
     let state = try String(contentsOf: root.appendingPathComponent("sync-state.json"), encoding: .utf8)
     #expect(state.contains("book.json") && !state.contains("01.md"))
+}
+
+@Test func everyDeviceSeesTheOthersByName() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's MacBook Pro")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive, name: "Sam's iPad")
+    let first = try await macSync.sync(now: now)
+    #expect(first.uploaded == 0)  // the device note isn't a library file
+    #expect(first.devices.map(\.name) == ["Sam's MacBook Pro"] && first.devices[0].isThisDevice)
+    let padReport = try await padSync.sync(now: now.addingTimeInterval(60))
+    #expect(padReport.devices.map(\.name) == ["Sam's iPad", "Sam's MacBook Pro"])
+    #expect(padReport.devices[1].kind == .mac && padReport.devices[1].lastSync == now.timeIntervalSince1970 * 1000)
+    let macAgain = try await macSync.sync(now: now.addingTimeInterval(120))
+    #expect(macAgain.devices.map(\.name) == ["Sam's MacBook Pro", "Sam's iPad"])
+    #expect(read(mac, "deviceinfo/ipad1.json") == nil)  // read from the Drive, never written into the library
+    // A quick second sync doesn't rewrite the note; a later one does (so "last synced" stays honest).
+    let uploads = await drive.uploads
+    _ = try await macSync.sync(now: now.addingTimeInterval(180))
+    #expect(await drive.uploads == uploads)
+    _ = try await macSync.sync(now: now.addingTimeInterval(20 * 60))
+    #expect(await drive.uploads == uploads + 1)
+}
+
+@Test func aDeviceNoteThatsOddIsShownSafelyOrNotAtAll() {
+    let fine = DeviceInfo.read(Data(#"{"name":"  Sam's\niPad  ","kind":"pad","lastSync":5}"#.utf8), id: "ipad1")
+    #expect(fine?.name == "Sam's iPad" && fine?.kind == .pad && fine?.lastSync == 5)
+    #expect(DeviceInfo.read(Data("nope".utf8), id: "x") == nil)
+    #expect(DeviceInfo.read(Data(#"{"name":"","kind":"mac","lastSync":1}"#.utf8), id: "mac9")?.name == "A Mac")
+    #expect(DeviceInfo.read(Data(#"{"name":"\#(String(repeating: "a", count: 300))","kind":"tv","lastSync":1}"#.utf8), id: "z")?.name.count == 60)
+    #expect(SyncLayout.deviceInfo("deviceinfo/ipad1.json") == "ipad1" && SyncLayout.deviceInfo("deviceinfo/../x.json") == nil)
+    #expect(!SyncLayout.isSafeRemote("deviceinfo/ipad1.json"))  // never placed on disk
+}
+
+/// What's in the Drive besides the devices' notes about themselves.
+private func libraryFiles(_ drive: MemoryDrive) async throws -> [SyncFile] {
+    try await drive.list().filter { SyncLayout.deviceInfo($0.path) == nil }
 }

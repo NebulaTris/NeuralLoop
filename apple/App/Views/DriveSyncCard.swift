@@ -41,8 +41,13 @@ struct DriveSyncCard: View {
     private var subtitle: String {
         guard account.isConfigured else { return "Needs a one-time Google setup before it can be turned on (docs/DEVELOPMENT.md)." }
         guard account.isSignedIn else { return "Sign in with Google and your books, progress, and cards follow you to your iPad." }
-        let who = account.email.map { "Syncing with \($0)" } ?? "Syncing"
+        let who = [account.name, account.email].compactMap { $0 }.joined(separator: " · ")
+            .nonEmptyOr("Syncing", prefix: "Syncing with ")
         guard let last = sync.lastSync else { return "\(who). First sync on its way." }
         return "\(who) · last synced \(last.formatted(date: .omitted, time: .shortened))"
     }
+}
+
+private extension String {
+    func nonEmptyOr(_ fallback: String, prefix: String) -> String { isEmpty ? fallback : prefix + self }
 }

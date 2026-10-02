@@ -34,8 +34,53 @@ public struct SyncReport: Equatable, Sendable {
     public var removedElsewhere: [String] = []
     /// Another device writes this device's progress files (they share an id): nothing was uploaded; take a new id.
     public var deviceClash = false
+    /// Every device signed in to this library, this one first, then by name.
+    public var devices: [DeviceInfo] = []
     public var problems: [String] = []
     public init() {}
+}
+
+/// A device on the library, as its own note in the Drive says (`deviceinfo/<id>.json`).
+public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var kind: SyncRole
+    public var lastSync: Double  // Unix ms
+    public var isThisDevice = false
+
+    public init(id: String, name: String, kind: SyncRole, lastSync: Double, isThisDevice: Bool = false) {
+        (self.id, self.kind, self.lastSync, self.isThisDevice) = (id, kind, lastSync, isThisDevice)
+        self.name = Self.clean(name, kind: kind)
+    }
+
+    enum CodingKeys: String, CodingKey { case name, kind, lastSync }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(kind.rawValue, forKey: .kind)
+        try c.encode(lastSync, forKey: .lastSync)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = (try? c.decode(String.self, forKey: .kind)).flatMap(SyncRole.init(rawValue:)) ?? .mac
+        self.init(id: "", name: (try? c.decode(String.self, forKey: .name)) ?? "", kind: kind,
+                  lastSync: (try? c.decode(Double.self, forKey: .lastSync)) ?? 0)
+    }
+
+    /// Another device's note: shown as plain text, so it's kept to one sensible line.
+    public static func read(_ data: Data, id: String) -> DeviceInfo? {
+        guard (try? JSONSerialization.jsonObject(with: data)) is [String: Any],
+              var info = try? JSONDecoder().decode(DeviceInfo.self, from: data) else { return nil }
+        info.id = id
+        return info
+    }
+
+    static func clean(_ name: String, kind: SyncRole) -> String {
+        let one = String(name.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(60))
+        return one.isEmpty ? (kind == .mac ? "A Mac" : "An iPad") : one
+    }
 }
 
 struct SyncState: Codable {
@@ -50,6 +95,10 @@ struct SyncState: Codable {
     var tries: [String: Attempt] = [:]     // Mac: inbox book paths that couldn't be prepared yet
     var dropInbox: Set<String> = []        // inbox paths to take out of the Drive ("Remove all books")
     var dropInboxBefore: Double?           // … and every inbox upload older than this (Unix ms)
+    var noteAt: Double?                    // when this device last wrote its note (Unix ms)
+    var noteName: String?                  // … and the name in it
+    var notes: [String: Note] = [:]        // other devices' notes, by device id (re-read when their md5 changes)
+    struct Note: Codable { var md5: String; var info: DeviceInfo }
 
     init() {}
     init(from decoder: Decoder) throws {  // older state files lack the newer fields
@@ -63,6 +112,9 @@ struct SyncState: Codable {
         tries = (try? c.decode([String: Attempt].self, forKey: .tries)) ?? [:]
         dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
         dropInboxBefore = try? c.decode(Double.self, forKey: .dropInboxBefore)
+        noteAt = try? c.decode(Double.self, forKey: .noteAt)
+        noteName = try? c.decode(String.self, forKey: .noteName)
+        notes = (try? c.decode([String: Note].self, forKey: .notes)) ?? [:]
     }
 
     static func load(_ root: URL) -> SyncState {
@@ -76,14 +128,18 @@ public actor SyncEngine {
     let device: String
     let role: SyncRole
     let store: DriveStore
+    /// What this device calls itself in the device list ("Sam's MacBook Pro").
+    let name: String
     private var state: SyncState
+    /// How often a device rewrites its note while syncing (it says when it last synced).
+    static let noteEvery = 15 * 60 * 1000.0
 
     var books: URL { root.appendingPathComponent("books", isDirectory: true) }
     var inbox: URL { root.appendingPathComponent("inbox", isDirectory: true) }
     var stateFile: URL { root.appendingPathComponent("sync-state.json") }
 
-    public init(root: URL, device: String, role: SyncRole, store: DriveStore) {
-        (self.root, self.device, self.role, self.store) = (root, device, role, store)
+    public init(root: URL, device: String, role: SyncRole, store: DriveStore, name: String = "") {
+        (self.root, self.device, self.role, self.store, self.name) = (root, device, role, store, name)
         state = SyncState.load(root)
         state.uploaded = state.uploaded.filter { SyncLayout.progressDevice($0.key) == device }  // an id we gave up
     }
@@ -231,8 +287,50 @@ public actor SyncEngine {
                 state.sent.remove(path)
             }
         }
+        report.devices = await deviceList(remote: remote, now: now, report: &report)
         save()
         return report
+    }
+
+    /// This device's note goes up when its name changes or every `noteEvery`; the other devices' notes are read
+    /// (again only when they change). A note that can't be written or read is a problem, never a failed sync.
+    private func deviceList(remote: [SyncFile], now: Date, report: inout SyncReport) async -> [DeviceInfo] {
+        let nowMs = now.timeIntervalSince1970 * 1000
+        let path = SyncLayout.deviceInfoPath(device)
+        if state.noteName != name || nowMs - (state.noteAt ?? 0) >= Self.noteEvery {
+            let note = DeviceInfo(id: device, name: name, kind: role, lastSync: nowMs)
+            let file = root.appendingPathComponent(".deviceinfo-\(device).json")
+            do {
+                try JSONEncoder().encode(note).write(to: file, options: .atomic)
+                defer { try? FileManager.default.removeItem(at: file) }
+                try await store.upload(file, as: path, replacing: remote.first { $0.path == path }?.id)
+                (state.noteAt, state.noteName) = (nowMs, name)
+            } catch { report.problems.append("\(path): \(error.localizedDescription)") }
+        }
+        var others: [DeviceInfo] = []
+        let theirs = remote.filter { SyncLayout.deviceInfo($0.path).map { $0 != device } ?? false }
+        for file in theirs {
+            guard let id = SyncLayout.deviceInfo(file.path) else { continue }
+            if let cached = state.notes[id], cached.md5 == file.md5, !file.md5.isEmpty {
+                var info = cached.info
+                info.id = id
+                others.append(info)
+                continue
+            }
+            let temp = FileManager.default.temporaryDirectory.appendingPathComponent("deviceinfo-\(UUID().uuidString).json")
+            defer { try? FileManager.default.removeItem(at: temp) }
+            do {
+                guard file.size < 4096 else { continue }
+                try await store.download(file, to: temp)
+                guard let info = DeviceInfo.read(try Data(contentsOf: temp), id: id) else { continue }
+                state.notes[id] = SyncState.Note(md5: file.md5, info: info)
+                others.append(info)
+            } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
+        }
+        let present = Set(theirs.compactMap { SyncLayout.deviceInfo($0.path) })
+        state.notes = state.notes.filter { present.contains($0.key) }
+        let me = DeviceInfo(id: device, name: name, kind: role, lastSync: state.noteAt ?? nowMs, isThisDevice: true)
+        return [me] + others.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Deleting something that's already gone is fine (another device got there first).

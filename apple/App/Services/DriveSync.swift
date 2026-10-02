@@ -6,6 +6,9 @@ import Foundation
 import NeuralLoopCore
 import Observation
 import Security
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor @Observable
 final class DriveSync {
@@ -15,6 +18,8 @@ final class DriveSync {
     private(set) var lastSync: Date?
     private(set) var lastReport: SyncReport?
     private(set) var problem: String?
+    /// Every device on the library (this one first), from the last sync.
+    private(set) var devices: [DeviceInfo] = []
     @ObservationIgnored private var started = false
     @ObservationIgnored private var again = false
     @ObservationIgnored private var soonTask: Task<Void, Never>?
@@ -77,13 +82,22 @@ final class DriveSync {
         #endif
     }
 
+    /// What this device is called in the device list.
+    static var deviceName: String {
+        #if os(macOS)
+        Host.current().localizedName ?? "This Mac"
+        #else
+        UIDevice.current.name
+        #endif
+    }
+
     /// The engine, made on first use (making it touches nothing on the network).
     private func sharedEngine() -> SyncEngine {
         if let engine { return engine }
         let account = DriveAccount.shared
         let store: GoogleDrive = Self.fakeDrive.map { GoogleDrive(base: $0) { "development" } }
             ?? GoogleDrive { force in try await account.accessToken(forceRefresh: force) }
-        let made = SyncEngine(root: Self.root, device: device, role: Self.role, store: store)
+        let made = SyncEngine(root: Self.root, device: device, role: Self.role, store: store, name: Self.deviceName)
         engine = made
         return made
     }
@@ -150,6 +164,7 @@ final class DriveSync {
             }
             lastReport = report
             lastSync = Date()
+            if !report.devices.isEmpty { devices = report.devices }
             problem = report.problems.first
             if report.downloaded > 0 {
                 NotificationCenter.default.post(name: BookSession.progressArrived, object: nil)  // open books merge it in

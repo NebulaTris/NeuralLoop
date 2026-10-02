@@ -29,6 +29,7 @@ struct NeuralLoopPadApp: App {
 
 struct PadRootView: View {
     @Environment(Library.self) private var library
+    @AppStorage("welcomed") private var welcomed = false
 
     var body: some View {
         @Bindable var library = library
@@ -40,6 +41,10 @@ struct PadRootView: View {
         }
         .background(Theme.paper)
         .tint(Theme.accent)
+        .sheet(isPresented: Binding(get: { !welcomed || library.showingTour },
+                                    set: { if !$0 { welcomed = true; library.showingTour = false } })) {
+            GuidedTour { welcomed = true; library.showingTour = false }
+        }
         .task {
             #if DEBUG
             // Development, as on the Mac: `-NLOpenBook <id> [-NLStage map] [-NLBookMap YES]` opens a book

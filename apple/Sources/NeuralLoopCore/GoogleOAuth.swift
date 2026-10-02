@@ -1,12 +1,13 @@
 // Signing in with Google for the Drive library (spec 07): OAuth 2.0 for installed apps with PKCE, the flow Google
 // accepts from a system browser sheet. No client secret (an iOS-type client ID, used by the Mac and iPad apps); the
-// app asks only for its own hidden app folder in Drive plus the person's email. Tokens live in the Keychain.
+// app asks only for its own hidden app folder in Drive plus the person's email and name (shown in Settings → Account).
+// Tokens live in the Keychain.
 
 import CryptoKit
 import Foundation
 
 public struct GoogleOAuth: Sendable {
-    public static let scopes = ["openid", "email", "https://www.googleapis.com/auth/drive.appdata"]
+    public static let scopes = ["openid", "email", "profile", "https://www.googleapis.com/auth/drive.appdata"]
     public let clientID: String
 
     public init(clientID: String) { self.clientID = clientID }
@@ -23,8 +24,9 @@ public struct GoogleOAuth: Sendable {
         public let url: URL
     }
 
-    /// A fresh sign-in: a one-time secret (PKCE verifier) and the Google page to open.
-    public func begin() -> Attempt {
+    /// A fresh sign-in: a one-time secret (PKCE verifier) and the Google page to open. `loginHint` suggests an account
+    /// (the one NotebookLM is signed in with), so the same Google account holds the library.
+    public func begin(loginHint: String? = nil) -> Attempt {
         let verifier = Self.randomString(64)
         let state = Self.randomString(24)
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
@@ -39,6 +41,9 @@ public struct GoogleOAuth: Sendable {
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "select_account consent"),
         ]
+        if let hint = loginHint?.trimmingCharacters(in: .whitespaces), !hint.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "login_hint", value: hint))
+        }
         return Attempt(verifier: verifier, state: state, url: components.url!)
     }
 
@@ -68,6 +73,7 @@ public struct GoogleOAuth: Sendable {
         public var refresh: String?
         public var expires: Double      // Unix seconds
         public var email: String?
+        public var name: String?
         public func isFresh(now: Date = Date()) -> Bool { expires - 60 > now.timeIntervalSince1970 }
     }
 
@@ -76,20 +82,27 @@ public struct GoogleOAuth: Sendable {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let access = object["access_token"] as? String else { return nil }
         let lifetime = (object["expires_in"] as? Double) ?? Double(object["expires_in"] as? Int ?? 3600)
-        let email = (object["id_token"] as? String).flatMap(emailFromIDToken) ?? previous?.email
+        let claims = (object["id_token"] as? String).flatMap(claimsFromIDToken)
+        let email = (claims?["email"] as? String) ?? previous?.email
+        let name = (claims?["name"] as? String).map(Self.displayName).flatMap { $0.isEmpty ? nil : $0 } ?? previous?.name
         return Tokens(access: access, refresh: (object["refresh_token"] as? String) ?? previous?.refresh,
-                      expires: now.timeIntervalSince1970 + lifetime, email: email)
+                      expires: now.timeIntervalSince1970 + lifetime, email: email, name: name)
     }
 
     /// The email inside Google's ID token (a signed JWT we received straight from Google over TLS; only displayed).
-    static func emailFromIDToken(_ token: String) -> String? {
+    static func emailFromIDToken(_ token: String) -> String? { claimsFromIDToken(token)?["email"] as? String }
+
+    /// A name on one line, of a sensible length (it's only ever displayed).
+    static func displayName(_ name: String) -> String { String(name.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(80)) }
+
+    static func claimsFromIDToken(_ token: String) -> [String: Any]? {
         let parts = token.split(separator: ".")
         guard parts.count >= 2 else { return nil }
         var base64 = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         while base64.count % 4 != 0 { base64 += "=" }
         guard let data = Data(base64Encoded: base64),
               let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return claims["email"] as? String
+        return claims
     }
 
     static func challenge(for verifier: String) -> String {

@@ -1,6 +1,6 @@
 // The Google account that holds the library (spec 07): sign in through the system's browser sheet (PKCE, no password
 // ever touches the app), keep the tokens in the Keychain, refresh them when they expire. Asks only for NeuralLoop's
-// own hidden folder in Drive (drive.appdata) and the email address.
+// own hidden folder in Drive (drive.appdata), the email address, and the name (shown in Settings → Account).
 
 import AuthenticationServices
 import Foundation
@@ -17,6 +17,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
     static let shared = DriveAccount()
 
     private(set) var email: String?
+    private(set) var name: String?
     private(set) var signingIn = false
     var note = ""
     @ObservationIgnored private var tokens: GoogleOAuth.Tokens?
@@ -37,16 +38,18 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         if let saved = Keychain.read(Self.keychainName), let data = saved.data(using: .utf8) {
             tokens = try? JSONDecoder().decode(GoogleOAuth.Tokens.self, from: data)
             email = tokens?.email
+            name = tokens?.name
         }
     }
 
-    func signIn() async {
+    /// `loginHint`: the account to suggest (NotebookLM's), so one Google account holds everything.
+    func signIn(loginHint: String? = nil) async {
         guard let clientID = Self.clientID else {
             note = "Google Drive sync needs a one-time setup first (see docs/DEVELOPMENT.md → Google Drive sync)."
             return
         }
         let oauth = GoogleOAuth(clientID: clientID)
-        let attempt = oauth.begin()
+        let attempt = oauth.begin(loginHint: loginHint)
         signingIn = true
         note = ""
         defer { signingIn = false }
@@ -85,6 +88,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         }
         tokens = nil
         email = nil
+        name = nil
         Keychain.save(Self.keychainName, "")
     }
 
@@ -105,6 +109,7 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
     private func store(_ fresh: GoogleOAuth.Tokens) {
         tokens = fresh
         email = fresh.email
+        name = fresh.name
         if let data = try? JSONEncoder().encode(fresh), let text = String(data: data, encoding: .utf8) {
             // Readable after the first unlock, so a Mac preparing books overnight can keep syncing.
             if let problem = Keychain.save(Self.keychainName, text, availableWhileLocked: true) { note = problem }
