@@ -81,10 +81,13 @@ CHEEK_L = fluffy(16, 14, [(100, 250)], 5, step=15)
 
 
 def ear(side, droop=False):
-    tilt, end = (
-        ('<g transform="translate(2,12) rotate(-48 -40 -10) scale(.92)">', "</g>") if droop else ("", "")
-    )
-    return f'<g transform="scale({side},1)">{tilt}<path d="M-48,-6 C-63,-42 -48,-62 -21,-46 C-30,-30 -36,-16 -48,-6 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><path d="M-43,-13 C-53,-37 -44,-50 -28,-42 C-33,-31 -37,-22 -43,-13 Z" fill="{CREAM}"/><path d="M-40,-18 L-44,-30 M-36,-20 L-37,-34" stroke="{RING}" stroke-width="2" stroke-linecap="round"/>{end}</g>'
+    if droop:  # a floppy ear for sad Pip: hangs from the top of the head down to the eyes, cream side showing
+        return (
+            f'<g transform="scale({side},1)"><path d="M-24,-40 C-48,-50 -74,-28 -70,0 C-62,-2 -52,-10 -42,-20 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/>'
+            f'<path d="M-31,-35 C-48,-41 -64,-25 -62,-7 C-56,-9 -49,-16 -41,-24 Z" fill="{CREAM}"/>'
+            f'<path d="M-50,-24 L-58,-14 M-45,-29 L-55,-22" fill="none" stroke="{RING}" stroke-width="2" stroke-linecap="round"/></g>'
+        )
+    return f'<g transform="scale({side},1)"><path d="M-48,-6 C-63,-42 -48,-62 -21,-46 C-30,-30 -36,-16 -48,-6 Z" fill="{FUR}" stroke="{OUT}" stroke-width="3" stroke-linejoin="round"/><path d="M-43,-13 C-53,-37 -44,-50 -28,-42 C-33,-31 -37,-22 -43,-13 Z" fill="{CREAM}"/><path d="M-40,-18 L-44,-30 M-36,-20 L-37,-34" stroke="{RING}" stroke-width="2" stroke-linecap="round"/></g>'
 
 
 def eyes(expr):
