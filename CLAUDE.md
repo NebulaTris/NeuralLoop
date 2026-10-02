@@ -38,7 +38,7 @@ Two parts, one repo:
    to fix it. Pip is never angry or disappointed. The one exception is Silly mode (on by default, Settings → Nudges): after
    time away a nudge is a joke, step by step (default: tiny sad violin at 8 h, sad meow song at 12 h, a shocked "fahhh" at 24 h;
    the steps' sounds, hours, and count are the person's, plus an optional repeat of the last; each once per absence, never in quiet hours) with the `sad` or
-   `shocked` pose; it always says what's ready, never scolds, and the fahhh has its own switch. No other screen uses those poses.
+   `shocked` pose; it always says what's ready, never scolds, and any step (the fahhh too) can be removed in the steps editor. No other screen uses those poses.
 
 ## Setup and commands
 

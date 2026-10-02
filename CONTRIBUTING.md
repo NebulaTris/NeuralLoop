@@ -24,5 +24,5 @@ Add this line to your pull request description to confirm: `I agree to the contr
 
 ## Style
 
-Warm, plain copy (Pip is never sad); pure logic in `NeuralLoopCore` / `neuralloop_books` with tests; screens stay thin;
+Warm, plain copy (Pip is never angry or disappointed; sad only as Silly mode's joke); pure logic in `NeuralLoopCore` / `neuralloop_books` with tests; screens stay thin;
 never hand-edit generated files.

@@ -265,4 +265,5 @@ The iPad app: `cd apple && xcodegen generate && open NeuralLoop.xcodeproj`, sche
 `docs/DEVELOPMENT.md` for installing on your own iPad and the Google setup).
 
 Rules of thumb (from `CLAUDE.md`): tests first; pure logic in `NeuralLoopCore` / `neuralloop_books`, screens thin;
-generated files are never hand-edited; copy is warm and plain, and Pip is never sad.
+generated files are never hand-edited; copy is warm and plain, and Pip is never angry or disappointed (sad
+only as Silly mode's joke).

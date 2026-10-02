@@ -398,7 +398,7 @@ def pose_sad():
 
 
 def pose_shocked():
-    """Only for the silly nudge after a week away (with the "fahhh"): fur on end, paws on cheeks."""
+    """Only for the silly nudge after a day away by default (with the "fahhh"): fur on end, paws on cheeks."""
     cx, cy = (120, 152)
 
     def bang(x, y, rot, cls):

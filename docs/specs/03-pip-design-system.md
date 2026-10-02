@@ -40,10 +40,12 @@ when the person renamed Pip, replace the name in the label. Helpers already exis
 | `study` | tiny round glasses at a laptop with a spinner | something is being prepared |
 | `proud` | chest puffed, medal swinging, stars | goal met, a great score, a finished book |
 | `icon` | happy head only | tray, headers, small sizes |
+| `sad` | floppy ears hanging down, a tear, its own little rain cloud | Silly mode nudges only (the sad violin and sad meow steps): the big on-screen Pip and the notification picture |
+| `shocked` | fur on end, paws on cheeks, "!" | Silly mode nudges only (the "fahhh" step): the big on-screen Pip and the notification picture |
 
 Rules: Pip is **never** angry, disappointed, or hungry. No guilt copy. Only one Pip per screen region. The only sad Pip is a joke:
-the `sad` (droopy ears, a tear, its own rain cloud) and `shocked` (paws on cheeks, "!") poses appear only in Silly mode's
-nudges (8, 12, and 24 hours away), which always say what's ready and can be turned off in Settings → Nudges.
+the `sad` and `shocked` poses appear only in Silly mode's nudges (by default 8, 12, and 24 hours away; the steps are the
+person's to change), which always say what's ready and can be turned off in Settings → Nudges.
 
 ## Sizes
 
