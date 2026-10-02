@@ -22,6 +22,11 @@
 - **One Google sign-in** in Settings → Account for NotebookLM and your library, with your name and email, which account
   each uses, and a list of your devices with when each last synced.
 - Settings → Nudges shows whether notifications are on, with a button to System Settings if they're off.
+- **Fixes from a full review:** books made of short parts, parts with a preface or index, numbered chapters, real
+  chapters named like "Index structures", and substantial appendices all split correctly; every book keeps its name on
+  later runs. Silly nudges only come when something is ready, never count against the usual nudges, and the big Pip
+  stays away during calls, full-screen apps, and a locked screen. The device list shows each device once and tidies
+  old ones, sign-out is always there, and the tour opens reliably.
 
 ## 0.2.0: the first public preview 🐾
 
