@@ -664,7 +664,7 @@ enum Nudger {
     static func send(_ nudge: Nudge, day: String? = nil, test: Bool = false) {
         if !test {
             var h = history
-            h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000), mood: nudge.mood)
+            h.sent(now: Date().timeIntervalSince1970 * 1000, day: day ?? Activity.dayKey(Date().timeIntervalSince1970 * 1000), mood: nudge.mood, step: nudge.step)
             history = h
         }
         let onScreen = nudge.mood != .gentle && settings.bigPip

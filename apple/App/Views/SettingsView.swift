@@ -453,10 +453,9 @@ struct NudgesPage: View {
 
     private var silly: some View {
         SettingsCard(title: "Silly mode",
-                     note: "When you’ve been away a while, Pip gets dramatic, just for laughs: a tiny sad violin after 8 hours, a sad little song after 12, and a shocked “fahhh” after a whole day. Each plays once, never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
+                     note: "When you’ve been away a while, Pip gets dramatic, just for laughs. Each step plays once (hours count from the last time you opened NeuralLoop), never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
             Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
-            Toggle("Include the “fahhh” after a day", isOn: $settings.fahhh).toggleStyle(.switch)
-                .disabled(!settings.sillySounds)
+            steps.disabled(!settings.sillySounds)
             Field(label: "Arrives as") {
                 Picker("", selection: $settings.bigPip) {
                     Text("A big Pip on screen, plus a notification").tag(true)
@@ -467,7 +466,7 @@ struct NudgesPage: View {
             .disabled(!settings.sillySounds)
             Field(label: "Volume") {
                 Slider(value: $settings.volume, in: 0.1...1) { editing in
-                    if !editing { NudgeSounds.preview(.sadViolin, volume: settings.volume) }
+                    if !editing { NudgeSounds.preview(settings.ladder.first?.sound ?? .sadViolin, volume: settings.volume) }
                 }
                 .frame(width: 220)
                 Text("\(Int((settings.volume * 100).rounded()))%").font(Theme.body(12)).foregroundStyle(Theme.ink2).monospacedDigit()
@@ -476,25 +475,52 @@ struct NudgesPage: View {
             Text(settings.bigPip ? "Let go of the slider to hear it. A notification on its own plays at your Mac's alert volume (System Settings → Sound)."
                                  : "Notifications play at your Mac's alert volume: System Settings → Sound.")
                 .font(Theme.body(11)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                ForEach([NudgeMood.sadViolin, .sadMeow, .shocked], id: \.self) { mood in
-                    Button(Self.label(mood)) {
-                        Nudger.send(Nudge.sample(mood), test: true)
-                        note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
-                    }
-                    .help("Send a test nudge with this sound")
-                }
-            }
-            .disabled(!settings.enabled)
         }
     }
 
-    static func label(_ mood: NudgeMood) -> String {
-        switch mood {
-        case .gentle: "Try the chime"
-        case .sadViolin: "Try 🎻 sad violin"
-        case .sadMeow: "Try 😿 sad meow"
-        case .shocked: "Try 😱 fahhh"
+    /// Silly mode's steps: a sound and its hours each, any number of them (sounds can repeat), plus an optional repeat.
+    private var steps: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach($settings.steps) { $step in
+                HStack(spacing: 8) {
+                    Picker("", selection: $step.sound) {
+                        ForEach(SillyStep.sounds, id: \.self) { Text($0.name).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 170)
+                    Text("after").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                    TextField("", value: $step.hours, format: .number).frame(width: 46).multilineTextAlignment(.trailing)
+                    Stepper("", value: $step.hours, in: SillyStep.hourRange).labelsHidden()
+                    Text(step.hours == 1 ? "hour" : "hours").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                    Button("Try") {
+                        Nudger.send(Nudge.sample(step.sound), test: true)
+                        note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
+                    }
+                    .help("Send a test nudge with this sound").disabled(!settings.enabled)
+                    Button { settings.steps.removeAll { $0.id == step.id } } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless).help("Remove this step").accessibilityLabel("Remove this step")
+                }
+            }
+            if settings.steps.isEmpty {
+                Text("No steps: Pip only sends the usual nudges.").font(Theme.body(12)).foregroundStyle(Theme.ink3)
+            }
+            HStack {
+                Button {
+                    let last = settings.ladder.last
+                    settings.steps.append(SillyStep(last?.sound ?? .sadViolin, after: (last?.hours ?? 4) + 4))
+                } label: { Label("Add a step", systemImage: "plus.circle") }
+                .disabled(settings.steps.count >= SillyStep.most)
+                Button("Reset to 8, 12, and 24 hours") { (settings.steps, settings.repeatHours) = (SillyStep.defaults, 0) }
+            }
+            .controlSize(.small)
+            HStack(spacing: 8) {
+                Toggle("Then repeat the last one every", isOn: Binding(get: { settings.repeatHours > 0 },
+                                                                      set: { settings.repeatHours = $0 ? 6 : 0 }))
+                    .toggleStyle(.checkbox)
+                TextField("", value: Binding(get: { settings.repeatHours > 0 ? settings.repeatHours : 6 },
+                                             set: { settings.repeatHours = SillyStep.repeatChoice($0) }), format: .number)
+                    .frame(width: 46).multilineTextAlignment(.trailing).disabled(settings.repeatHours == 0)
+                Text("hours while I'm away").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+            }
         }
     }
 

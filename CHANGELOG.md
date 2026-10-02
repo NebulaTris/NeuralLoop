@@ -7,9 +7,10 @@
   and textbooks keep each chapter whole instead of cutting it into sections. "Part II" title pages aren't chapters.
 - **Books are named after their file** ("Agents guide"), not "source".
 - **Silly mode** (on by default, Settings → Nudges): if you've been away a while, Pip gets dramatic, just for laughs.
-  A tiny sad violin after 8 hours, a sad little song after 12, and a shocked "fahhh" after a whole day, each with a sad
-  or shocked Pip in the notification. Each plays once, never in quiet hours, and opening NeuralLoop resets it. The
-  "fahhh" has its own switch.
+  By default a tiny sad violin after 8 hours, a sad little song after 12, and a shocked "fahhh" after a whole day, each
+  with a sad or shocked Pip. Each plays once, never in quiet hours, and opening NeuralLoop resets it. The steps are
+  yours: pick each one's sound and hours, remove any, add more (sounds can repeat), and optionally repeat the last one
+  every few hours.
 - **A big Pip on screen** for silly nudges: Pip zooms in large in the middle of the screen you're using, with a big
   emoji, while the sound plays, then shrinks away when it ends. Click it to open NeuralLoop. Settings → Nudges lets
   you pick the big Pip or just a notification, set its volume, and send a test of each sound.
