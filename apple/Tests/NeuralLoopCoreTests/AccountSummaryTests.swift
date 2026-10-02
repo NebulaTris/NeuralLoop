@@ -21,3 +21,14 @@ import Testing
     #expect(!AccountSummary(notebookLM: "ME@example.com", library: .init(email: "me@example.com", name: nil), librarySetUp: true).differentAccounts)
     #expect(AccountSummary(notebookLM: nil, library: .init(email: "me@example.com", name: nil), librarySetUp: true).next == .signIn)
 }
+
+@Test func signOutIsOfferedWheneverEitherServiceIsSignedIn() {
+    // NotebookLM signed in, the library not connected yet: connect it, or sign out.
+    let notebookOnly = AccountSummary(notebookLM: "sam@example.com", library: nil, librarySetUp: true)
+    #expect(notebookOnly.next == .connectLibrary && notebookOnly.canSignOut)
+    // The library connected, NotebookLM not: sign in, or sign out.
+    let libraryOnly = AccountSummary(notebookLM: nil, library: .init(email: "sam@example.com", name: nil), librarySetUp: true)
+    #expect(libraryOnly.next == .signIn && libraryOnly.canSignOut)
+    #expect(AccountSummary(notebookLM: "sam@example.com", library: .init(email: "sam@example.com", name: nil), librarySetUp: true).canSignOut)
+    #expect(!AccountSummary(notebookLM: nil, library: nil, librarySetUp: true).canSignOut)
+}

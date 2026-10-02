@@ -331,6 +331,110 @@ private struct StaleListing: DriveStore {
     #expect(!SyncLayout.isSafeRemote("deviceinfo/ipad1.json"))  // never placed on disk
 }
 
+private func note(_ name: String, _ kind: String = "pad", lastSync: Double) -> Data {
+    Data(#"{"name":"\#(name)","kind":"\#(kind)","lastSync":\#(lastSync)}"#.utf8)
+}
+
+private func notes(_ drive: MemoryDrive, _ id: String) async throws -> [SyncFile] {
+    try await drive.list().filter { $0.path == SyncLayout.deviceInfoPath(id) }
+}
+
+@Test func duplicateDeviceNotesAreTidiedAndEachDeviceIsListedOnce() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let ms = now.timeIntervalSince1970 * 1000
+    await drive.insert(note("Old name", lastSync: ms - 1000), as: "deviceinfo/ipad1.json")
+    await drive.insert(note("Sam's iPad", lastSync: ms - 500), as: "deviceinfo/ipad1.json")
+    await drive.insert(note("Sam's MacBook", "mac", lastSync: ms - 2000), as: "deviceinfo/mac1.json")
+    await drive.insert(note("Sam's MacBook", "mac", lastSync: ms - 1500), as: "deviceinfo/mac1.json")
+    let report = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's MacBook").sync(now: now)
+    #expect(report.devices.map(\.id) == ["mac1", "ipad1"])
+    #expect(report.devices[1].name == "Sam's iPad")  // the newest copy
+    #expect(try await notes(drive, "ipad1").count == 1)
+    #expect(try await notes(drive, "mac1").count == 1)
+    #expect(DeviceInfo.read(await drive.data(at: "deviceinfo/mac1.json") ?? Data(), id: "mac1", now: now)?.lastSync == ms)
+}
+
+@Test func afterAnIDClashTheNoteMovesToTheNewID() async throws {
+    let drive = MemoryDrive()
+    let a = try temporaryRoot(), b = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive, name: "Sam's Mac").sync(now: now)
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)  // a restored copy, sync state and all
+    // The copy took a new id: its note goes up under that id at once, and the shared id's note leaves the Drive.
+    let fresh = try await SyncEngine(root: b, device: "mac-2", role: .mac, store: drive, name: "Sam's Mac").sync(now: now.addingTimeInterval(60))
+    #expect(fresh.devices.map(\.id) == ["mac-2"] && fresh.devices[0].isThisDevice)
+    #expect(try await notes(drive, "mac-2").count == 1)
+    #expect(try await notes(drive, "mac1").isEmpty)
+    // The device still using the old id finds its note gone and writes it again right away.
+    let original = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive, name: "Sam's Mac").sync(now: now.addingTimeInterval(120))
+    #expect(try await notes(drive, "mac1").count == 1)
+    #expect(original.devices.map(\.id) == ["mac1", "mac-2"])
+}
+
+@Test func notesOlderThanNinetyDaysAreHiddenAndTidied() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let day = 86_400_000.0, ms = now.timeIntervalSince1970 * 1000
+    await drive.insert(note("Old iPad", lastSync: ms - 91 * day), as: "deviceinfo/ipad-old.json")
+    await drive.insert(note("Sam's iPad", lastSync: ms - 89 * day), as: "deviceinfo/ipad1.json")
+    let report = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac").sync(now: now)
+    #expect(report.devices.map(\.id) == ["mac1", "ipad1"])
+    #expect(try await notes(drive, "ipad-old").isEmpty)
+}
+
+@Test func signingOutTakesThisDevicesNoteOffTheDrive() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac")
+    _ = try await engine.sync(now: now)
+    await drive.insert(note("Sam's Mac", "mac", lastSync: 1), as: "deviceinfo/mac1.json")  // and a stray copy
+    await drive.insert(note("Sam's iPad", lastSync: now.timeIntervalSince1970 * 1000), as: "deviceinfo/ipad1.json")
+    try await engine.removeNote()
+    #expect(try await notes(drive, "mac1").isEmpty)
+    #expect(try await notes(drive, "ipad1").count == 1)  // only our own note goes
+    // Signed in again soon after: the note goes straight back up.
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac").sync(now: now.addingTimeInterval(60))
+    #expect(try await notes(drive, "mac1").count == 1)
+}
+
+@Test func thisDeviceShowsTheSyncThatJustHappened() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac")
+    _ = try await engine.sync(now: now)
+    let later = try await engine.sync(now: now.addingTimeInterval(5 * 60))  // the note isn't rewritten yet
+    #expect(later.devices[0].lastSync == now.addingTimeInterval(5 * 60).timeIntervalSince1970 * 1000)
+}
+
+@Test func hiddenAndControlCharactersNeverReachADevicesName() {
+    let tricky = "Sam\u{202E}daPi\u{200B}\u{0007}\u{2028}x\u{FEFF}"
+    let info = DeviceInfo(id: "ipad1", name: tricky, kind: .pad, lastSync: 1)
+    #expect(info.name == "SamdaPi x")
+    #expect(info.name.unicodeScalars.allSatisfy { ![.control, .format].contains($0.properties.generalCategory) })
+    #expect(DeviceInfo(id: "x", name: "\u{202E}\u{200B}", kind: .mac, lastSync: 1).name == "A Mac")
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let future = DeviceInfo.read(note("Sam's iPad", lastSync: 9e15), id: "ipad1", now: now)
+    #expect(future?.lastSync == now.timeIntervalSince1970 * 1000 + 86_400_000)
+    #expect(DeviceInfo.read(note("Sam's iPad", lastSync: -5), id: "ipad1", now: now)?.lastSync == 0)
+}
+
+@Test func aDeviceIsNeverListedTwice() {
+    let me = DeviceInfo(id: "mac1", name: "Mac", kind: .mac, lastSync: 2, isThisDevice: true)
+    let other = DeviceInfo(id: "ipad1", name: "iPad", kind: .pad, lastSync: 1)
+    #expect(DeviceInfo.unique([me, other, other, DeviceInfo(id: "mac1", name: "Old", kind: .mac, lastSync: 1)]) == [me, other])
+}
+
 /// What's in the Drive besides the devices' notes about themselves.
 private func libraryFiles(_ drive: MemoryDrive) async throws -> [SyncFile] {
     try await drive.list().filter { SyncLayout.deviceInfo($0.path) == nil }
