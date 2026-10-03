@@ -102,7 +102,7 @@ public enum SyncLayout {
         let name = relative.split(separator: "/").last.map(String.init) ?? relative
         let top = relative.split(separator: "/").first.map(String.init) ?? ""
         return ["raw", "devices"].contains(top) || name.hasPrefix(".") || name.hasSuffix(".tmp") || name.hasSuffix(".wav")
-            || ["pipeline.log", "state.json", "meta.json", "progress.json", "book-data.js"].contains(relative)
+            || ["pipeline.log", "state.json", "meta.json", "progress.json", "book-data.js", "activity.json"].contains(relative)
             || ["index.html", "styles.css", "app.js", "pip-poses.js"].contains(relative)  // the old study site, in older books
             || relative.hasPrefix("source.") || relative.hasPrefix("progress.json.unreadable")
             || relative.contains("podcast-lines/")

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from . import convert, prompts
+from . import activity, convert, prompts
 from .chapters import chapter_size
 from .config import (
     AUDIO_FORMATS,
@@ -90,6 +90,7 @@ class ChapterMaker:
         return self.out_dir / "raw" / f"{chapter['n']:02d}-{task}.json"
 
     async def _ask(self, prompt: str, sources: list[str]):
+        activity.report("Asking NotebookLM")
         answer = await self.client.chat.ask(self.notebook_id, prompt, source_ids=sources)
         return convert.loose_json(answer.answer)
 
@@ -130,7 +131,9 @@ class ChapterMaker:
         return {"cards": cards}
 
     async def _generate_and_download(self, chapter, task, generate, download, sources):
+        activity.report("Asking NotebookLM")
         status = await generate(self.notebook_id, source_ids=sources)
+        activity.report("NotebookLM is making it")
         await self.client.artifacts.wait_for_completion(
             self.notebook_id, status.task_id, timeout=LIGHT_TIMEOUT
         )
@@ -150,6 +153,7 @@ class ChapterMaker:
         return {"mindmap": json.loads(raw.read_text(encoding="utf-8"))}
 
     async def _audio(self, chapter, sources):
+        activity.report("Asking NotebookLM for the podcast")
         status = await self.client.artifacts.generate_audio(
             self.notebook_id,
             source_ids=sources,
@@ -160,15 +164,18 @@ class ChapterMaker:
                 audio_length(self.media.length, chapter_size(chapter, self.out_dir)).upper()
             ],
         )
+        activity.report("NotebookLM is recording the podcast")
         await self.client.artifacts.wait_for_completion(
             self.notebook_id, status.task_id, timeout=AUDIO_TIMEOUT
         )
+        activity.report("Downloading the podcast")
         target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
         saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), status.task_id)
         # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches the audio.
         return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
 
     async def _video(self, chapter, sources):
+        activity.report("Asking NotebookLM for the video")
         status = await self.client.artifacts.generate_video(
             self.notebook_id,
             source_ids=sources,
@@ -177,9 +184,11 @@ class ChapterMaker:
             video_format=self.enums.VideoFormat[VIDEO_FORMATS[self.media.video]],
             video_style=self.enums.VideoStyle[VIDEO_STYLES[self.media.style]],
         )
+        activity.report("NotebookLM is making the video")
         await self.client.artifacts.wait_for_completion(
             self.notebook_id, status.task_id, timeout=VIDEO_TIMEOUT
         )
+        activity.report("Downloading the video")
         target = self.out_dir / "media" / f"{chapter['n']:02d}-video.mp4"
         saved = await self.client.artifacts.download_video(self.notebook_id, str(target), status.task_id)
         if not saved or not Path(saved).exists():

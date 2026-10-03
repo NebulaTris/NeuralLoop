@@ -1,6 +1,7 @@
 # CLAUDE.md — working in the NeuralLoop repo
 
-Read this first, every session. `docs/ARCHITECTURE.md` is the guided tour of every directory and module. Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
+Read this first, every session. `docs/ARCHITECTURE.md` is the guided tour of every directory and module. `docs/NOTIFICATIONS.md`
+explains every notification (rules, code, storage, how to test or move it). Specs for new work live in `docs/specs`. The long-term vision is `docs/vision/BUILD_SPEC.md`
 (where it disagrees with this file or the specs, **this file and `docs/specs` win**; notably the repo is source-available under the **PolyForm Noncommercial License 1.0.0**: `LICENSE`, with
 `NOTICE.md` for third-party licenses (Rumik voices are CC BY-NC), `TRADEMARKS.md` for the name and Pip, `SECURITY.md`, and
 `CONTRIBUTING.md` (contributions are licensed so the project can also be offered commercially)).
@@ -63,7 +64,7 @@ Per part: `cd pipeline && pytest -q` · `cd apple && swift test`.
 
 For development the app runs the pipeline from the repo's `.venv`, which `make setup` creates (override with `PY=`).
 Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage Voices`, `-NLPreviewPanel YES`,
-`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLNudgePictures <folder>` (each silly nudge's Pip picture as a PNG), `-NLTestNudge sadViolin|sadMeow|shocked|gentle` (sends that test nudge), `-NLTour YES [-NLTourPage n]` (the guided tour), `-NLProfile YES`, `-NLMoveIn YES` (the
+`-NLOpenBook <id> [-NLStage map] [-NLMapMode concepts|mind|remake] [-NLQuiz YES] [-NLBookMap YES]`, `-NLPipSheet YES` (every pose, animated), `-NLNudgePictures <folder>` (each silly nudge's Pip picture as a PNG), `-NLTestNudge sadViolin|sadMeow|shocked|gentle` (sends that test nudge), `-NLTour YES [-NLTourPage n]` (the guided tour), `-NLNotify YES` (a Debug build may send scheduled notifications; without it, it never does), `-NLProfile YES`, `-NLMoveIn YES` (the
 "move me into Applications" sheet, shown for real only when a Release build runs outside Applications).
 
 ## File map
@@ -93,6 +94,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/book_graph.py` | Chapter graphs → one Understand-Anything knowledge graph; `similar_to` links across chapters |
 | `neuralloop_books/bookdata.py` | `write(out, state, options)`: `book.json` and `knowledge-graph.json`, atomically; chapter text cached |
 | `neuralloop_books/state.py` | `BookState` (state.json): statuses, `apply_selection`, `pending` (reading order), `counts` |
+| `neuralloop_books/activity.py` | `Activity` (activity.json, the live progress feed: `begin`/`end` per item, `queue`, `close`; estimates from recent `timings`) and `report(step, done=, total=, by=, restart=)`, which an item's own code calls through a context variable |
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `FakeStaleSessionClient`, `ENUMS`) |
 | `neuralloop_books/selection.py`, `prompts.py`, `config.py`, `testing.py` | `parse_selection`; prompts (sent verbatim); task names, enums, timeouts, copy, `audio_length`; test book builders |
 | `neuralloop_books/assets/` | Fonts and Pip's artwork for explainer videos |
@@ -101,7 +103,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
 |---|---|
-| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`, `SillyStep`: Silly mode's editable steps by hours away), `NudgeDelivery` (+ `NudgeMoment`: whether the big Pip shows), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `BookNews`, `RecallCheck`, `AccountSummary` (who's signed in, same account or not, what to press next), `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments, `bookTitle`) |
+| `Sources/NeuralLoopCore/` | Pure, tested: `FSRS`, `Loop`, `Cards`, `Activity` (year log), `Progress` (lenient decoding, `ProgressFile` keeps unreadable files aside, merges other devices' files with study time summed), `Book` (book.json, `KnowledgeGraph`), `Remake` (remake-from-memory scoring, `QuizProgress`, `PlainMath`), `GraphLayout` (force layout, sprout spiral, shortest path), `Nudges` (+ `NudgeMood`, `SillyStep`: Silly mode's editable steps by hours away), `NudgeDelivery` (+ `NudgeMoment`: whether the big Pip shows), `AutoResume` (+ `RunRecord`, `BookFiles` path containment), `Shelf`, `ChapterReady` ("chapter ready": once, only for the chapter you can study next, only when complete), `PrepActivity` + `PrepProgress` (activity.json → a progress bar and plain words), `RecallCheck`, `AccountSummary` (who's signed in, same account or not, what to press next), `AIConfig`, `NotebookLMUsage`, `PipelineRun` (line parser, CLI arguments, `bookTitle`) |
 | `App/NeuralLoopApp.swift` | Scenes (main window, Settings, menu-bar panel); starts the library's background loop at launch |
 | `App/Services/Library.swift` | The shelf (read off the main thread, cached by modification date), adding and preparing books, auto-resume with back-off, notifications, `Nudger` |
 | `App/Services/PipelineRunner.swift` | Runs the bundled runtime (or the repo in development); output to `pipeline.log`, followed by `LogFollower`; `once()` with a timeout |
@@ -148,9 +150,12 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   denied; Hermes is refused unless ai.json `hermesTools: true`; both get an environment without API keys; chapter text is
   wrapped as data (`prompts.wrap_chapter`). Exit 2 = the book couldn't be read ("This book couldn't be read: …"), 3 = setup needed.
 - **Book folder** (`~/Library/Application Support/app.neuralloop.books/books/<id>/`): `state.json` (pipeline state; tasks record
-  `by`; `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`, `title`
+  `by`; `timings: {"<maker>:<item>": [seconds…]}` (last 10, for the loader's estimates); `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`, `title`
   (the inbox sidecar's, else the original file's name, else "Your book"; never an inbox UUID; `PipelineCommand.bookTitle`), `options:{media, dryRun}`; "Prepare more" sets `media: "all"`), `progress.json` (study progress), `book.json` (the app's data),
-  `knowledge-graph.json`, `.running` (an OS lock (`flock`) held by the run for its whole length and released even if it's killed;
+  `knowledge-graph.json`, `activity.json` (what the run is making right now, for the app's progress loader: `{updated, ended, pid,
+  items:[{n, item, by, step, started, updated, done, total, expected}], queue:[{n, item}]}`; written atomically, at most every
+  half second unless the step changes, `ended: true` when the run ends; Mac only, never synced; `neuralloop_books/activity.py`),
+  `.running` (an OS lock (`flock`) held by the run for its whole length and released even if it's killed;
   it holds the pid; a leftover file never blocks; interrupted `working` items go back to `todo` on the next run),
   `source.{pdf,epub}` (the app's own copy of the book), `chapters/NN.{pdf,md}` (EPUB Markdown keeps figures as
   `![alt](img/NN-KK.ext)` with files in `chapters/img/`, captions as `*…*`, emphasis, lists), `media/`, `raw/`, `pipeline.log`.

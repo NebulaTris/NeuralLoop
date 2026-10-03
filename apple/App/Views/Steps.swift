@@ -23,7 +23,7 @@ struct ListenStep: View {
                     ChapterVideo(url: url, title: chapter.title, artist: session.book.title)
                 }
             } else {
-                NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id)
+                NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id, n: chapter.n, item: "video")
             }
             Text("Listen").font(Theme.display(20))
             if let audio = chapter.audio, let url = session.file(audio) {
@@ -31,7 +31,7 @@ struct ListenStep: View {
                     PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file), title: chapter.title, artist: session.book.title)
                 }
             } else {
-                NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id)
+                NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id, n: chapter.n, item: "audio")
             }
         }
     }
@@ -402,7 +402,7 @@ struct RecallStep: View {
 
     @ViewBuilder private var ownWords: some View {
         if chapter.recall.isEmpty {
-            NotReady(what: "Recall questions", status: chapter.status["study"], note: chapter.notes["study"], bookId: session.entry.id)
+            NotReady(what: "Recall questions", status: chapter.status["study"], note: chapter.notes["study"], bookId: session.entry.id, n: chapter.n, item: "study")
         } else {
             let prompt = chapter.recall[min(index, chapter.recall.count - 1)]
             VStack(alignment: .leading, spacing: 14) {
@@ -494,7 +494,7 @@ struct MapStep: View {
     var body: some View {
         let current = mode ?? (chapter.mindmap != nil ? (Loop.isMapped(session.progress, chapter.n) ? .mind : .remake) : .concepts)
         if modes.isEmpty {
-            NotReady(what: "The mind map", status: chapter.status["mindmap"], note: chapter.notes["mindmap"], bookId: session.entry.id)
+            NotReady(what: "The mind map", status: chapter.status["mindmap"], note: chapter.notes["mindmap"], bookId: session.entry.id, n: chapter.n, item: "mindmap")
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 Picker("Map view", selection: Binding(get: { current }, set: { mode = $0 })) {
@@ -531,7 +531,7 @@ struct RememberStep: View {
     var body: some View {
         let due = Cards.due([chapter], session.progress, now: session.now)
         if chapter.cards.isEmpty {
-            NotReady(what: "Flashcards", status: chapter.status["cards"], note: chapter.notes["cards"], bookId: session.entry.id)
+            NotReady(what: "Flashcards", status: chapter.status["cards"], note: chapter.notes["cards"], bookId: session.entry.id, n: chapter.n, item: "cards")
         } else if let card = due.first {
             VStack(spacing: 18) {
                 Text("\(due.count) card\(due.count == 1 ? "" : "s") to go").font(Theme.body(13)).foregroundStyle(Theme.ink3)
@@ -568,19 +568,35 @@ struct RememberStep: View {
 
 // MARK: Shared
 
+/// An item that isn't here yet. While it's being made, a real loader: what's happening now ("NotebookLM is recording
+/// the podcast", "Voicing the podcast"), who's making it, a bar (exact when the work can be counted, timed against
+/// how long it usually takes otherwise), and the time left; while it waits, its place in line.
 struct NotReady: View {
     @Environment(Library.self) private var library
     let what: String
     let status: ItemStatus?
     let note: String?
     var bookId: String? = nil
+    var n: Int = 0
+    var item: String = ""
+
+    private var feed: PrepActivity? {
+        bookId.flatMap { library.entry($0)?.activity }.flatMap { $0.isLive ? $0 : nil }
+    }
 
     var body: some View {
         CardBox(fill: Theme.sunk) {
             HStack(alignment: .top, spacing: 16) {
                 PipView(pose: status == .working ? .study : .nap, size: 90)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(Theme.display(18))
+                    if status == .working, let now = feed?.item(n, item) {
+                        Loader(what: what, item: now)
+                    } else {
+                        Text(title).font(Theme.display(18))
+                        if status == .todo || status == nil, let place = feed?.place(n, item) {
+                            Label(PrepProgress.placeText(place), systemImage: "list.number").font(Theme.body(13)).foregroundStyle(Theme.accent)
+                        }
+                    }
                     Text(detail).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
                     #if os(macOS)
                     if status == .waiting || status == .failed, let bookId {
@@ -621,5 +637,41 @@ struct NotReady: View {
         return "NotebookLM has \(Int(window.remaining))% of its five-hour allowance left; a podcast or video uses about 44%. "
             + "It resets at \(reset), and Pip will try again then. Or make it with your own AI right now."
         #endif
+    }
+}
+
+
+/// The progress loader for one item being made: refreshed every second so the time keeps moving.
+private struct Loader: View {
+    let what: String
+    let item: PrepActivity.Item
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let p = PrepProgress.of(item, now: context.date.timeIntervalSince1970 * 1000)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(what).font(Theme.display(18))
+                Text(p.step.isEmpty ? "Pip is making it right now" : p.step).font(Theme.body(14)).foregroundStyle(Theme.ink2)
+                Group {
+                    if let fraction = p.fraction {
+                        ProgressView(value: fraction)
+                    } else {
+                        ProgressView().progressViewStyle(.linear)
+                    }
+                }
+                .tint(p.slow ? Theme.butter : Theme.accent)
+                .frame(maxWidth: 420)
+                .accessibilityLabel("\(what) progress")
+                .accessibilityValue(p.fraction.map { "\(Int($0 * 100)) percent, \(p.detail)" } ?? p.detail)
+                HStack(spacing: 10) {
+                    Text(p.detail).font(Theme.body(13)).foregroundStyle(p.slow ? Theme.ink2 : Theme.ink)
+                    if !p.by.isEmpty {
+                        Text(p.by == "NotebookLM" ? "NotebookLM" : "On your Mac · \(p.by)")
+                            .font(Theme.body(11)).foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 8).padding(.vertical, 2).background(Theme.accentSoft, in: Capsule())
+                    }
+                }
+            }
+        }
     }
 }

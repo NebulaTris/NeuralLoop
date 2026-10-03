@@ -38,6 +38,7 @@ enum Theme {
     static let mintSoft = color(light: 0xDDF3EA, dark: 0x1F3A33)
     static let sky = color(light: 0x5C86E0, dark: 0x86A8F2)
     static let skySoft = color(light: 0xE3ECFF, dark: 0x23304D)
+    static let butter = color(light: 0xF2B640, dark: 0xF5C25C)
     static let butterSoft = color(light: 0xFCEFCF, dark: 0x3E331A)
     static let rose = color(light: 0xE2577E, dark: 0xF07E9E)
     static let roseSoft = color(light: 0xFDE2EA, dark: 0x462330)

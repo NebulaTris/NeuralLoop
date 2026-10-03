@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from .. import audio, context, convert, prompts
+from .. import activity, audio, context, convert, prompts
 from ..chapters import chapter_size
 from ..config import CONTEXT_CHARS, audio_length
 from ..notebook import UnusableAnswer
@@ -140,6 +140,7 @@ class LocalEngine:
         return self._sources[n, budget]
 
     async def _ask(self, kind: str, chapter: dict, prompt: str, check, label: str):
+        activity.report(f"Writing the {label}")
         """Ask for one JSON item; if it's unusable or skimpy, ask once more saying exactly what was wrong."""
         model = self.task_models.get(kind, self.model)
         source = await self._source(chapter, model)
@@ -256,6 +257,7 @@ class LocalEngine:
         line_wavs: list[Path] = []
         position = 0.0
         for i, line in enumerate(script["lines"]):
+            activity.report("Voicing the podcast", done=i, total=len(script["lines"]))
             voice = self.speech.voices[0 if line["speaker"] == "A" else 1]
             pieces = []
             for j, piece in enumerate(audio.split_for_speech(line["text"])):
@@ -281,6 +283,7 @@ class LocalEngine:
             _write_json(transcript_file, transcript)
             line_wavs.append(line_wav)
             position += seconds + LINE_PAUSE
+        activity.report("Mixing the podcast", done=len(line_wavs), total=len(line_wavs))
         wav = self._media(f"{n:02d}-podcast.wav")
         await asyncio.to_thread(audio.join_wavs, line_wavs, wav, LINE_PAUSE)
         final = await asyncio.to_thread(audio.to_m4a, wav)
@@ -301,6 +304,7 @@ class LocalEngine:
         n = chapter["n"]
         narration: list[Path] = []
         for k, slide in enumerate(explainer["slides"], 1):
+            activity.report("Voicing the explainer", done=k - 1, total=len(explainer["slides"]))
             clips = []
             for j, piece in enumerate(audio.split_for_speech(slide["narration"])):
                 clip = self._clip_path(f"{n:02d}-explainer-{k:02d}-{j}")
@@ -329,8 +333,16 @@ class LocalEngine:
 
         out = self._media(f"{chapter['n']:02d}-explainer.mp4")
         try:
+            activity.report("Drawing the video", done=0, total=1)
             await asyncio.to_thread(
-                video.render, out, chapter["title"], slides, narration, video.FPS, video.SIZE
+                video.render,
+                out,
+                chapter["title"],
+                slides,
+                narration,
+                video.FPS,
+                video.SIZE,
+                lambda i, total: activity.report("Drawing the video", done=i, total=total),
             )
         except Exception:  # no browser or encoder here: the narrated slideshow still plays in the app
             out.unlink(missing_ok=True)

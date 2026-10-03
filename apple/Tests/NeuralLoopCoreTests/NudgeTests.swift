@@ -327,3 +327,32 @@ private func with(_ steps: [SillyStep], repeatEvery: Double = 0) -> NudgeSetting
     let second = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
     #expect(!NudgeDelivery.fillsScreen([screen], screen: second))  // full screen on the other display
 }
+
+@Test func turningNotificationsOffMeansNothingAtAll() throws {
+    let books = [try withDueCards(reps: 1, count: 4)]
+    var off = NudgeSettings()
+    off.enabled = false
+    #expect(decide(books, away(hours: 25), settings: off) == nil)  // not even Silly mode
+    #expect(!off.allows(.chapterReady) && !off.allows(.nudges) && !off.allows(.silly))
+    var noNudges = NudgeSettings()
+    noNudges.nudges = false
+    #expect(decide(books, away(hours: 5), settings: noNudges) == nil)
+    #expect(noNudges.allows(.chapterReady) && !noNudges.allows(.nudges))
+    var noChapters = NudgeSettings()
+    noChapters.chapterReady = false
+    #expect(!noChapters.allows(.chapterReady) && noChapters.allows(.nudges))
+}
+
+@Test func aLooseYarnNudgeOnlyPointsAtAChapterThatsFullyPrepared() throws {
+    var p = StudyProgress()
+    p.loop["1"] = ["prime": nowMs - dayMs, "read": nowMs - dayMs]
+    let coming = try JSONDecoder().decode(Book.self, from: Data(#"{"title":"B","chapters":[{"n":1,"title":"Caching","status":{"study":"done","audio":"working","video":"todo"}}]}"#.utf8))
+    #expect(decide([(coming, p)]) == nil)
+    let ready = try JSONDecoder().decode(Book.self, from: Data(#"{"title":"B","chapters":[{"n":1,"title":"Caching","status":{"study":"done","audio":"done","video":"done"}}]}"#.utf8))
+    #expect(decide([(ready, p)])?.title == "🧶 Loose yarn in “Caching”")
+}
+
+@Test func settingsSavedBeforeTheSplitKeepTheirMasterSwitch() throws {
+    let old = try JSONDecoder().decode(NudgeSettings.self, from: Data(#"{"enabled":false}"#.utf8))
+    #expect(!old.enabled && old.chapterReady && old.nudges)
+}

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import bookdata
+from .activity import Activity
 from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
 from .engines.auto import made_by
@@ -141,14 +142,18 @@ async def _run(opts: Options, engine) -> BookState:
         await engine.prepare(state)
         pending = state.pending()
         opts.log(f"Making {len(pending)} items with {engine.name}, chapter by chapter.")
+        feed = Activity(opts.out, state.data.get("timings", {}))
+        feed.queue([(c["n"], t) for c, t in pending])
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
         # (engine, item kind) pairs that hit a limit: later items of that kind made by the same engine wait.
         # Keyed by engine, so a limit on auto's fallback never stops NotebookLM trying the next ones.
         quota_hit: set[tuple[str, str]] = set()
+
+        def lane(task: str) -> asyncio.Semaphore:
+            return lanes["media" if task in MEDIA_TASKS else "text"]
+
         tasks = [
-            asyncio.ensure_future(
-                _make(opts, state, engine, lanes["media" if t in MEDIA_TASKS else "text"], quota_hit, c, t)
-            )
+            asyncio.ensure_future(_make(opts, state, engine, lane(t), quota_hit, c, t, feed))
             for c, t in pending
         ]
         try:
@@ -159,11 +164,15 @@ async def _run(opts: Options, engine) -> BookState:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        finally:
+            feed.close()
+            state.data["timings"] = feed.timings  # how long each maker takes, for the next estimates
+            state.save()
     await bookdata.write_async(opts.out, state, book_options(opts))
     return state
 
 
-async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
+async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
     if (engine.name, task) in quota_hit:
         entry.update(status=WAITING, error=quota_message(engine.name))
@@ -178,8 +187,11 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
         state.save()
         await bookdata.write_async(opts.out, state, book_options(opts))
         started = time.monotonic()
+        token = feed.begin(chapter["n"], task, engine.name) if feed else None
+        ok = False
         try:
             result = await engine.make(task, chapter)
+            ok = True
             entry["by"] = result.pop("_by", engine.name)  # which engine made it (auto can mix)
             chapter.update(result)
             entry.update(status=DONE, error="")
@@ -195,5 +207,8 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task) -> None:
             else:
                 entry.update(status=FAILED, error=f"{type(error).__name__}: {safe_message(error)}")
                 opts.log(f"  ✗ chapter {chapter['n']} {task}: {entry['error']}")
+        finally:
+            if feed:
+                feed.end(chapter["n"], task, time.monotonic() - started, ok, token)
         state.save()
         await bookdata.write_async(opts.out, state, book_options(opts))

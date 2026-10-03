@@ -142,7 +142,7 @@ apple/
 | `PipRig.swift` | Playing Pip's animations: keyframes, easing, nesting transforms around pivots |
 | `Nudges.swift` | When Pip may nudge you (once a day, never in quiet hours, backing off) |
 | `AutoResume.swift` | When the app may start a run on its own (and when it must wait), and keeping file paths inside a book folder |
-| `Shelf.swift`, `BookNews.swift` | The shelf's chapter dots and cover colours; what's newly ready (for notifications) |
+| `Shelf.swift`, `ChapterReady.swift`, `PrepActivity.swift` | The shelf's chapter dots and cover colours; "chapter ready" (once, only for the chapter you can study next, only when complete: see docs/NOTIFICATIONS.md); the live progress feed (activity.json) as a bar and plain words |
 | `RecallCheck.swift` | Word-matching and evidence rules for recall answers |
 | `AIConfig.swift`, `NotebookLMUsage.swift`, `PipelineRun.swift` | `ai.json`, NotebookLM's allowance, and the pipeline's progress lines and arguments |
 | `InstallPlace.swift` | Whether the app is still in Downloads or the disk image |

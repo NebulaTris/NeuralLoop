@@ -18,6 +18,8 @@ struct BookEntry: Identifiable, Equatable {
     var progress: StudyProgress
     var preparing: Bool
     var lastLine: String
+    /// What the pipeline is making right now (its activity.json), for the progress loader.
+    var activity: PrepActivity? = nil
 
     var title: String { book?.title ?? id.replacingOccurrences(of: "-", with: " ") }
     var readyChapters: Int { book?.chapters.filter { $0.status["study"] == .done }.count ?? 0 }
@@ -38,6 +40,7 @@ private struct Scanned: Sendable {
     let logModified: Double
     let elsewhere: (n: Int, item: String)?
     let elsewhereLine: String?
+    let activity: PrepActivity?
 }
 
 @MainActor @Observable
@@ -73,7 +76,6 @@ final class Library {
     @ObservationIgnored private var scanned: [String: Scanned] = [:]
     /// What each book looked like when notifications were last worked out; separate from `entries`, which live progress
     /// lines update early, so "chapter ready" is never missed.
-    @ObservationIgnored private var notified: [String: Book] = [:]
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var started = false
@@ -175,8 +177,9 @@ final class Library {
             let running = runningHere(item.id)
             let line = running ? (entry(item.id)?.lastLine ?? "")
                 : item.elsewhereLine ?? item.elsewhere.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
+            let preparing = running || item.elsewhere != nil
             return BookEntry(id: item.id, folder: item.folder, book: item.book, progress: item.progress,
-                             preparing: running || item.elsewhere != nil, lastLine: line)
+                             preparing: preparing, lastLine: line, activity: preparing ? item.activity : nil)
         }
         #if os(macOS)
         announce(updated)
@@ -185,21 +188,22 @@ final class Library {
     }
 
     #if os(macOS)
-    /// "Chapter 2 is ready to study" and "Your book is ready", for changes seen while the app runs.
+    /// "Chapter 2 is ready" (`ChapterReady`): once per chapter, only for the chapter you can study next, and only when
+    /// its whole loop is ready, podcast and video included. Chapters being watched are remembered across launches.
     private func announce(_ updated: [BookEntry]) {
+        let saved = Nudger.watchingChapters
+        var watching = saved.filter { id, _ in updated.contains { $0.id == id } }
+        let allowed = Nudger.settings.allows(.chapterReady) && Nudger.scheduledAllowed
         for entry in updated {
             guard let book = entry.book else { continue }
-            defer { notified[entry.id] = book }
-            guard let before = notified[entry.id] else { continue }
-            let news = Notifier.news(before: before, after: book)
-            for chapter in news.chapters {
+            let step = ChapterReady.step(book: book, progress: entry.progress, watching: Set(watching[entry.id] ?? []))
+            watching[entry.id] = step.watching.isEmpty ? nil : step.watching.sorted()
+            if let chapter = step.announce, allowed {
                 Notifier.shared.post(title: "Chapter \(chapter.n) is ready to study",
-                                     body: "“\(chapter.title)” in \(entry.title). Pip saved you a spot.", bookId: entry.id)
-            }
-            if news.finished {
-                Notifier.shared.post(title: "“\(entry.title)” is ready", body: "Every chapter's loop is prepared. Come take a look!", bookId: entry.id)
+                                     body: "“\(chapter.title)” in \(entry.title): its whole loop is ready. Pip saved you a spot.", bookId: entry.id)
             }
         }
+        if watching != saved { Nudger.watchingChapters = watching }
     }
     #endif
 
@@ -232,7 +236,8 @@ final class Library {
                     dryRun: options?["dryRun"] as? Bool ?? false, sourcePath: meta?["path"] as? String,
                     logModified: (modified(log)?.timeIntervalSince1970 ?? 0) * 1000,
                     elsewhere: elsewhere,
-                    elsewhereLine: elsewhereLine(elsewhere != nil, log: log)
+                    elsewhereLine: elsewhereLine(elsewhere != nil, log: log),
+                    activity: (try? Data(contentsOf: folder.appendingPathComponent("activity.json"))).flatMap(PrepActivity.read)
                 )
             }
             .sorted { $0.addedAt > $1.addedAt }
@@ -674,7 +679,25 @@ enum Nudger {
         set { store(newValue, "nudgeHistory") }
     }
 
+    /// Scheduled notifications (nudges, "chapter ready") only come from the real app: a development build sends them
+    /// only with `-NLNotify YES`, so test copies never pile notifications on top of the real one. Tests from Settings
+    /// and the -NLTestNudge flag are asked for, so they always go.
+    static var scheduledAllowed: Bool {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: "NLNotify")
+        #else
+        true
+        #endif
+    }
+
+    /// Chapters `ChapterReady` is waiting on, per book (they were still being made when they became current).
+    static var watchingChapters: [String: [Int]] {
+        get { (UserDefaults.standard.dictionary(forKey: "chapterReadyWatching") as? [String: [Int]]) ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "chapterReadyWatching") }
+    }
+
     static func tick(_ entries: [BookEntry]) {
+        guard scheduledAllowed else { return }
         let books = entries.compactMap { entry in entry.book.map { (book: $0, progress: entry.progress) } }
         let now = Date()
         let today = Activity.dayKey(now.timeIntervalSince1970 * 1000)

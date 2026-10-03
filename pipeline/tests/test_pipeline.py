@@ -383,3 +383,11 @@ def test_a_limit_on_the_engine_itself_still_stops_later_items_of_that_kind(optio
     options.media = "none"
     state = run_local(options, LimitedModel())
     assert [c["tasks"]["quiz"]["status"] for c in state.chapters] == [WAITING, WAITING]
+
+
+def test_a_run_reports_its_progress_and_remembers_how_long_items_took(options):
+    state = run_local(options)
+    feed = json.loads((options.out / "activity.json").read_text())
+    assert feed["ended"] is True and feed["items"] == [] and feed["queue"] == []
+    made = {key.split(":")[-1] for key, seconds in state.data["timings"].items() if seconds}
+    assert {"study", "quiz", "cards", "audio", "video"} <= made  # "<maker>:<item>" → recent durations

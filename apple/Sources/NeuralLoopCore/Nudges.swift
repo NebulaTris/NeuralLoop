@@ -9,7 +9,12 @@
 import Foundation
 
 public struct NudgeSettings: Codable, Equatable, Sendable {
+    /// The master switch: off means no notification from Pip at all.
     public var enabled = true
+    /// "Chapter 2 is ready": when the chapter you can study next is fully prepared.
+    public var chapterReady = true
+    /// The usual gentle nudges (cards due, a loop left halfway).
+    public var nudges = true
     public var quietStart = 22
     public var quietEnd = 8
     public var pausedUntil: Double = 0  // Unix ms
@@ -27,11 +32,23 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case enabled, quietStart, quietEnd, pausedUntil, sillySounds, steps, repeatHours, bigPip, volume
+        case enabled, chapterReady, nudges, quietStart, quietEnd, pausedUntil, sillySounds, steps, repeatHours, bigPip, volume
         case fahhh  // read only: before steps, a switch for the fahhh step
     }
 
     /// The steps in the order they come (steps with the same hours in the order they're saved).
+    public enum Kind: Sendable { case chapterReady, nudges, silly }
+
+    /// Whether this kind of notification may go out at all: the master switch, then its own.
+    public func allows(_ kind: Kind) -> Bool {
+        guard enabled else { return false }
+        switch kind {
+        case .chapterReady: return chapterReady
+        case .nudges: return nudges
+        case .silly: return sillySounds
+        }
+    }
+
     public var ladder: [SillyStep] {
         steps.enumerated().sorted { ($0.element.hours, $0.offset) < ($1.element.hours, $1.offset) }.map(\.element)
     }
@@ -41,6 +58,8 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = NudgeSettings()
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        chapterReady = try c.decodeIfPresent(Bool.self, forKey: .chapterReady) ?? d.chapterReady
+        nudges = try c.decodeIfPresent(Bool.self, forKey: .nudges) ?? d.nudges
         quietStart = try c.decodeIfPresent(Int.self, forKey: .quietStart) ?? d.quietStart
         quietEnd = try c.decodeIfPresent(Int.self, forKey: .quietEnd) ?? d.quietEnd
         pausedUntil = try c.decodeIfPresent(Double.self, forKey: .pausedUntil) ?? d.pausedUntil
@@ -58,6 +77,8 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(enabled, forKey: .enabled)
+        try c.encode(chapterReady, forKey: .chapterReady)
+        try c.encode(nudges, forKey: .nudges)
         try c.encode(quietStart, forKey: .quietStart)
         try c.encode(quietEnd, forKey: .quietEnd)
         try c.encode(pausedUntil, forKey: .pausedUntil)
@@ -318,6 +339,7 @@ public enum Nudges {
                 return hi.told(step.sound, hoursAway: hoursAway, step: step, missesYou: true)
             }
         }
+        guard settings.allows(.nudges) else { return nil }
         if history.lastSentDay == today { return nil }  // at most one a day
         if history.ignoredInARow >= 2, now - history.lastSent < 2 * dayMs { return nil }  // ignored twice: every other day
         let awayAWeek = history.lastEngaged > 0 && now - history.lastEngaged > 7 * dayMs
@@ -348,7 +370,8 @@ public enum Nudges {
         return Nudge(emoji: "🐾", headline: "\(due) cards are ready", body: "About \(minutes) min with Pip, then you're done for today.")
     }
 
-    /// The most recently touched chapter left partway through its loop for at least half a day.
+    /// The most recently touched chapter left partway through its loop for at least half a day, and fully prepared
+    /// (never a nudge towards a podcast or video that isn't there yet).
     static func halfDoneChapterNudge(_ books: [(book: Book, progress: StudyProgress)], now: Double) -> Nudge? {
         var best: (touched: Double, title: String, next: String)?
         for (book, progress) in books {
@@ -357,8 +380,9 @@ public enum Nudges {
                 guard !done.isEmpty, done.count < Stage.allCases.count, let touched = done.max(),
                       now - touched >= dayMs / 2, touched > (best?.touched ?? -1) else { continue }
                 let next = Stage.allCases.first { steps[$0.rawValue] == nil }.flatMap { nextStep[$0] } ?? "keep going"
-                let title = book.chapters.first { String($0.n) == chapter }?.title ?? "your chapter"
-                best = (touched, title, next)
+                let match = book.chapters.first { String($0.n) == chapter }
+                if let match, !ChapterReady.isComplete(match) { continue }
+                best = (touched, match?.title ?? "your chapter", next)
             }
         }
         return best.map { Nudge(emoji: "🧶", headline: "Loose yarn in “\($0.title)”", body: "Next: \($0.next). Pip saved your spot.") }

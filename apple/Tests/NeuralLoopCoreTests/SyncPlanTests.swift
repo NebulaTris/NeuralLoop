@@ -42,6 +42,7 @@ private func file(_ path: String, _ md5: String = "a", id: String? = nil) -> Syn
     #expect(SyncLayout.mediaChapter("books/mcp/media/03-podcast-lines/001.wav") == 3 && SyncLayout.mediaChapter("books/mcp/chapters/01.md") == nil)
     #expect(SyncLayout.isPrivate("pipeline.log") && SyncLayout.isPrivate(".running") && SyncLayout.isPrivate("media/01-podcast-lines/001.wav"))
     #expect(!SyncLayout.isPrivate("book.json") && !SyncLayout.isPrivate("media/01-podcast.m4a"))
+    #expect(SyncLayout.isPrivate("activity.json"))  // the live progress feed: rewritten every half second, Mac only
     #expect(SyncLayout.isPrivate("index.html") && SyncLayout.isPrivate("app.js") && !SyncLayout.isPrivate("chapters/img/app.js"))
 }
 

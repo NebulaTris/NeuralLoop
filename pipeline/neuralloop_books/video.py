@@ -10,6 +10,7 @@ import html
 import io
 import json
 import re
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
 
@@ -178,9 +179,16 @@ def _encoder(av, container, fps: int, size: tuple[int, int]):
 
 
 def render(
-    out: Path, title: str, slides: list[dict], clips: list[Path], fps: int = FPS, size: tuple[int, int] = SIZE
+    out: Path,
+    title: str,
+    slides: list[dict],
+    clips: list[Path],
+    fps: int = FPS,
+    size: tuple[int, int] = SIZE,
+    progress: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """Render the explainer to `out` (.mp4). `clips` are each slide's narration WAV, in order."""
+    """Render the explainer to `out` (.mp4). `clips` are each slide's narration WAV, in order. `progress(i, total)`
+    hears about every tenth frame drawn."""
     import av
     from playwright.sync_api import sync_playwright
 
@@ -200,6 +208,8 @@ def render(
                 page.set_content(page_html)
                 page.evaluate("document.fonts.ready")
                 for i in range(frames):
+                    if progress and i % 10 == 0:
+                        progress(i, frames)
                     page.evaluate(f"renderAt({i / fps})")
                     frame = _decode_png(page.screenshot(type="png"), av).reformat(format="yuv420p")
                     # A decoded PNG is marked as an intra frame; left as is, every frame becomes a keyframe (huge files).

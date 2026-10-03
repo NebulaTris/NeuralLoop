@@ -73,12 +73,6 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    static func news(before: Book?, after: Book?) -> (chapters: [Chapter], finished: Bool) {
-        guard let before, let after else { return ([], false) }
-        let news = BookNews.between(before, after)
-        return (news.readyChapters, news.finished)
-    }
-
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let bookId = response.notification.request.content.userInfo["bookId"] as? String
         await MainActor.run {

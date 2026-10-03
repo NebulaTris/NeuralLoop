@@ -518,9 +518,13 @@ struct NudgesPage: View {
     }
 
     private var gentle: some View {
-        SettingsCard(title: "Let Pip nudge me",
-                     note: "At most one a day, only when there's something small worth doing: cards that are due, or a chapter loop you left halfway. Never during quiet hours. If you skip two in a row, Pip backs off.") {
-            Toggle("Gentle nudges", isOn: $settings.enabled).toggleStyle(.switch)
+        SettingsCard(title: "Notifications from Pip",
+                     note: "Off means nothing at all from Pip. “Chapter ready” comes once, when the chapter you can study next is completely ready, podcast and video included. Gentle nudges come at most once a day, only about chapters that are fully prepared, never during quiet hours, and back off if you skip two in a row.") {
+            Toggle("Notifications from Pip", isOn: $settings.enabled).toggleStyle(.switch)
+            Toggle("When my next chapter is ready", isOn: $settings.chapterReady).toggleStyle(.switch)
+                .disabled(!settings.enabled).padding(.leading, 18)
+            Toggle("Gentle nudges", isOn: $settings.nudges).toggleStyle(.switch)
+                .disabled(!settings.enabled).padding(.leading, 18)
             Field(label: "Quiet from") {
                 Picker("", selection: $settings.quietStart) { ForEach(0..<24, id: \.self) { Text(Self.hour($0)).tag($0) } }
                     .labelsHidden().frame(width: 120)

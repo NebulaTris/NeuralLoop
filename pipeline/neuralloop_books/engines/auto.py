@@ -6,6 +6,7 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 
 import asyncio
 
+from .. import activity
 from ..models import SetupError, safe_message
 from ..notebook import is_quota_error
 
@@ -73,6 +74,8 @@ class AutoEngine:
                 )
         fallback = await self._fallback_ready()
         try:
+            step = f"NotebookLM couldn't, so {fallback.name} is making it"
+            activity.report(step, by=fallback.name, restart=True)
             return {**await fallback.make(task, chapter), "_by": fallback.name}
         except Exception as error:  # say who failed, so a limit is reported under the right name
             if self.primary is not None and is_quota_error(error):
