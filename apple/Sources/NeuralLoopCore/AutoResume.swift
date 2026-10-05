@@ -22,11 +22,15 @@ public enum AutoResume {
     static let minuteMs = 60_000.0
     static let waitAfterOtherLimits = 6 * 60 * minuteMs
 
-    /// Items still to make, or items waiting on a limit that has lifted: NotebookLM's live usage says it can make them
-    /// again, or (for other AIs) six hours have passed since the log last changed.
-    public static func hasWork(_ book: Book, usage: NotebookLMUsage?, logModified: Double, now: Double) -> Bool {
-        if book.chapters.contains(where: { $0.status.values.contains { $0 == .todo || $0 == .working } }) { return true }
-        let waiting = book.chapters.flatMap { c in c.status.filter { $0.value == .waiting }.map(\.key) }
+    /// Items still to make inside the window Pip is preparing (`PrepWindow`; the whole book by default), or items
+    /// there waiting on a limit that has lifted: NotebookLM's live usage says it can make them again, or (for other
+    /// AIs) six hours have passed since the log last changed.
+    public static func hasWork(_ book: Book, window: PrepWindow = .everything, usage: NotebookLMUsage?, logModified: Double,
+                               now: Double) -> Bool {
+        if window.hasWork(book) { return true }
+        let waiting = book.chapters.flatMap { c in
+            c.status.filter { $0.value == .waiting && window.includes(chapter: c.n, item: $0.key) }.map(\.key)
+        }
         guard !waiting.isEmpty else { return false }
         if book.engine != "local", let usage, usage.known { return waiting.contains { usage.canMake($0) } }
         return now - logModified > waitAfterOtherLimits
