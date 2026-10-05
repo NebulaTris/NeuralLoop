@@ -55,7 +55,8 @@ The shelf refreshes every 4 seconds. Each time, `Library.announce` runs this for
    (`Loop.isUnlocked`: chapter 1, or the one after a closed loop) and whose own loop isn't closed. Locked chapters
    are never considered, however ready they are.
 2. **Is it complete?** (`ChapterReady.isComplete`) Nothing may still be coming: every item is `done`, `skipped`
-   (not chosen for this chapter), or `failed`. `todo`, `working`, and `waiting_quota` count as still coming, so a
+   (not prepared for this chapter, or not yet: spec 08 prepares chapters just ahead of you), or `failed`. `todo`,
+   `working`, and `waiting_quota` count as still coming, so a
    chapter whose podcast is still recording, or waiting on NotebookLM's limit, isn't ready yet. A `failed` item is
    only tried again with "Prepare more" (`--retry`), so waiting for it would mean never announcing the chapter: it's
    studied with what's there.

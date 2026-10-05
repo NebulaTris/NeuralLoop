@@ -22,7 +22,7 @@ text items for chapter 1 arrive in under a minute, and audio starts playing whil
    this, every chapter's study guide came first, then every graph, and so on, so chapter 1 was complete only near the end.
 2. **Separate lanes.** *(done)* Podcasts and explainers run in their own lane (`Options.media_parallel`), so a 20-minute
    voice job never holds up a 30-second quiz.
-3. **Just in time, one chapter ahead.** Chapters unlock one at a time, so only make chapter N+1 while the person studies
+3. **Just in time, one chapter ahead.** *(done: spec 08)* Chapters unlock one at a time, so only make chapter N+1 while the person studies
    chapter N. The Read step needs no AI at all: the chapter text exists seconds after the split; reading-plan labels fill
    in when the guide arrives.
 4. **NotebookLM: submit everything, then wait.** NotebookLM makes items on its servers, so waiting shouldn't take up a

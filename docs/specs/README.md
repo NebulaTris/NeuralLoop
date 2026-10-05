@@ -4,6 +4,7 @@
 |---|---|
 | [05 — Our own pipeline, with any model you plug in](05-own-pipeline-any-model.md) | Done |
 | [06 — Fast enough to feel instant](06-speed.md) | In progress |
+| [08 — Just ahead: each chapter prepared just before you reach it](08-just-ahead.md) | Done |
 | [04 — One native app for Mac and iPad](04-native-macos-app.md) | Next |
 | [07 — Your library on every device](07-every-device.md) | With 04 |
 | [02 — Upload a PDF or EPUB, preview the chapters, parse it correctly](02-book-import-and-parsing.md) | After 04 |
