@@ -36,6 +36,15 @@
   later runs. Silly nudges only come when something is ready, never count against the usual nudges, and the big Pip
   stays away during calls, full-screen apps, and a locked screen. The device list shows each device once and tidies
   old ones, sign-out is always there, and the tour opens reliably.
+- **Each chapter is prepared just ahead of you:** chapter 1 fully and chapter 2's quick parts when you add a book; the
+  next chapter's podcast and video start when you finish reading the current one, so NotebookLM's allowance goes to
+  the chapters you're about to study. Settings → Your AI → "Prepare whole books right away" makes everything at once.
+- **Steps complete themselves** from what you really do: 85% of the podcast or video actually played (skipping and
+  more than 2× don't count), pages read at a real reading pace while you're active, a checked recall answer or a
+  finished quiz, and every card reviewed once. Each step shows its progress, and "I've done this step" still works.
+- **NotebookLM stays NotebookLM:** a long run no longer loses its Google session when the app checks your usage, so
+  podcasts, videos and mind maps stop falling back to your Mac; NotebookLM's newer flashcards are read; and at
+  NotebookLM's limit a podcast or video waits for the reset instead of being made on your Mac.
 - **Fixes from a second review:** short parts holding sections stay whole while a "12 Projects" part opens into its
   projects; a chapter whose video couldn't be made is still announced; the big Pip checks every display and only
   counts the microphone as busy when an app is recording; the Try buttons always work; signing out keeps your device
