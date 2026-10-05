@@ -18,13 +18,15 @@ public struct PrepActivity: Equatable, Sendable {
         public var expected: Double?  // seconds
     }
 
+    /// When the pipeline last wrote the file (it rewrites it every half second while working). Left out of equality:
+    /// on its own it changes nothing on screen (elapsed time comes from each item's `started`).
     public var updated: Double
     public var ended: Bool
     public var items: [Item]
     public var queue: [(n: Int, item: String)]
 
     public static func == (a: PrepActivity, b: PrepActivity) -> Bool {
-        a.updated == b.updated && a.ended == b.ended && a.items == b.items
+        a.ended == b.ended && a.items == b.items
             && a.queue.map { "\($0.n):\($0.item)" } == b.queue.map { "\($0.n):\($0.item)" }
     }
 

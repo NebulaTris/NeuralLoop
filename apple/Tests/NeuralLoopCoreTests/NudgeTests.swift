@@ -356,3 +356,38 @@ private func with(_ steps: [SillyStep], repeatEvery: Double = 0) -> NudgeSetting
     let old = try JSONDecoder().decode(NudgeSettings.self, from: Data(#"{"enabled":false}"#.utf8))
     #expect(!old.enabled && old.chapterReady && old.nudges)
 }
+
+@Test func itsQuietDuringQuietHoursAndWhilePaused() {
+    var s = NudgeSettings()
+    #expect(s.isQuiet(now: nowMs, hour: 23) && s.isQuiet(now: nowMs, hour: 7))
+    #expect(!s.isQuiet(now: nowMs, hour: 12))
+    s.pausedUntil = nowMs + 1
+    #expect(s.isQuiet(now: nowMs, hour: 12))
+    #expect(!s.isQuiet(now: nowMs + 1, hour: 12))
+}
+
+@Test func aFullScreenWindowOnAnyDisplayCounts() {
+    let laptop = CGRect(x: 0, y: 0, width: 1512, height: 982)
+    let external = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+    let video = CGRect(x: 1512, y: 0, width: 1920, height: 1080)  // a full-screen video on the other display
+    #expect(NudgeDelivery.fillsAnyScreen([video], screens: [laptop, external]))
+    #expect(NudgeDelivery.fillsAnyScreen([laptop], screens: [laptop, external]))
+    #expect(!NudgeDelivery.fillsAnyScreen([CGRect(x: 1600, y: 40, width: 800, height: 600)], screens: [laptop, external]))
+    #expect(!NudgeDelivery.fillsAnyScreen([video], screens: []))
+}
+
+@Test func theMacIsOnlyAskedWhatsGoingOnForABigPip() {
+    let settings = NudgeSettings()
+    #expect(!NudgeDelivery.needsMoment(.gentle, settings: settings))
+    #expect(NudgeDelivery.needsMoment(.sadMeow, settings: settings))
+    var noBigPip = settings
+    noBigPip.bigPip = false
+    #expect(!NudgeDelivery.needsMoment(.shocked, settings: noBigPip))
+}
+
+@Test func aLooseYarnNudgeStillComesWhenAVideoFailed() throws {
+    var p = StudyProgress()
+    p.loop["1"] = ["prime": nowMs - dayMs, "read": nowMs - dayMs]
+    let failed = try JSONDecoder().decode(Book.self, from: Data(#"{"title":"B","chapters":[{"n":1,"title":"Caching","status":{"study":"done","audio":"done","video":"failed"}}]}"#.utf8))
+    #expect(decide([(failed, p)])?.title == "🧶 Loose yarn in “Caching”")
+}

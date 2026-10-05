@@ -4,7 +4,7 @@
 // still arrives (silently) for Notification Center. Reduce Motion fades instead of zooming.
 //
 // It only shows when nothing else is going on (`NudgeDelivery.showsBigPip` decides; `moment()` looks): not on a locked
-// screen, not over a full-screen app or presentation, and not while the microphone is in use (a call or a meeting is
+// screen, not while the app in front fills any display (full screen, presenting, a video), and not while some app is recording (a call or a meeting is
 // likely). Then the notification carries the sound instead, so it keeps to Focus. Focus itself can't be read here:
 // INFocusStatusCenter needs the Communication Notifications entitlement, which this app doesn't have.
 
@@ -110,10 +110,11 @@ final class NudgeOverlay {
         return session["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
-    /// The app in front has a window covering the whole screen the big Pip would use (full screen, or presenting).
-    /// Window bounds need no Screen Recording permission (only window names do).
+    /// The app in front has a window covering a whole display, any of them (full screen, presenting, or a full-screen
+    /// video on a second display: the big Pip's sound would play over it either way). Window bounds need no Screen
+    /// Recording permission (only window names do).
     private static func fullScreenInFront() -> Bool {
-        guard let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, let screen,
+        guard let front = NSWorkspace.shared.frontmostApplication?.processIdentifier,
               let primary = NSScreen.screens.first,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return false }
@@ -123,13 +124,29 @@ final class NudgeOverlay {
             return CGRect(dictionaryRepresentation: rect)
         }
         // Window bounds are measured from the top left of the main display; NSScreen frames from its bottom left.
-        let f = screen.frame
-        let screenRect = CGRect(x: f.minX, y: primary.frame.maxY - f.maxY, width: f.width, height: f.height)
-        return NudgeDelivery.fillsScreen(bounds, screen: screenRect)
+        let screens = NSScreen.screens.map { screen in
+            let f = screen.frame
+            return CGRect(x: f.minX, y: primary.frame.maxY - f.maxY, width: f.width, height: f.height)
+        }
+        return NudgeDelivery.fillsAnyScreen(bounds, screens: screens)
     }
 
-    /// Some app is recording from the default microphone (a call or a meeting is likely). Asking needs no permission.
+    /// Some app is recording sound (a call or a meeting is likely). Asking needs no permission.
+    ///
+    /// It asks each audio client process whether it has an active input stream (`kAudioProcessPropertyIsRunningInput`,
+    /// macOS 14), so music playing through AirPods or a USB headset doesn't count as the microphone. If that can't be
+    /// read, it falls back to whether the default input device is running at all, a whole-device question that a
+    /// headset playing music also answers yes to: that errs towards a quiet notification, never a loud Pip in a call.
     private static func microphoneInUse() -> Bool {
+        if let processes = audioProcesses() {
+            return processes.contains { process in
+                var address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyIsRunningInput,
+                                                         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+                var running: UInt32 = 0
+                var size = UInt32(MemoryLayout<UInt32>.size)
+                return AudioObjectGetPropertyData(process, &address, 0, nil, &size, &running) == noErr && running != 0
+            }
+        }
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
                                                  mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var device = AudioObjectID(kAudioObjectUnknown)
@@ -140,6 +157,18 @@ final class NudgeOverlay {
         var running: UInt32 = 0
         size = UInt32(MemoryLayout<UInt32>.size)
         return AudioObjectGetPropertyData(device, &address, 0, nil, &size, &running) == noErr && running != 0
+    }
+
+    /// Every process using Core Audio (macOS 14's process objects), or nil when the list can't be read.
+    private static func audioProcesses() -> [AudioObjectID]? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr else { return nil }
+        var list = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &list) == noErr else { return nil }
+        return Array(list.prefix(Int(size) / MemoryLayout<AudioObjectID>.size))
     }
 }
 

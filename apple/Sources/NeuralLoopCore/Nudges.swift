@@ -49,6 +49,11 @@ public struct NudgeSettings: Codable, Equatable, Sendable {
         }
     }
 
+    /// Pip keeps quiet now: during quiet hours (`hour` is the local hour) or while paused ("Pause until tomorrow").
+    public func isQuiet(now: Double, hour: Int) -> Bool {
+        now < pausedUntil || Nudges.inQuietHours(hour: hour, start: quietStart, end: quietEnd)
+    }
+
     public var ladder: [SillyStep] {
         steps.enumerated().sorted { ($0.element.hours, $0.offset) < ($1.element.hours, $1.offset) }.map(\.element)
     }
@@ -325,8 +330,7 @@ public enum Nudges {
     /// is the app in front (you're here, so nothing silly).
     public static func decide(books: [(book: Book, progress: StudyProgress)], settings: NudgeSettings, history: NudgeHistory,
                               now: Double, hour: Int, today: String, appActive: Bool = false) -> Nudge? {
-        guard settings.enabled, now >= settings.pausedUntil,
-              !inQuietHours(hour: hour, start: settings.quietStart, end: settings.quietEnd) else { return nil }
+        guard settings.enabled, !settings.isQuiet(now: now, hour: hour) else { return nil }
         let news = dueCardsNudge(books, now: now) ?? halfDoneChapterNudge(books, now: now)
         // Silly mode: each step once per absence (the last may repeat), outside the one-a-day limit and the back-off,
         // and only with something to come back to; with nothing to do, a hi at most once a week.

@@ -11,7 +11,7 @@ excludes those files (`apple/project.yml`).
 
 | Kind | What it says | When it goes out | Its switch (Settings → Nudges) |
 |---|---|---|---|
-| **Chapter ready** | "Chapter 2 is ready to study" | Once per chapter, when the chapter you can study next is completely prepared, podcast and video included | "When my next chapter is ready" |
+| **Chapter ready** | "Chapter 2 is ready to study" | Once ever per chapter, when nothing for the chapter you can study next is still coming; during quiet hours or a pause, right after they end | "When my next chapter is ready" |
 | **Gentle nudge** | "🐾 4 cards are ready" / "🧶 Loose yarn in “Caching”" | At most once a day, when something small is worth doing | "Gentle nudges" |
 | **Silly mode** | "🎻 Pip is playing a tiny sad violin", then "😿…", then "😱 FAHHH! A whole day?!" | After hours away, one step at a time, only when something is ready | "Silly sounds and a sad Pip when I've been away" |
 
@@ -33,10 +33,10 @@ to macOS.
 
 | File | What it does |
 |---|---|
-| `apple/Sources/NeuralLoopCore/Nudges.swift` | `NudgeSettings` (every switch, quiet hours, Silly mode's steps, volume; lenient decoding of older saved settings), `NudgeHistory` (what was sent and when, and the last visit), `SillyStep`, `NudgeMood`, `Nudge` (title, body, mood, the silly wording), and `Nudges.decide(...)`, the whole nudge policy |
-| `apple/Sources/NeuralLoopCore/ChapterReady.swift` | `ChapterReady.step(...)`: which chapter to announce, if any; `isComplete`; `current` |
-| `apple/Sources/NeuralLoopCore/NudgeDelivery.swift` | `NudgeMoment` (screen locked, something full screen in front, microphone in use) and `showsBigPip(...)`: whether a silly nudge also gets the big on-screen Pip |
-| `apple/App/Services/Library.swift` | `enum Nudger`: settings and history in UserDefaults, `tick` (every ~5 minutes), `send`, `engaged`/`studying` (visits), `scheduledAllowed`, `watchingChapters`. `Library.announce` runs `ChapterReady` on every shelf refresh (every 4 s) |
+| `apple/Sources/NeuralLoopCore/Nudges.swift` | `NudgeSettings` (every switch, quiet hours, Silly mode's steps, volume; `isQuiet(now:hour:)` for quiet hours or a pause; lenient decoding of older saved settings), `NudgeHistory` (what was sent and when, and the last visit), `SillyStep`, `NudgeMood`, `Nudge` (title, body, mood, the silly wording), and `Nudges.decide(...)`, the whole nudge policy |
+| `apple/Sources/NeuralLoopCore/ChapterReady.swift` | `ChapterReady.step(...)`: which chapter to announce, if any; `isComplete`; `current`; `message` (the alert's words) |
+| `apple/Sources/NeuralLoopCore/NudgeDelivery.swift` | `NudgeMoment` (screen locked, something full screen in front, microphone in use) `showsBigPip(...)`: whether a silly nudge also gets the big on-screen Pip; `needsMoment` (only then is the Mac asked); `fillsScreen`/`fillsAnyScreen` |
+| `apple/App/Services/Library.swift` | `enum Nudger`: settings and history in UserDefaults, `tick` (every ~5 minutes), `send`, `engaged`/`studying` (visits), `scheduledAllowed`, `watchingChapters`, `announcedChapters`. `Library.announce` runs `ChapterReady` on every shelf refresh (every 4 s) |
 | `apple/App/Services/Notifier.swift` | The only code that talks to `UNUserNotificationCenter`: asking permission (`ask`, `permission`, `openSystemSettings`), `post` (title, body, sound, optional Pip picture), and the click handler (opens the book, or the library) |
 | `apple/App/Services/NudgeSounds.swift` | Each mood's sound file and Pip pose; draws the Pip picture attached to silly notifications |
 | `apple/App/Services/NudgeOverlay.swift` | The big on-screen Pip: a floating card that plays the sound and shrinks away when it ends; `moment()` reads the system state for `NudgeDelivery` |
@@ -54,18 +54,31 @@ The shelf refreshes every 4 seconds. Each time, `Library.announce` runs this for
 1. **Find the current chapter** (`ChapterReady.current`): the first chapter that is unlocked
    (`Loop.isUnlocked`: chapter 1, or the one after a closed loop) and whose own loop isn't closed. Locked chapters
    are never considered, however ready they are.
-2. **Is it complete?** (`ChapterReady.isComplete`) Every item must be `done`, or `skipped` (not chosen for this
-   chapter). `todo`, `working`, `waiting_quota`, and `failed` all count as still coming, so a chapter whose podcast
-   is still recording, or waiting on NotebookLM's limit, isn't ready yet.
+2. **Is it complete?** (`ChapterReady.isComplete`) Nothing may still be coming: every item is `done`, `skipped`
+   (not chosen for this chapter), or `failed`. `todo`, `working`, and `waiting_quota` count as still coming, so a
+   chapter whose podcast is still recording, or waiting on NotebookLM's limit, isn't ready yet. A `failed` item is
+   only tried again with "Prepare more" (`--retry`), so waiting for it would mean never announcing the chapter: it's
+   studied with what's there.
 3. **Watch, then announce.** If the current chapter isn't complete, it goes on the watch list. If it is complete
    and was on the watch list, the notification goes out and it comes off the list. A chapter that was already
    complete the first time the app looked is never announced, so there's no burst of alerts after an update or a
    relaunch.
-4. **Remember the watch list** across launches in UserDefaults (`chapterReadyWatching`, `[bookId: [chapter]]`),
-   pruned to books still on the shelf.
+4. **Quiet hours and "Pause until tomorrow"** (`NudgeSettings.isQuiet`): a chapter that becomes ready while it's
+   quiet stays on the watch list and is announced on the first look after the quiet ends.
+5. **Once ever.** An announced chapter goes on the announced list and is never watched or announced again, even when
+   "Prepare more" turns its skipped podcast and video back into to-dos.
+6. **Remember both lists** across launches in UserDefaults (`chapterReadyWatching` and `chapterReadyAnnounced`,
+   `[bookId: [chapter]]`), pruned to books still on the shelf.
 
-The notification goes out only if `settings.allows(.chapterReady)` and `Nudger.scheduledAllowed`. Clicking it opens
-that book (`Notifier`'s click handler, through `Library.path`).
+The words (`ChapterReady.message`) are honest about what's there: "everything is ready, podcast and video included"
+only names the podcast or video when they were made; with neither (the default makes them for chapters 1 and 2
+only) it's "everything Pip is making for it is ready"; with something failed, it says Pip couldn't make everything
+and that Prepare more tries again.
+
+`Library.announce` doesn't run at all unless `Nudger.scheduledAllowed` (so a development copy never touches the
+lists). The notification goes out only if `settings.allows(.chapterReady)`; with that off, a ready chapter still
+comes off the watch list and onto the announced list, silently. Clicking it opens that book (`Notifier`'s click
+handler, through `Library.path`).
 
 There's no "your whole book is ready" notification. It was removed: the only alert that matters is the next
 chapter you can actually study.
@@ -81,8 +94,8 @@ returns one `Nudge` or nothing. In order:
 2. **What's ready** (the "news"):
    - **Cards due:** at least 3 reviewed cards are due, which gives "🐾 N cards are ready".
    - **Loose yarn:** otherwise, the chapter you most recently left partway through, at least 12 hours ago. It only
-     counts if that chapter is fully prepared (`ChapterReady.isComplete`), so Pip never nudges you towards a
-     podcast that isn't there yet.
+     counts if nothing for that chapter is still coming (`ChapterReady.isComplete`), so Pip never nudges you
+     towards a podcast that isn't there yet (a failed one doesn't hold it back).
 3. **Silly mode first**, if all of these hold:
    - silly sounds are allowed;
    - NeuralLoop isn't in front;
@@ -121,8 +134,15 @@ A visit resets the hours-away clock and the ignored count.
 
 - **Silly nudges:**
   - The big Pip appears only if `NudgeDelivery.showsBigPip` agrees: the "Arrives as" setting is on, the screen
-    isn't locked, nothing is full screen in front, and the microphone isn't in use (a call is likely). The big Pip
-    then plays the sound at the chosen volume, and the notification arrives silently.
+    isn't locked, the app in front has no window filling any display (full screen, presenting, or a video on a
+    second display), and no app is recording sound (a call is likely). The big Pip then plays the sound at the
+    chosen volume, and the notification arrives silently.
+  - The Mac is only asked (`NudgeOverlay.moment()`) when `NudgeDelivery.needsMoment` says a big Pip is possible: never
+    for a gentle nudge.
+  - "Recording sound" asks every Core Audio client process whether it has an active input stream
+    (`kAudioProcessPropertyIsRunningInput`, macOS 14), so music through AirPods or a USB headset doesn't count. If
+    that list can't be read, it falls back to whether the default input device is running at all; that whole-device
+    question also says yes for a headset playing music, which errs towards a quiet notification.
   - Otherwise the notification carries the sound itself, which keeps to Focus and the system's alert volume.
 - **Picture:** the notification gets a picture of the sad or shocked Pip, drawn only when it will actually be used
   and deleted if attaching it fails.
@@ -144,12 +164,14 @@ All of it is in the app's UserDefaults (`app.neuralloop.books`):
 | `nudgeSettings` | JSON of `NudgeSettings`: `enabled` (master), `chapterReady`, `nudges`, `quietStart`, `quietEnd`, `pausedUntil`, `sillySounds`, `steps` (`[{id, sound, hours}]`), `repeatHours`, `bigPip`, `volume`. Decoding is lenient: a missing key takes its default; a bad step is skipped; an old `fahhh: false` removes that step |
 | `nudgeHistory` | JSON of `NudgeHistory`: `lastSent`, `lastSentDay`, `ignoredInARow` (gentle only), `lastEngaged` (last visit), `lastMood`, `lastSillySent`, `lastStepId`, `lastMissedYou` |
 | `chapterReadyWatching` | `[bookId: [chapter numbers]]`, the chapters `ChapterReady` is waiting on |
+| `chapterReadyAnnounced` | `[bookId: [chapter numbers]]`, the chapters already announced (never again) |
 
 ## Development builds never spam
 
 `Nudger.scheduledAllowed` is false in Debug builds unless they're launched with `-NLNotify YES`. Without that, test
 copies of the app (for screenshots or debugging) send no scheduled nudges and no chapter-ready alerts, even while
-the real app is also running. Tests from Settings and `-NLTestNudge` still go, because they're asked for.
+the real app is also running. They share the real app's UserDefaults (same bundle id), so they don't run
+`Library.announce` at all: reading and rewriting the watch list would use up the real app's alerts. Tests from Settings and `-NLTestNudge` still go, because they're asked for.
 
 Before this, a development copy running next to the real app could send its own nudges and its own chapter alerts.
 That was one source of "random" notifications.
@@ -184,7 +206,7 @@ platform layer then needs to provide five things:
 1. **A timer** every few minutes that calls `decide` with the books, settings, history, time, hour, and whether the
    app is in front. A second, faster check (every few seconds while books are being prepared) runs
    `ChapterReady.step` per book.
-2. **Storage** for `nudgeSettings`, `nudgeHistory`, and `chapterReadyWatching`.
+2. **Storage** for `nudgeSettings`, `nudgeHistory`, `chapterReadyWatching`, and `chapterReadyAnnounced`.
 3. **A way to post** a notification with a title, body, optional sound, and optional picture, plus click handling.
 4. **Visit signals:** app activated, app left, studying.
 5. **Optionally,** the system state for `NudgeMoment` and an overlay window for the big Pip.
@@ -201,3 +223,14 @@ platform layer then needs to provide five things:
 - **Silly steps used to fire with nothing to do.** They now need news; otherwise there's a weekly "ready when you
   are".
 - **Development builds could send scheduled notifications** alongside the real app. They now need `-NLNotify YES`.
+- **A development copy without `-NLNotify` still ran the chapter watch,** taking chapters off the shared watch list
+  without posting, so the real app's alert never came. It now doesn't run it at all.
+- **"Chapter ready" ignored quiet hours and "Pause until tomorrow".** It now waits for them to end.
+- **A chapter with a failed video was never announced** (and never got a loose-yarn nudge): failed counted as still
+  coming. Failed items now count as settled.
+- **The alert said "its whole loop is ready"** for chapters made without podcast and video, and "Prepare more" made
+  the same chapter announce again. The words now name only what's there, and each chapter is announced once ever.
+- **The big Pip only checked the main display for full screen,** so a full-screen video on another display got the
+  big Pip's sound. Every display counts now.
+- **The microphone check asked whether the input device was running at all,** which a headset playing music also
+  answers yes to. It now asks which processes are recording.

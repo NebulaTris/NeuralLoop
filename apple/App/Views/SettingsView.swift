@@ -437,16 +437,20 @@ struct NudgesPage: View {
         SettingsCard(title: "Silly mode",
                      note: "When you’ve been away a while, Pip gets dramatic, just for laughs. Each step plays once (hours count from the last time you used NeuralLoop), only when something is waiting for you, never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
             if !settings.enabled {
-                Text("Silly mode rides along with gentle nudges: turn those on above to use it.")
+                Text("Silly mode needs “Notifications from Pip”: turn it on above to use it. The Try buttons work either way.")
                     .font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
             }
-            Group { sillyControls }.disabled(!settings.enabled)
+            sillyControls
         }
     }
 
+    /// The steps can be edited only while Silly mode can actually go out; the Try buttons always work (you asked).
+    private var stepsEditable: Bool { settings.enabled && settings.sillySounds }
+
     @ViewBuilder private var sillyControls: some View {
         Toggle("Silly sounds and a sad Pip when I've been away", isOn: $settings.sillySounds).toggleStyle(.switch)
-        steps.disabled(!settings.sillySounds)
+            .disabled(!settings.enabled)
+        steps
         Field(label: "Arrives as") {
             Picker("", selection: $settings.bigPip) {
                 Text("A big Pip on screen, plus a notification").tag(true)
@@ -454,7 +458,7 @@ struct NudgesPage: View {
             }
             .labelsHidden().pickerStyle(.radioGroup)
         }
-        .disabled(!settings.sillySounds)
+        .disabled(!stepsEditable)
         Field(label: "Volume") {
             Slider(value: $settings.volume, in: 0.1...1) { editing in
                 if !editing { NudgeSounds.preview(settings.ladder.first?.sound ?? .sadViolin, volume: settings.volume) }
@@ -462,13 +466,14 @@ struct NudgesPage: View {
             .frame(width: 220)
             Text("\(Int((settings.volume * 100).rounded()))%").font(Theme.body(12)).foregroundStyle(Theme.ink2).monospacedDigit()
         }
-        .disabled(!settings.sillySounds || !settings.bigPip)
+        .disabled(!stepsEditable || !settings.bigPip)
         Text(settings.bigPip ? "Let go of the slider to hear it. During a call, a full-screen app, or with the screen locked, Pip comes as a notification instead, at your Mac's alert volume (System Settings → Sound)."
                              : "Notifications play at your Mac's alert volume: System Settings → Sound.")
                 .font(Theme.body(11)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
     }
 
     /// Silly mode's steps: a sound and its hours each, any number of them (sounds can repeat), plus an optional repeat.
+    /// Each control is disabled on its own (not the whole list) so the Try buttons keep working.
     private var steps: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach($settings.steps) { $step in
@@ -477,49 +482,54 @@ struct NudgesPage: View {
                     Picker("Step \(number) sound", selection: $step.sound) {
                         ForEach(SillyStep.sounds, id: \.self) { Text($0.name).tag($0) }
                     }
-                    .labelsHidden().frame(width: 170)
+                    .labelsHidden().frame(width: 170).disabled(!stepsEditable)
                     Text("after").font(Theme.body(13)).foregroundStyle(Theme.ink2)
                     TextField("Step \(number) hours", value: $step.hours, format: .number).labelsHidden()
-                        .frame(width: 46).multilineTextAlignment(.trailing)
+                        .frame(width: 46).multilineTextAlignment(.trailing).disabled(!stepsEditable)
                     Stepper("Step \(number) hours", value: $step.hours, in: SillyStep.hourRange).labelsHidden()
+                        .disabled(!stepsEditable)
                     Text(step.hours == 1 ? "hour" : "hours").font(Theme.body(13)).foregroundStyle(Theme.ink2)
                     Button("Try") {
                         Nudger.send(Nudge.sample(step.sound), test: true)
                         note = "Sent. If nothing appeared, allow notifications for NeuralLoop in System Settings → Notifications."
                     }
-                    .help("Send a test nudge with this sound").disabled(!settings.enabled)
+                    .help("Send a test nudge with this sound")
                     Button { settings.steps.removeAll { $0.id == step.id } } label: { Image(systemName: "minus.circle") }
                         .buttonStyle(.borderless).help("Remove this step").accessibilityLabel("Remove step \(number)")
+                        .disabled(!stepsEditable)
                 }
             }
             if settings.steps.isEmpty {
                 Text("No steps: Pip only sends the usual nudges.").font(Theme.body(12)).foregroundStyle(Theme.ink3)
             }
-            HStack {
-                Button {
-                    // Never two steps at the same hour: four after the last, or the nearest free hour.
-                    let hours = SillyStep.freeHours(after: settings.steps)
-                    settings.steps.append(SillyStep(settings.ladder.last?.sound ?? .sadViolin, after: hours))
-                } label: { Label("Add a step", systemImage: "plus.circle") }
-                .disabled(settings.steps.count >= SillyStep.most)
-                Button("Reset to 8, 12, and 24 hours") { (settings.steps, settings.repeatHours) = (SillyStep.defaults, 0) }
+            Group {
+                HStack {
+                    Button {
+                        // Never two steps at the same hour: four after the last, or the nearest free hour.
+                        let hours = SillyStep.freeHours(after: settings.steps)
+                        settings.steps.append(SillyStep(settings.ladder.last?.sound ?? .sadViolin, after: hours))
+                    } label: { Label("Add a step", systemImage: "plus.circle") }
+                    .disabled(settings.steps.count >= SillyStep.most)
+                    Button("Reset to 8, 12, and 24 hours") { (settings.steps, settings.repeatHours) = (SillyStep.defaults, 0) }
+                }
+                .controlSize(.small)
+                HStack(spacing: 8) {
+                    Toggle("Then repeat the last one every", isOn: Binding(get: { settings.repeatHours > 0 },
+                                                                          set: { settings.repeatHours = $0 ? 6 : 0 }))
+                        .toggleStyle(.checkbox)
+                    TextField("Repeat every how many hours", value: Binding(get: { settings.repeatHours > 0 ? settings.repeatHours : 6 },
+                                                                            set: { settings.repeatHours = SillyStep.repeatChoice($0) }), format: .number)
+                        .labelsHidden().frame(width: 46).multilineTextAlignment(.trailing).disabled(settings.repeatHours == 0)
+                    Text("hours while I'm away").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                }
             }
-            .controlSize(.small)
-            HStack(spacing: 8) {
-                Toggle("Then repeat the last one every", isOn: Binding(get: { settings.repeatHours > 0 },
-                                                                      set: { settings.repeatHours = $0 ? 6 : 0 }))
-                    .toggleStyle(.checkbox)
-                TextField("Repeat every how many hours", value: Binding(get: { settings.repeatHours > 0 ? settings.repeatHours : 6 },
-                                                                        set: { settings.repeatHours = SillyStep.repeatChoice($0) }), format: .number)
-                    .labelsHidden().frame(width: 46).multilineTextAlignment(.trailing).disabled(settings.repeatHours == 0)
-                Text("hours while I'm away").font(Theme.body(13)).foregroundStyle(Theme.ink2)
-            }
+            .disabled(!stepsEditable)
         }
     }
 
     private var gentle: some View {
         SettingsCard(title: "Notifications from Pip",
-                     note: "Off means nothing at all from Pip. “Chapter ready” comes once, when the chapter you can study next is completely ready, podcast and video included. Gentle nudges come at most once a day, only about chapters that are fully prepared, never during quiet hours, and back off if you skip two in a row.") {
+                     note: "Off means nothing at all from Pip. “Chapter ready” comes once per chapter, when everything Pip is making for the chapter you can study next is ready; if that happens during quiet hours or a pause, it comes after. Gentle nudges come at most once a day, only about chapters that are fully prepared, never during quiet hours, and back off if you skip two in a row.") {
             Toggle("Notifications from Pip", isOn: $settings.enabled).toggleStyle(.switch)
             Toggle("When my next chapter is ready", isOn: $settings.chapterReady).toggleStyle(.switch)
                 .disabled(!settings.enabled).padding(.leading, 18)

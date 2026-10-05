@@ -41,6 +41,7 @@ private struct Scanned: Sendable {
     let elsewhere: (n: Int, item: String)?
     let elsewhereLine: String?
     let activity: PrepActivity?
+    let activityModified: Date?
 }
 
 @MainActor @Observable
@@ -188,22 +189,34 @@ final class Library {
     }
 
     #if os(macOS)
-    /// "Chapter 2 is ready" (`ChapterReady`): once per chapter, only for the chapter you can study next, and only when
-    /// its whole loop is ready, podcast and video included. Chapters being watched are remembered across launches.
+    /// "Chapter 2 is ready" (`ChapterReady`): once ever per chapter, only for the chapter you can study next, and only
+    /// when nothing for it is still coming. During quiet hours or a pause it waits, and comes when they end. Chapters
+    /// being watched, and those already announced, are remembered across launches.
     private func announce(_ updated: [BookEntry]) {
-        let saved = Nudger.watchingChapters
-        var watching = saved.filter { id, _ in updated.contains { $0.id == id } }
-        let allowed = Nudger.settings.allows(.chapterReady) && Nudger.scheduledAllowed
+        // A development copy shares the real app's settings: it must neither post nor touch the watch list, or it
+        // would use up the real app's alerts.
+        guard Nudger.scheduledAllowed else { return }
+        let onShelf = { (id: String, _: [Int]) in updated.contains { $0.id == id } }
+        let saved = (watching: Nudger.watchingChapters, announced: Nudger.announcedChapters)
+        var watching = saved.watching.filter(onShelf)
+        var announced = saved.announced.filter(onShelf)
+        let settings = Nudger.settings
+        let now = Date()
+        let quiet = settings.isQuiet(now: now.timeIntervalSince1970 * 1000, hour: Calendar.current.component(.hour, from: now))
         for entry in updated {
             guard let book = entry.book else { continue }
-            let step = ChapterReady.step(book: book, progress: entry.progress, watching: Set(watching[entry.id] ?? []))
+            let step = ChapterReady.step(book: book, progress: entry.progress, watching: Set(watching[entry.id] ?? []),
+                                         announced: Set(announced[entry.id] ?? []), quiet: quiet)
             watching[entry.id] = step.watching.isEmpty ? nil : step.watching.sorted()
-            if let chapter = step.announce, allowed {
-                Notifier.shared.post(title: "Chapter \(chapter.n) is ready to study",
-                                     body: "“\(chapter.title)” in \(entry.title): its whole loop is ready. Pip saved you a spot.", bookId: entry.id)
+            guard let chapter = step.announce else { continue }
+            announced[entry.id] = Array(Set(announced[entry.id] ?? []).union([chapter.n])).sorted()
+            if settings.allows(.chapterReady) {
+                let words = ChapterReady.message(chapter, book: entry.title)
+                Notifier.shared.post(title: words.title, body: words.body, bookId: entry.id)
             }
         }
-        if watching != saved { Nudger.watchingChapters = watching }
+        if watching != saved.watching { Nudger.watchingChapters = watching }
+        if announced != saved.announced { Nudger.announcedChapters = announced }
     }
     #endif
 
@@ -230,6 +243,10 @@ final class Library {
                 let elsewhere: (n: Int, item: String)? = nil
                 #endif
                 let log = folder.appendingPathComponent("pipeline.log")
+                let activityFile = folder.appendingPathComponent("activity.json")
+                let activityModified = modified(activityFile)
+                let activity = old != nil && old?.activityModified == activityModified ? old?.activity
+                    : (try? Data(contentsOf: activityFile)).flatMap(PrepActivity.read)
                 return Scanned(
                     id: id, folder: folder, book: book, bookModified: bookModified, progress: progress, progressModified: progressModified,
                     addedAt: meta?["addedAt"] as? Double ?? 0, media: options?["media"] as? String ?? "1-2",
@@ -237,7 +254,7 @@ final class Library {
                     logModified: (modified(log)?.timeIntervalSince1970 ?? 0) * 1000,
                     elsewhere: elsewhere,
                     elsewhereLine: elsewhereLine(elsewhere != nil, log: log),
-                    activity: (try? Data(contentsOf: folder.appendingPathComponent("activity.json"))).flatMap(PrepActivity.read)
+                    activity: activity, activityModified: activityModified
                 )
             }
             .sorted { $0.addedAt > $1.addedAt }
@@ -573,8 +590,7 @@ final class Library {
     /// The title saved when the book was added; books added before that was saved are named after their original file.
     nonisolated private static func savedTitle(_ folder: URL) -> String? {
         let meta = (try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("meta.json")))) as? [String: Any]
-        if let title = meta?["title"] as? String { return PipelineCommand.bookTitle(given: title, file: folder) }
-        return (meta?["originalPath"] as? String).map { PipelineCommand.bookTitle(given: nil, file: URL(fileURLWithPath: $0)) }
+        return PipelineCommand.savedTitle(title: meta?["title"] as? String, originalPath: meta?["originalPath"] as? String)
     }
 
     private func prepare(id: String, book: URL, options: PipelineCommand.Options, title: String? = nil) {
@@ -696,6 +712,12 @@ enum Nudger {
         set { UserDefaults.standard.set(newValue, forKey: "chapterReadyWatching") }
     }
 
+    /// Chapters already announced, per book: each is announced at most once, even when "Prepare more" makes more for it.
+    static var announcedChapters: [String: [Int]] {
+        get { (UserDefaults.standard.dictionary(forKey: "chapterReadyAnnounced") as? [String: [Int]]) ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "chapterReadyAnnounced") }
+    }
+
     static func tick(_ entries: [BookEntry]) {
         guard scheduledAllowed else { return }
         let books = entries.compactMap { entry in entry.book.map { (book: $0, progress: entry.progress) } }
@@ -717,8 +739,11 @@ enum Nudger {
         }
         // The big Pip only when nothing else is going on; otherwise (or if its sound won't play) the notification
         // carries the sound, keeping to Focus.
-        let onScreen = NudgeDelivery.showsBigPip(nudge.mood, settings: settings, moment: NudgeOverlay.moment())
-        let playing = onScreen && NudgeOverlay.shared.show(nudge, volume: settings.volume)
+        // A gentle nudge never asks the Mac about its windows or microphone.
+        let current = Self.settings
+        let onScreen = NudgeDelivery.needsMoment(nudge.mood, settings: current)
+            && NudgeDelivery.showsBigPip(nudge.mood, settings: current, moment: NudgeOverlay.moment())
+        let playing = onScreen && NudgeOverlay.shared.show(nudge, volume: current.volume)
         let mood = nudge.mood
         var picture: (@MainActor () -> URL?)?
         if mood != .gentle { picture = { NudgeSounds.picture(mood) } }

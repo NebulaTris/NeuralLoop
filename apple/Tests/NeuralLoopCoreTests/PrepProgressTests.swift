@@ -77,3 +77,14 @@ private let sample = #"""
     let quiz = PrepProgress.of(try #require(a.item(2, "quiz")), now: minute)
     #expect(quiz.percent == nil && quiz.percentText == nil)
 }
+
+@Test func onlyRealChangesInTheFeedCountAsChanges() throws {
+    // The pipeline rewrites `updated` every half second; that alone mustn't redraw the shelf.
+    let a = try feed(sample)
+    let b = try feed(sample.replacingOccurrences(of: #"{"updated": 1000000"#, with: #"{"updated": 1000500"#))
+    #expect(a == b)
+    let moved = try feed(sample.replacingOccurrences(of: #""done": 12"#, with: #""done": 13"#))
+    #expect(a != moved)
+    let ended = try feed(sample.replacingOccurrences(of: #""ended": false"#, with: #""ended": true"#))
+    #expect(a != ended)
+}
