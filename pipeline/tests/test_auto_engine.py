@@ -194,3 +194,21 @@ def test_a_limited_fallback_is_skipped_but_notebooklm_still_tries_the_item():
     assert tries == ["quiz"]  # the limited fallback wasn't asked again
     assert made_by(second, "Auto") == "NotebookLM"
     assert third == {"quiz": "NotebookLM", "_by": "NotebookLM"}
+
+
+def test_only_an_item_notebooklm_failed_says_so_in_the_progress_feed(monkeypatch):
+    from neuralloop_books.engines import auto
+
+    steps = []
+    monkeypatch.setattr(auto.activity, "report", lambda step=None, **kw: steps.append((step, kw)))
+    local_only = AutoEngine(
+        lambda: Recorder("NotebookLM", fail_prepare=SetupError("not signed in")),
+        lambda: Recorder("Ollama"),
+        lambda _: None,
+    )
+    run(local_only, "quiz")
+    assert steps == []  # NotebookLM was never tried for it
+
+    primary = Recorder("NotebookLM", fail_make={"audio": RuntimeError("generation failed")})
+    run(AutoEngine(lambda: primary, lambda: Recorder("Ollama"), lambda _: None), "quiz", "audio")
+    assert steps == [("NotebookLM couldn't, so Ollama is making it", {"by": "Ollama", "restart": True})]

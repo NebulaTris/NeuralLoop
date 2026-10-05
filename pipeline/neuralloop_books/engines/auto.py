@@ -74,8 +74,9 @@ class AutoEngine:
                 )
         fallback = await self._fallback_ready()
         try:
-            step = f"NotebookLM couldn't, so {fallback.name} is making it"
-            activity.report(step, by=fallback.name, restart=True)
+            if self.primary is not None:  # NotebookLM tried this item and couldn't: the clock restarts
+                step = f"NotebookLM couldn't, so {fallback.name} is making it"
+                activity.report(step, by=fallback.name, restart=True)
             return {**await fallback.make(task, chapter), "_by": fallback.name}
         except Exception as error:  # say who failed, so a limit is reported under the right name
             if self.primary is not None and is_quota_error(error):
