@@ -81,13 +81,25 @@ def test_notebooklm_that_cannot_even_open_falls_back():
 
 def test_an_item_notebooklm_fails_or_limits_is_made_locally():
     primary = Recorder(
-        "NotebookLM", fail_make={"video": QuotaError("daily limit"), "quiz": RuntimeError("boom")}
+        "NotebookLM", fail_make={"cards": QuotaError("daily limit"), "quiz": RuntimeError("boom")}
     )
     fallback = Recorder("Ollama")
     lines = []
-    results = run(AutoEngine(lambda: primary, lambda: fallback, lines.append), "cards", "quiz", "video")
-    assert results == [{"cards": "NotebookLM"}, {"quiz": "Ollama"}, {"video": "Ollama"}]
+    results = run(AutoEngine(lambda: primary, lambda: fallback, lines.append), "cards", "quiz", "mindmap")
+    assert results == [{"cards": "Ollama"}, {"quiz": "Ollama"}, {"mindmap": "NotebookLM"}]
     assert fallback.prepared and any("quiz" in line and "Ollama" in line for line in lines)
+
+
+@pytest.mark.parametrize("task", ["audio", "video"])
+def test_a_podcast_or_video_at_notebooklms_limit_waits_for_notebooklm(task):
+    """People want NotebookLM's own podcasts and videos: at its limit they wait for the reset (the item is
+    marked waiting and tried again on the next run) instead of being made on the Mac."""
+    primary = Recorder("NotebookLM", fail_make={task: QuotaError("Resource exhausted")})
+    fallback = Recorder("Ollama")
+    with pytest.raises(QuotaError) as caught:
+        run(AutoEngine(lambda: primary, lambda: fallback, lambda _: None), task)
+    assert caught.value.engine_name == "NotebookLM"  # reported as NotebookLM's limit
+    assert not fallback.prepared  # the Mac never started on it
 
 
 def test_an_item_fails_normally_when_the_local_fallback_cannot_be_set_up():

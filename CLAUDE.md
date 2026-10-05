@@ -131,7 +131,7 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   `--title` names the book when it's first split (later runs keep the saved title). The app sends it as one argument, `--title=T`, on every run,
   from meta.json `title` (it hands over its copy `source.pdf`, so the file name would be wrong).
   `--no-open` does nothing (kept for older callers). `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless
-  a key is set) for the whole run when not, and per item when NotebookLM fails or hits its limit (a refused NotebookLM session is
+  a key is set) for the whole run when not, and per item when NotebookLM fails or hits its limit, except that a podcast or video at NotebookLM's limit waits for it to reset (people want NotebookLM's own; `waiting`, retried when live usage says it can) (a refused NotebookLM session is
   reopened from the saved one and the item retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
   `OPENROUTER_API_KEY`, `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup`
   (start Ollama, download the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in
