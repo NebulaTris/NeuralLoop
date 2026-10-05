@@ -8,7 +8,7 @@ import Foundation
 /// What's going on at the Mac right now, as far as the app can tell.
 public struct NudgeMoment: Equatable, Sendable {
     public var screenLocked = false
-    /// The app in front has a window covering the whole screen the big Pip would use.
+    /// The app in front has a window covering a whole display (any of them).
     public var fullScreenInFront = false
     /// Some app is recording from the default microphone.
     public var microphoneInUse = false
@@ -24,9 +24,21 @@ public enum NudgeDelivery {
         mood != .gentle && settings.bigPip && !moment.screenLocked && !moment.fullScreenInFront && !moment.microphoneInUse
     }
 
+    /// Whether it's worth asking the Mac what's going on (windows, the microphone): only for a silly nudge that may
+    /// show the big Pip. A gentle nudge is always just a notification.
+    public static func needsMoment(_ mood: NudgeMood, settings: NudgeSettings) -> Bool {
+        mood != .gentle && settings.bigPip
+    }
+
     /// Whether any of these windows covers all of `screen` (same coordinates; a point or two of slack).
     public static func fillsScreen(_ windows: [CGRect], screen: CGRect, slack: CGFloat = 2) -> Bool {
         let inner = screen.insetBy(dx: slack, dy: slack)
         return windows.contains { $0.contains(inner) }
+    }
+
+    /// Whether any of these windows covers a whole display, whichever it is (a full-screen video on a second display
+    /// counts too: the big Pip's sound would play over it).
+    public static func fillsAnyScreen(_ windows: [CGRect], screens: [CGRect], slack: CGFloat = 2) -> Bool {
+        screens.contains { fillsScreen(windows, screen: $0, slack: slack) }
     }
 }
