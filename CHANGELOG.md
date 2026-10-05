@@ -22,6 +22,12 @@
 - **One Google sign-in** in Settings → Account for NotebookLM and your library, with your name and email, which account
   each uses, and a list of your devices with when each last synced.
 - Settings → Nudges shows whether notifications are on, with a button to System Settings if they're off.
+- **A real progress loader** while podcasts, videos, and everything else are made: what's happening right now
+  ("NotebookLM is recording the podcast", "Voicing the podcast"), who's making it, a progress bar, the time left, and
+  each waiting item's place in line.
+- **Notifications that make sense:** "Chapter ready" comes once, only for the chapter you can study next, and only when
+  its whole loop is ready, podcast and video included. One switch turns every notification off, with separate switches
+  for chapter ready, gentle nudges, and Silly mode.
 - **Fixes from a full review:** books made of short parts, parts with a preface or index, numbered chapters, real
   chapters named like "Index structures", and substantial appendices all split correctly; every book keeps its name on
   later runs. Silly nudges only come when something is ready, never count against the usual nudges, and the big Pip
