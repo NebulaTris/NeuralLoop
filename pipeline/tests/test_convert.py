@@ -247,3 +247,24 @@ def test_a_concept_graph_keeps_the_first_of_repeated_ids():
     )
     assert [c["name"] for c in graph["concepts"]] == ["Caching", "Queues"]
     assert [(e["source"], e["target"]) for e in graph["edges"]] == [("queue", "cache")]
+
+
+def test_notebooklms_newer_flashcards_with_content_blocks_are_read():
+    """NotebookLM now sends each side as {"flashcardContentBlock": [{"type": "text", "content": …}]}."""
+
+    def side(*texts):
+        return {"flashcardContentBlock": [{"type": "text", "content": t} for t in texts]}
+
+    data = {
+        "cards": [
+            {
+                "front": side("What defines each layer?"),
+                "back": side("How it's built on", "the layer below."),
+            },
+            {"front": side(""), "back": side("an orphan back")},
+            {"front": {"flashcardContentBlock": [{"type": "image", "url": "x"}]}, "back": side("no text")},
+        ]
+    }
+    assert convert.flashcards(data) == [
+        {"front": "What defines each layer?", "back": "How it's built on the layer below."}
+    ]

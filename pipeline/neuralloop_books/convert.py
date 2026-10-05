@@ -66,11 +66,21 @@ def quiz(data: Any) -> list[dict]:
 
 def flashcards(data: Any) -> list[dict]:
     """NotebookLM flashcard export -> [{front, back}]."""
-    return [
-        {"front": _text(c["front"]), "back": _text(c["back"])}
-        for c in _list(data, "cards")
-        if _text(c.get("front")) and _text(c.get("back"))
+    cards = [
+        {"front": _card_side(c.get("front")), "back": _card_side(c.get("back"))} for c in _list(data, "cards")
     ]
+    return [c for c in cards if c["front"] and c["back"]]
+
+
+def _card_side(value: Any) -> str:
+    """A card side: plain text, or NotebookLM's newer {"flashcardContentBlock": [{"type": "text", …}]}."""
+    if isinstance(value, dict):
+        blocks = value.get("flashcardContentBlock")
+        if not isinstance(blocks, list):
+            return ""
+        texts = (_text(b.get("content")) for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+        return " ".join(t for t in texts if t)
+    return _text(value)
 
 
 def study(data: Any) -> dict | None:
