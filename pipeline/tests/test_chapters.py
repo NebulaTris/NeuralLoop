@@ -234,6 +234,51 @@ class TestPdf:
         ]
         assert chapters[4]["pages"] == [31, 40]  # the last chapter of Part I ends where Part II begins
 
+    @pytest.mark.parametrize("section", ["Section {k}", "{n}.{k} Section"])
+    def test_short_parts_holding_sections_stay_whole(self, tmp_path, section):
+        """ "Part 1: Topic 1" to "Part 5: Topic 5", twelve pages each, each with three four-page sections
+        inside: the parts are the chapters."""
+
+        def part(n):
+            kids = [(section.format(n=n, k=k), (n - 1) * 12 + 4 * k) for k in range(3)]
+            return (f"Part {n}: Topic {n}", (n - 1) * 12, kids)
+
+        outline = [part(n) for n in range(1, 6)]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 60, outline), tmp_path / "out")
+        assert [(c["title"], c["pages"]) for c in chapters] == [
+            (f"Part {n}: Topic {n}", [(n - 1) * 12 + 1, n * 12]) for n in range(1, 6)
+        ]
+
+    def test_parts_of_numbered_chapters_between_a_preface_and_an_index_open_into_the_chapters(self, tmp_path):
+        def part(name, first, page):
+            return (f"Part {name}", page, [(f"Chapter {first + k}", page + 2 + 30 * k) for k in range(3)])
+
+        outline = [
+            ("Preface", 0, []),
+            ("Foreword", 4, []),
+            part("I", 1, 8),
+            part("II", 4, 100),
+            part("III", 7, 192),
+            ("Index", 284, []),
+        ]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 290, outline), tmp_path / "out")
+        titles = [c["title"] for c in chapters]
+        assert [t for t in titles if t.startswith("Chapter")] == [f"Chapter {n}" for n in range(1, 10)]
+        assert not any(t.startswith("Part") for t in titles)
+
+    @pytest.mark.parametrize("title", ["12 Projects", "50 Python Projects", "100 Exercises"])
+    def test_a_long_part_named_with_a_bare_number_still_opens_into_its_projects(self, tmp_path, title):
+        outline = [(name, n * 6, []) for n, name in enumerate(["Intro", "Basics", "Tools", "Setup"])]
+        outline += [(title, 24, [(f"Project {k + 1}", 24 + 6 * k) for k in range(12)])]
+        chapters = split_book(write_pdf(tmp_path / "b.pdf", 96, outline), tmp_path / "out")
+        assert [c["title"] for c in chapters] == [
+            "Intro",
+            "Basics",
+            "Tools",
+            "Setup",
+            *(f"Project {k + 1}" for k in range(12)),
+        ]
+
     def test_a_child_bookmark_earlier_than_its_part_is_still_its_own_chapter(self, tmp_path):
         outline = [
             ("Intro", 0, []),

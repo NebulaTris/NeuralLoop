@@ -24,8 +24,11 @@ DIVIDER_SHARE = 4  # ...as is one with nothing after it that's a quarter of a ty
 PAGE_CHARS = 2_500  # a typical book page
 MIN_APPENDIX_PAGES = 8  # an appendix this long (or half a typical chapter, if that's more) is worth a loop
 MIN_APPENDIX_CHARS = MIN_APPENDIX_PAGES * PAGE_CHARS
-# "Chapter 3", "3. Storage", "3 Storage", "3: Storage": a chapter, kept whole however long. Not "3.1 Hashing".
-_CHAPTER = re.compile(r"^\s*(?:chapter\b|\d+[.:)]?\s)", re.IGNORECASE)
+# "Chapter 3", "Ch. 3", "3. Storage", "3: Storage", "3) Storage": a chapter, kept whole however long.
+# Not "3.1 Hashing".
+_CHAPTER = re.compile(r"^\s*(?:chapter\b|ch\.?\s*\d|\d+[.:)]\s)", re.IGNORECASE)
+# "3 Storage" is a chapter too, but only among numbered chapters: alone, "12 Projects" is a part to open.
+_NUMBERED = re.compile(r"^\s*\d+[.:)]?\s")
 _SECTION = re.compile(r"^\s*\d+\.\d+")  # "6.1", "6.2 SSTables": sections of a chapter
 _PART = re.compile(
     r"^\s*part\s+([ivxlc]+|\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b", re.IGNORECASE
@@ -186,17 +189,36 @@ Entry = tuple[str, int, list]  # (title, page index, child items)
 
 def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
     """A "Part II" bookmark with chapters inside becomes those chapters, whatever else sits beside it (a
-    preface, an index). Its own title page stays, ahead of its first chapter, for `_is_divider` to skip."""
+    preface, an index). Its own title page stays, ahead of its first chapter, for `_is_divider` to skip.
+    A part whose bookmarks are only sections (numbered "1.2", or a few pages each in a short part) is itself
+    a chapter and stays whole."""
+    ordered = sorted(entries, key=lambda e: e[1])
+    starts = [page for _, page, _ in ordered]
+    page_count = len(reader.pages)
+    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
     opened: list[Entry] = []
-    for title, page, kids in entries:
+    for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted(_outline_level(reader, kids), key=lambda c: c[1]) if _PART.match(title) else []
-        if len(inside) < 2:
+        if len(inside) < 2 or not _holds_chapters(inside, page, end):
             opened.append((title, page, kids))
             continue
         if inside[0][1] > page:
             opened.append((title, page, []))
         opened.extend(inside)
     return opened
+
+
+def _holds_chapters(inside: list[Entry], page: int, end: int) -> bool:
+    """Whether a part's bookmarks are chapters: some are called chapters ("Chapter 3", "3. Storage"), or
+    the part is long and they're chapter-sized and mostly not numbered sections ("6.1")."""
+    if any(_CHAPTER.match(child) for child, _, _ in inside):
+        return True
+    span = max(end, max(p for _, p, _ in inside) + 1) - min(page, inside[0][1])
+    return (
+        span >= LONG_PART_PAGES
+        and span / len(inside) >= MIN_SECTION_PAGES
+        and sum(bool(_SECTION.match(child)) for child, _, _ in inside) * 2 < len(inside)
+    )
 
 
 def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entry]:
@@ -214,11 +236,16 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
         if not is_front_matter(title) and not (_PART.match(title) and end - page <= MAX_DIVIDER_PAGES)
     )
     typical = _median(lengths)
+    numbered = sum(bool(_NUMBERED.match(title)) for title, _, _ in ordered if not is_front_matter(title))
+    named = sum(not is_front_matter(title) for title, _, _ in ordered)
     opened: list[Entry] = []
     for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted((c for c in _outline_level(reader, kids) if page <= c[1] < end), key=lambda c: c[1])
+        # "6 Storage" among "5 Encoding" and "7 Replication" is a chapter; "12 Projects" among "Intro" and
+        # "Setup" is a part of projects.
+        chapter = _CHAPTER.match(title) or (_NUMBERED.match(title) and (numbered - 1) * 2 >= named - 1)
         if (
-            not _CHAPTER.match(title)
+            not chapter
             and end - page >= max(LONG_PART_PAGES, PART_SIZE * typical)
             and len(inside) >= 2
             and (end - inside[0][1]) / len(inside) >= MIN_SECTION_PAGES
