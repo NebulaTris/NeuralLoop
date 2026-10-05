@@ -24,7 +24,8 @@ def test_an_item_being_made_is_written_with_its_step_and_estimate(tmp_path):
 
 
 def test_steps_are_reported_from_inside_the_item_even_on_another_thread(tmp_path):
-    feed = Activity(tmp_path, timings={})
+    clock = iter([0.0, 1.0, 2.0, 90.0, 90.0])
+    feed = Activity(tmp_path, timings={}, clock=lambda: next(clock))
 
     async def make():
         token = feed.begin(1, "audio", "Ollama")
@@ -55,6 +56,20 @@ def test_a_fallback_restarts_the_clock_under_the_new_maker(tmp_path):
         assert item["by"] == "Ollama" and item["started"] == 400_000 and item["expected"] == 60
 
     asyncio.run(make())
+
+
+def test_a_fallback_times_only_the_maker_that_made_the_item(tmp_path):
+    """NotebookLM gave up after 900 s and Ollama then took 300 s: Ollama's timing is 300 s, not 1200 s."""
+    clock = iter([0.0, 900.0, 1200.0, 1200.0])
+    feed = Activity(tmp_path, timings={}, clock=lambda: next(clock))
+
+    async def make():
+        token = feed.begin(1, "quiz", "NotebookLM")
+        activity.report("NotebookLM couldn't; making it with Ollama", by="Ollama", restart=True)
+        feed.end(1, "quiz", seconds=1200, ok=True, token=token)
+
+    asyncio.run(make())
+    assert feed.timings == {"Ollama:quiz": [300]}
 
 
 def test_estimates_come_from_recent_runs_then_sensible_defaults(tmp_path):

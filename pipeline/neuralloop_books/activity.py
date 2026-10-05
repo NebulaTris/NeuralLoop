@@ -76,13 +76,19 @@ class Activity:
             self._write(now, force=True)
         return _current.set((self, n, item))
 
-    def end(self, n: int, item: str, seconds: float, ok: bool, token: Token | None = None) -> None:
+    def end(
+        self, n: int, item: str, seconds: float | None = None, ok: bool = True, token: Token | None = None
+    ) -> None:
+        """The item is done. Its timing runs from its own `started`, which a fallback's restart resets, so
+        only the maker that made it is timed (`seconds` is ignored; kept for older callers)."""
+        now = self._ms()
         with self._lock:
             entry = self._items.pop((n, item), None)
             if ok and entry is not None:
                 key = f"{entry['by']}:{item}"
-                self.timings[key] = [*self.timings.get(key, []), round(seconds)][-KEEP_TIMINGS:]
-            self._write(self._ms(), force=True)
+                took = (now - entry["started"]) / 1000
+                self.timings[key] = [*self.timings.get(key, []), round(took)][-KEEP_TIMINGS:]
+            self._write(now, force=True)
         if token is not None:
             _current.reset(token)
 
