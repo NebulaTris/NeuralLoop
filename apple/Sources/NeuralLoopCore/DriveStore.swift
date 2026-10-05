@@ -203,7 +203,7 @@ public actor MemoryDrive: DriveStore {
         try stored.data.write(to: destination, options: .atomic)
     }
 
-    public func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+    @discardableResult public func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
         let data = try Data(contentsOf: source)
         if let id, files[id] == nil { throw DriveError.http(404, "File not found") }
         uploads += 1
@@ -217,19 +217,25 @@ public actor MemoryDrive: DriveStore {
     }
 
     /// Test helper: a new file under this name, even if one exists (how duplicates appear in the Drive).
-    @discardableResult public func insert(_ data: Data, as path: String) -> SyncFile { store(data, as: path, id: nil) }
+    /// `modified`: when the Drive says it was last changed (otherwise its own clock's next tick).
+    @discardableResult public func insert(_ data: Data, as path: String, modified: Date? = nil) -> SyncFile {
+        store(data, as: path, id: nil, modified: modified)
+    }
+
+    /// Test helper: set the Drive's own clock (Google's time, which no device's clock changes).
+    public func setClock(_ date: Date) { clock = date.timeIntervalSince1970 }
 
     /// Test helper: what's stored at a path (the newest, if there are several).
     public func data(at path: String) -> Data? {
         files.values.filter { $0.file.path == path }.max { ($0.file.modified ?? .distantPast) < ($1.file.modified ?? .distantPast) }?.data
     }
 
-    private func store(_ data: Data, as path: String, id: String?) -> SyncFile {
+    private func store(_ data: Data, as path: String, id: String?, modified: Date? = nil) -> SyncFile {
         let fileId = id ?? "f\(nextId)"
         if id == nil { nextId += 1 }
         clock += 1
         let file = SyncFile(path: path, md5: FileHash.md5(data), size: Int64(data.count), id: fileId,
-                            modified: Date(timeIntervalSince1970: clock))
+                            modified: modified ?? Date(timeIntervalSince1970: clock))
         files[fileId] = (file, data)
         return file
     }

@@ -69,8 +69,8 @@ public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
                   lastSync: (try? c.decode(Double.self, forKey: .lastSync)) ?? 0)
     }
 
-    /// A note not rewritten for this long belongs to a device that's gone (signed out, wiped, sold): it isn't listed,
-    /// and any device may delete it.
+    /// A note not rewritten for this long (by the Drive's clock, never a device's) belongs to a device that's gone
+    /// (signed out, wiped, sold): it isn't listed, and any device may delete it.
     public static let staleAfter = 90 * 86_400_000.0
 
     /// Another device's note: shown as plain text, so it's kept to one sensible line, and its time to one that could be
@@ -95,19 +95,31 @@ public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// Names are shown as plain text: whitespace of any kind becomes one space, and invisible characters (controls,
-    /// format characters such as bidi overrides and zero-width spaces, private-use and unassigned code points) go.
+    /// format characters such as bidi overrides and marks, zero-width spaces and the byte-order mark, private-use and
+    /// unassigned code points) go. Format characters that are part of how a name is written stay: the zero-width joiner
+    /// and non-joiner (joined emoji like 👩‍💻, Persian words) and tag characters (flags like England's).
     static func clean(_ name: String, kind: SyncRole) -> String {
         let hidden: Set<Unicode.GeneralCategory> = [.control, .format, .privateUse, .surrogate, .unassigned]
         var scalars = String.UnicodeScalarView()
         for scalar in name.unicodeScalars {
             if scalar.properties.isWhitespace {
                 scalars.append(" ")
-            } else if !hidden.contains(scalar.properties.generalCategory) {
+            } else if keptFormat(scalar) || !hidden.contains(scalar.properties.generalCategory) {
                 scalars.append(scalar)
             }
         }
         let one = String(String(scalars).split(separator: " ").joined(separator: " ").prefix(60))
         return one.isEmpty ? (kind == .mac ? "A Mac" : "An iPad") : one
+    }
+
+    /// Never shown, named here so no rule above lets them through: bidi embeddings, overrides, isolates and marks
+    /// (which can flip how a name reads), zero-width space, word joiner, byte-order mark.
+    static let invisible: Set<UInt32> = Set(Array(0x202A...0x202E) + Array(0x2066...0x2069) + [0x200E, 0x200F, 0x061C, 0x200B, 0x2060, 0xFEFF])
+
+    /// Format characters a name may need: ZWNJ (U+200C), ZWJ (U+200D), and tag characters (U+E0020–U+E007F).
+    private static func keptFormat(_ scalar: Unicode.Scalar) -> Bool {
+        guard !invisible.contains(scalar.value) else { return false }
+        return scalar.value == 0x200C || scalar.value == 0x200D || (0xE0020...0xE007F).contains(scalar.value)
     }
 }
 
@@ -161,6 +173,9 @@ public actor SyncEngine {
     /// What this device calls itself in the device list ("Sam's MacBook Pro").
     let name: String
     private var state: SyncState
+    /// Signed out (or signing out): this device's note is never written, even by a sync already underway, until the
+    /// next sign-in (`signedIn()`). Kept in memory only, so a sign-out cut short never keeps the note off for good.
+    private var noteRemoved = false
     /// How often a device rewrites its note while syncing (it says when it last synced).
     static let noteEvery = 15 * 60 * 1000.0
 
@@ -322,10 +337,12 @@ public actor SyncEngine {
         return report
     }
 
-    /// This device's note goes up when it's missing from the Drive, its name or id changed, or every `noteEvery`; the
-    /// other devices' notes are read (again only when they change). After a new id, the old id's note leaves the Drive
-    /// (a device still using that id writes it again on its next sync). Notes untouched for `DeviceInfo.staleAfter`
-    /// aren't listed and are deleted. A note that can't be written, read, or deleted is a problem, never a failed sync.
+    /// This device's note goes up when it's missing from the Drive, its name or id changed, or every `noteEvery` (never
+    /// after signing out, `noteRemoved`); the other devices' notes are read (again only when they change). After a new
+    /// id, the old id's note leaves the Drive (a device still using that id writes it again on its next sync). Notes the
+    /// Drive hasn't seen rewritten for `DeviceInfo.staleAfter` aren't listed and are deleted: that goes by the Drive's
+    /// own clock (each note's `modified` against the newest change there), so no device's wrong clock hides or deletes
+    /// anyone's note. A note that can't be written, read, or deleted is a problem, never a failed sync.
     private func deviceList(remote: [SyncFile], now: Date, report: inout SyncReport) async -> [DeviceInfo] {
         let nowMs = now.timeIntervalSince1970 * 1000
         let path = SyncLayout.deviceInfoPath(device)
@@ -334,16 +351,24 @@ public actor SyncEngine {
         let mine = notes.first { $0.path == path }
         let writtenAt = state.noteDevice == device ? state.noteAt : nil
         var retired = Set<String>()
-        if mine == nil || writtenAt == nil || state.noteName != name || nowMs - (writtenAt ?? 0) >= Self.noteEvery {
+        // The Drive's "now": the newest change it reports (our own note's is at most `noteEvery` old, or just written).
+        var driveNow = remote.compactMap(\.modified).max()
+        if !noteRemoved, mine == nil || writtenAt == nil || state.noteName != name || nowMs - (writtenAt ?? 0) >= Self.noteEvery {
             let note = DeviceInfo(id: device, name: name, kind: role, lastSync: nowMs)
             let file = root.appendingPathComponent(".deviceinfo-\(device).json")
             defer { try? FileManager.default.removeItem(at: file) }
             do {
                 try JSONEncoder().encode(note).write(to: file, options: .atomic)
-                do { _ = try await store.upload(file, as: path, replacing: mine?.id) }
+                let stored: SyncFile
+                do { stored = try await store.upload(file, as: path, replacing: mine?.id) }
                 catch DriveError.http(404, _) where mine?.id != nil {  // deleted since we looked: create it again
-                    _ = try await store.upload(file, as: path, replacing: nil)
+                    stored = try await store.upload(file, as: path, replacing: nil)
                 }
+                if noteRemoved {  // signed out while it was on its way up: take it back down
+                    try? await deleteRemote(stored)
+                    throw CancellationError()
+                }
+                if let modified = stored.modified { driveNow = max(driveNow ?? modified, modified) }
                 if let old = state.noteDevice, old != device, BookID.isValid(old) {
                     retired.insert(old)
                     for stale in notes where stale.path == SyncLayout.deviceInfoPath(old) {
@@ -351,6 +376,7 @@ public actor SyncEngine {
                     }
                 }
                 (state.noteAt, state.noteName, state.noteDevice) = (nowMs, name, device)
+            } catch is CancellationError {  // taken back down (signed out meanwhile): not a problem
             } catch { report.problems.append("\(path): \(error.localizedDescription)") }
         }
         var others: [DeviceInfo] = []
@@ -372,7 +398,8 @@ public actor SyncEngine {
                 } catch { report.problems.append("\(file.path): \(error.localizedDescription)"); continue }
             }
             info.lastSync = DeviceInfo.clamped(info.lastSync, now: now)
-            if nowMs - info.lastSync > DeviceInfo.staleAfter {  // a device long gone: tidy its note away
+            if let written = file.modified, let driveNow,
+               driveNow.timeIntervalSince(written) * 1000 > DeviceInfo.staleAfter {  // a device long gone: tidy its note away
                 do { try await deleteRemote(file) } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
                 continue
             }
@@ -387,14 +414,18 @@ public actor SyncEngine {
     }
 
     /// Signing out of the library: this device's note leaves the Drive (every copy of it), so other devices stop
-    /// listing it. Signing in again writes it afresh.
+    /// listing it, and no sync writes it again (not even one already underway) until `signedIn()`.
     public func removeNote() async throws {
+        noteRemoved = true
         (state.noteAt, state.noteName, state.noteDevice) = (nil, nil, nil)
         save()
         for file in try await store.list() where file.path == SyncLayout.deviceInfoPath(device) {
             try await deleteRemote(file)
         }
     }
+
+    /// Signed in (again): this device's note goes up on the next sync.
+    public func signedIn() { noteRemoved = false }
 
     /// Deleting something that's already gone is fine (another device got there first).
     private func deleteRemote(_ file: SyncFile) async throws {

@@ -382,8 +382,11 @@ private func notes(_ drive: MemoryDrive, _ id: String) async throws -> [SyncFile
     defer { try? FileManager.default.removeItem(at: mac) }
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let day = 86_400_000.0, ms = now.timeIntervalSince1970 * 1000
-    await drive.insert(note("Old iPad", lastSync: ms - 91 * day), as: "deviceinfo/ipad-old.json")
-    await drive.insert(note("Sam's iPad", lastSync: ms - 89 * day), as: "deviceinfo/ipad1.json")
+    await drive.setClock(now)  // the Drive's clock agrees with this Mac's here
+    await drive.insert(note("Old iPad", lastSync: ms - 91 * day), as: "deviceinfo/ipad-old.json",
+                       modified: now.addingTimeInterval(-91 * 86_400))
+    await drive.insert(note("Sam's iPad", lastSync: ms - 89 * day), as: "deviceinfo/ipad1.json",
+                       modified: now.addingTimeInterval(-89 * 86_400))
     let report = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac").sync(now: now)
     #expect(report.devices.map(\.id) == ["mac1", "ipad1"])
     #expect(try await notes(drive, "ipad-old").isEmpty)
@@ -438,4 +441,146 @@ private func notes(_ drive: MemoryDrive, _ id: String) async throws -> [SyncFile
 /// What's in the Drive besides the devices' notes about themselves.
 private func libraryFiles(_ drive: MemoryDrive) async throws -> [SyncFile] {
     try await drive.list().filter { SyncLayout.deviceInfo($0.path) == nil }
+}
+
+// MARK: device notes: signing out, clocks, names
+
+/// A Drive that holds one call (a `list` or a device note's `upload`) until released, to replay a sync and a sign-out
+/// running at the same time.
+private actor HeldDrive: DriveStore {
+    let inner: MemoryDrive
+    private var armed: String?
+    private var held: CheckedContinuation<Void, Never>?
+    var holding: Bool { held != nil }
+
+    init(_ inner: MemoryDrive) { self.inner = inner }
+    func hold(_ call: String) { armed = call }
+    func release() { held?.resume(); held = nil }
+
+    private func wait(_ call: String) async {
+        guard armed == call else { return }
+        armed = nil
+        await withCheckedContinuation { held = $0 }
+    }
+
+    func list() async throws -> [SyncFile] {
+        let files = try await inner.list()
+        await wait("list")  // the snapshot is taken, then the sync stalls
+        return files
+    }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        if SyncLayout.deviceInfo(path) != nil { await wait("upload") }
+        return try await inner.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws { try await inner.delete(file) }
+}
+
+private func whileHeld(_ drive: HeldDrive) async {
+    while !(await drive.holding) { await Task.yield() }
+}
+
+@Test func aSyncAlreadyUnderwayWhenSigningOutNeverBringsTheNoteBack() async throws {
+    let memory = MemoryDrive()
+    let drive = HeldDrive(memory)
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac")
+    _ = try await engine.sync(now: now)
+    // A sync has looked at the Drive (its snapshot still has the note) when sign-out takes the note away.
+    await drive.hold("list")
+    let underway = Task { try await engine.sync(now: now.addingTimeInterval(60)) }
+    await whileHeld(drive)
+    try await engine.removeNote()
+    await drive.release()
+    _ = try await underway.value
+    #expect(try await notes(memory, "mac1").isEmpty)
+}
+
+@Test func aNoteOnItsWayUpWhenSigningOutIsTakenBackDown() async throws {
+    let memory = MemoryDrive()
+    let drive = HeldDrive(memory)
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac")
+    _ = try await engine.sync(now: now)
+    await drive.hold("upload")  // the 15-minute rewrite is in flight
+    let underway = Task { try await engine.sync(now: now.addingTimeInterval(20 * 60)) }
+    await whileHeld(drive)
+    try await engine.removeNote()
+    await drive.release()
+    _ = try await underway.value
+    #expect(try await notes(memory, "mac1").isEmpty)
+}
+
+@Test func afterSigningOutNoSyncWritesTheNoteUntilSignedInAgain() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive, name: "Sam's Mac")
+    _ = try await engine.sync(now: now)
+    try await engine.removeNote()
+    _ = try await engine.sync(now: now.addingTimeInterval(60))  // a sync that slipped in while the sign-out finished
+    #expect(try await notes(drive, "mac1").isEmpty)
+    await engine.signedIn()
+    _ = try await engine.sync(now: now.addingTimeInterval(120))
+    #expect(try await notes(drive, "mac1").count == 1)
+}
+
+@Test func whetherANoteIsOldGoesByTheDrivesClockNotADevicesOwn() async throws {
+    let day: TimeInterval = 86_400
+    // The Drive's clock: Google's time, whatever the devices think.
+    let server = Date(timeIntervalSince1970: 1_800_000_000)
+    func library() async -> MemoryDrive {
+        let drive = MemoryDrive()
+        await drive.setClock(server)
+        return drive
+    }
+    // This Mac's clock runs 100 days fast: the iPad's honest note, written an hour ago, must not look 100 days old.
+    let fast = await library()
+    await fast.insert(note("Sam's iPad", lastSync: (server.timeIntervalSince1970 - 3600) * 1000), as: "deviceinfo/ipad1.json",
+                      modified: server.addingTimeInterval(-3600))
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    let ahead = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: fast, name: "Sam's Mac")
+        .sync(now: server.addingTimeInterval(100 * day))
+    #expect(ahead.devices.map(\.id) == ["mac1", "ipad1"])
+    #expect(try await notes(fast, "ipad1").count == 1)
+
+    // The iPad's clock runs 100 days slow: its note says it's old, but the Drive saw it written a minute ago.
+    let slow = await library()
+    await slow.insert(note("Sam's iPad", lastSync: (server.timeIntervalSince1970 - 100 * day) * 1000), as: "deviceinfo/ipad1.json",
+                      modified: server.addingTimeInterval(-60))
+    let mac2 = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac2) }
+    let behind = try await SyncEngine(root: mac2, device: "mac1", role: .mac, store: slow, name: "Sam's Mac").sync(now: server)
+    #expect(behind.devices.map(\.id) == ["mac1", "ipad1"])
+    #expect(try await notes(slow, "ipad1").count == 1)
+
+    // A note the Drive hasn't seen rewritten for 91 days is a device long gone, whatever its note claims (and even
+    // when this Mac's clock runs slow).
+    let old = await library()
+    await old.insert(note("Old iPad", lastSync: server.timeIntervalSince1970 * 1000), as: "deviceinfo/ipad-old.json",
+                     modified: server.addingTimeInterval(-91 * day))
+    let mac3 = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac3) }
+    let tidied = try await SyncEngine(root: mac3, device: "mac1", role: .mac, store: old, name: "Sam's Mac")
+        .sync(now: server.addingTimeInterval(-100 * day))
+    #expect(tidied.devices.map(\.id) == ["mac1"])
+    #expect(try await notes(old, "ipad-old").isEmpty)
+}
+
+@Test func namesKeepTheirJoinersEmojiAndFlags() {
+    let coder = "Sam's \u{1F469}\u{200D}\u{1F4BB} Mac"  // woman technologist: a joined emoji
+    #expect(DeviceInfo(id: "a", name: coder, kind: .mac, lastSync: 1).name == coder)
+    let england = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F} iPad"  // a flag made of tag characters
+    #expect(DeviceInfo(id: "b", name: england, kind: .pad, lastSync: 1).name == england)
+    let persian = "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}"  // ZWNJ belongs in the word
+    #expect(DeviceInfo(id: "c", name: persian, kind: .pad, lastSync: 1).name == persian)
+    // Direction marks and invisible spaces still go.
+    let sneaky = "\u{202A}A\u{202B}B\u{202C}C\u{202D}D\u{2066}E\u{2067}F\u{2068}G\u{2069}H\u{200E}I\u{200F}J\u{061C}K\u{200B}L\u{2060}M\u{FEFF}N\u{00AD}O"
+    #expect(DeviceInfo(id: "d", name: sneaky, kind: .mac, lastSync: 1).name == "ABCDEFGHIJKLMNO")
 }
