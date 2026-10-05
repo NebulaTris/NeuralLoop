@@ -28,13 +28,19 @@
   every stage; NotebookLM shares none, so its percentage is an estimate from how long it usually takes.
 - **Sign in with Google first:** the first time you open NeuralLoop, Google's sign-in opens right away, then the tour.
 - **Notifications that make sense:** "Chapter ready" comes once, only for the chapter you can study next, and only when
-  its whole loop is ready, podcast and video included. One switch turns every notification off, with separate switches
+  everything Pip is making for it is ready (waiting through quiet hours and pauses, and never twice for the same
+  chapter). One switch turns every notification off, with separate switches
   for chapter ready, gentle nudges, and Silly mode.
 - **Fixes from a full review:** books made of short parts, parts with a preface or index, numbered chapters, real
   chapters named like "Index structures", and substantial appendices all split correctly; every book keeps its name on
   later runs. Silly nudges only come when something is ready, never count against the usual nudges, and the big Pip
   stays away during calls, full-screen apps, and a locked screen. The device list shows each device once and tidies
   old ones, sign-out is always there, and the tour opens reliably.
+- **Fixes from a second review:** short parts holding sections stay whole while a "12 Projects" part opens into its
+  projects; a chapter whose video couldn't be made is still announced; the big Pip checks every display and only
+  counts the microphone as busy when an app is recording; the Try buttons always work; signing out keeps your device
+  off the list; a device with a wrong clock can't hide the others; device names keep their emoji; and Help → Take the
+  Tour reuses a minimized window.
 
 ## 0.2.0: the first public preview 🐾
 
