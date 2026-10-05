@@ -22,6 +22,8 @@ final class DriveSync {
     private(set) var devices: [DeviceInfo] = []
     @ObservationIgnored private var started = false
     @ObservationIgnored private var again = false
+    /// Signing out (or signed out from here): no sync starts until the next sign-in.
+    @ObservationIgnored private var signingOutNow = false
     @ObservationIgnored private var soonTask: Task<Void, Never>?
     @ObservationIgnored private var engine: SyncEngine?
     /// Mac: a book waits in the inbox (the file, and the title from its sidecar). Return true once it's being prepared;
@@ -102,14 +104,26 @@ final class DriveSync {
         return made
     }
 
-    /// Signed in just now: start syncing right away rather than at the next tick.
+    /// Signed in just now: start syncing right away rather than at the next tick (and this device's note goes up again).
     func signedIn() {
-        if started { Task { await syncNow() } } else { start() }
+        signingOutNow = false
+        let engine = sharedEngine()
+        Task {
+            await engine.signedIn()
+            if started { await syncNow() } else { start() }
+        }
     }
 
-    /// Signing out of the library: this device's note leaves the Drive (best effort; a note left behind stops being
-    /// listed after 90 days), and the device list here empties.
+    /// Signing out of the library: syncing stops at once (nothing more is asked of the Drive, so nothing puts the note
+    /// back), a sync already underway gets a few seconds to finish, then this device's note leaves the Drive (best
+    /// effort; a note left behind stops being listed after 90 days), and the device list here empties. The engine
+    /// itself never writes the note again until the next sign-in, even if that sync is still going.
     func signingOut() async {
+        signingOutNow = true
+        again = false
+        soonTask?.cancel()
+        let deadline = Date().addingTimeInterval(15)
+        while syncing, Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
         if DriveAccount.shared.isSignedIn || Self.fakeDrive != nil {
             try? await sharedEngine().removeNote()
         }
@@ -147,17 +161,17 @@ final class DriveSync {
 
     func syncNow() async {
         let account = DriveAccount.shared
-        guard account.isSignedIn || Self.fakeDrive != nil else { return }
+        guard account.isSignedIn || Self.fakeDrive != nil, !signingOutNow else { return }
         guard !syncing else { again = true; return }  // asked while syncing: go once more right after
         syncing = true
         defer {
             syncing = false
-            if again { again = false; Task { await syncNow() } }
+            if again, !signingOutNow { again = false; Task { await syncNow() } }
         }
         var engine = sharedEngine()
         do {
             var report = try await engine.sync(wantedMedia: wantedMedia)
-            if report.deviceClash {
+            if report.deviceClash, !signingOutNow {
                 // Another device has been using this id: take a new one and sync as that.
                 device = DeviceIdentity.replace(role: Self.role)
                 self.engine = nil
