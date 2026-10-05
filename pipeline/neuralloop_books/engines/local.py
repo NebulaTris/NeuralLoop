@@ -140,8 +140,8 @@ class LocalEngine:
         return self._sources[n, budget]
 
     async def _ask(self, kind: str, chapter: dict, prompt: str, check, label: str):
-        activity.report(f"Writing the {label}")
         """Ask for one JSON item; if it's unusable or skimpy, ask once more saying exactly what was wrong."""
+        activity.report(f"Writing the {label}")
         model = self.task_models.get(kind, self.model)
         source = await self._source(chapter, model)
         answer = await model.complete(kind, self.system, source, prompt)
