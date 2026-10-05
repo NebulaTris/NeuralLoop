@@ -105,6 +105,23 @@ def test_widening_media_on_a_later_run_adds_only_the_new_media(options):
     assert state.chapters[1]["tasks"]["audio"]["status"] == DONE
 
 
+def test_chapters_prepared_just_ahead_come_back_when_the_window_widens(options):
+    # Spec 08: the app asks for chapter 1 only, then for more as the reader moves on.
+    options.chapters = "1"
+    first_client = FakeClient(delay=0)
+    state = run_with(options, first_client)
+    assert state.chapters[1]["tasks"]["quiz"]["status"] == SKIPPED
+    assert len(first_client.source_titles) == 1  # a chapter outside the window isn't added to NotebookLM
+    options.chapters = "all"
+    client = FakeClient(delay=0)
+    state = run_with(options, client)
+    first, second = state.chapters
+    assert all(second["tasks"][t]["status"] == DONE for t in ("study", "graph", "quiz", "cards", "mindmap"))
+    assert second["tasks"]["video"]["status"] == SKIPPED  # media still only for chapter 1
+    assert all(entry["status"] == DONE for entry in first["tasks"].values())
+    assert len(client.source_titles) == 1  # only chapter 2 was added; chapter 1's work wasn't redone
+
+
 def test_auto_engine_opens_notebooklm_inside_the_running_loop(options):
     from neuralloop_books.engines.auto import AutoEngine
 
