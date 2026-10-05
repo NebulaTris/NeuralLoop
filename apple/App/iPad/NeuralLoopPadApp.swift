@@ -42,11 +42,11 @@ struct PadRootView: View {
         .background(Theme.paper)
         .tint(Theme.accent)
         .sheet(isPresented: Binding(get: { !welcomed || library.showingTour },
-                                    set: { if !$0 { welcomed = true; library.showingTour = false } })) {
+                                    set: { if !$0 { welcomed = true; library.endTour() } })) {
             if welcomed {
-                GuidedTour { library.showingTour = false }
+                GuidedTour { library.endTour() }.id(library.tour.number)  // asked again: starts over
             } else {
-                FirstLaunch { welcomed = true; library.showingTour = false }  // sign in with Google, then the tour
+                FirstLaunch { welcomed = true; library.endTour() }  // sign in with Google, then the tour
             }
         }
         .task {

@@ -68,19 +68,16 @@ struct NeuralLoopApp: App {
     }
 }
 
-/// Help → Take the Tour: the tour shows on the main window, so that window opens first if it's closed.
+/// Help → Take the Tour: the tour shows on the main window, so that window comes forward first (out of the Dock if
+/// it's minimized, opened if it's closed), and only one window shows it.
 struct TourCommand: View {
     let library: Library
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button("Take the Tour") {
-            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && $0.isVisible }) {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                openWindow(id: "main")
-            }
-            NSApp.activate(ignoringOtherApps: true)
+            if Notifier.shared.openMainWindow == nil { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
+            Notifier.shared.showLibrary()
             library.requestTour()
         }
     }
@@ -92,6 +89,8 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("welcomed") private var welcomed = false
     @State private var movingIn = AppMover.shouldAsk
+    /// This window, for the tour (only one window shows it).
+    @State private var windowID = UUID().uuidString
 
     var body: some View {
         @Bindable var library = library
@@ -106,14 +105,19 @@ struct RootView: View {
         // First things first: move into Applications (when running from Downloads or the disk image), then the welcome.
         .sheet(isPresented: $movingIn) { MoveInView() }
         // Never on top of the move-in sheet; once that closes, the tour follows if it's wanted.
-        .sheet(isPresented: Binding(get: { (!welcomed || library.showingTour) && !movingIn },
-                                    set: { if !$0 { welcomed = true; library.showingTour = false } })) {
+        .sheet(isPresented: Binding(get: { (!welcomed || library.tour.shows(in: windowID)) && !movingIn },
+                                    set: { if !$0 { welcomed = true; library.endTour() } })) {
             if welcomed {
-                GuidedTour { library.showingTour = false }
+                GuidedTour { library.endTour() }.id(library.tour.number)  // asked again: starts over
             } else {
-                FirstLaunch { welcomed = true; library.showingTour = false }  // sign in with Google, then the tour
+                FirstLaunch { welcomed = true; library.endTour() }  // sign in with Google, then the tour
             }
         }
+        // The tour was asked for (or this window just opened for it): the first window to offer shows it.
+        .onChange(of: library.tour.number, initial: true) {
+            if library.showingTour { library.claimTour(window: windowID) }
+        }
+        .onDisappear { library.releaseTour(window: windowID) }
         // Development builds only: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {
             if Notifier.shared.openMainWindow == nil { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
@@ -121,7 +125,7 @@ struct RootView: View {
             if UserDefaults.standard.bool(forKey: "NLOpenSettings") { openSettings() }
             if UserDefaults.standard.bool(forKey: "NLPreviewPanel") { openWindow(id: "panel-preview") }
             if UserDefaults.standard.bool(forKey: "NLPipSheet") { openWindow(id: "pip-sheet") }
-            if UserDefaults.standard.bool(forKey: "NLTour") { library.showingTour = true }  // `-NLTour YES [-NLTourPage n]`
+            if UserDefaults.standard.bool(forKey: "NLTour") { library.requestTour() }  // `-NLTour YES [-NLTourPage n]`
             // `-NLTestNudge sadViolin|sadMeow|shocked|gentle` sends that test nudge (sound, picture, on-screen Pip).
             if let mood = UserDefaults.standard.string(forKey: "NLTestNudge").flatMap(NudgeMood.init(rawValue:)) {
                 try? await Task.sleep(for: .seconds(1.5))

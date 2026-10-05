@@ -48,17 +48,21 @@ final class Library {
     var entries: [BookEntry] = []
     var path: [String] = []
     var isPicking = false
-    /// The guided tour, asked for from Help (Mac) or Settings (iPad).
-    var showingTour = false
+    /// The guided tour, asked for from Help (Mac) or Settings (iPad): whether it's up, which window shows it, and a
+    /// number that changes with every request (the tour is keyed on it, so asking again starts it over in place).
+    private(set) var tour = TourRequest()
+    var showingTour: Bool { tour.showing }
     var message: String?
 
-    /// Show the guided tour. Asking again always works, even if an earlier request never made it on screen (the flag
-    /// is lowered first, so the sheet sees it rise again).
-    func requestTour() {
-        guard showingTour else { showingTour = true; return }
-        showingTour = false
-        Task { @MainActor in self.showingTour = true }
-    }
+    /// Show the guided tour. Asking again while it's up starts it over; the flag is never lowered and raised, so a
+    /// sheet still closing can't miss a request.
+    func requestTour() { tour.request() }
+    /// The tour finished or was closed.
+    func endTour() { tour.ended() }
+    /// Mac: a window offers to show the tour; only the first one asking does.
+    func claimTour(window: String) { _ = tour.claim(window) }
+    /// Mac: a window closed; if it was showing the tour, another may take it.
+    func releaseTour(window: String) { tour.released(window) }
     /// NotebookLM's live usage (five-hour and weekly windows), refreshed every few minutes.
     var usage: NotebookLMUsage?
 
