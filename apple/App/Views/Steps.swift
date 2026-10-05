@@ -15,12 +15,18 @@ struct ListenStep: View {
     let session: BookSession
     let chapter: Chapter
 
+    private var media: MediaCenter { .shared }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            if session.progress.loop[String(chapter.n)]?[Stage.prime.rawValue] == nil, chapter.audio != nil || chapter.video != nil {
+                listened
+            }
             Text("Watch").font(Theme.display(20))
             if let video = chapter.video, let url = session.file(video) {
                 WhenDownloaded(url: url, what: "the video") {
-                    ChapterVideo(url: url, title: chapter.title, artist: session.book.title)
+                    ChapterVideo(url: url, title: chapter.title, artist: session.book.title,
+                                 source: PlaySource(folder: session.entry.folder, n: chapter.n, kind: .video))
                 }
             } else {
                 NotReady(what: "The video", status: chapter.status["video"], note: chapter.notes["video"], bookId: session.entry.id, n: chapter.n, item: "video")
@@ -28,13 +34,28 @@ struct ListenStep: View {
             Text("Listen").font(Theme.display(20))
             if let audio = chapter.audio, let url = session.file(audio) {
                 WhenDownloaded(url: url, what: "the podcast") { 
-                    PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file), title: chapter.title, artist: session.book.title)
+                    PodcastPlayer(url: url, transcript: chapter.transcript.flatMap(session.file), title: chapter.title, artist: session.book.title,
+                                  source: PlaySource(folder: session.entry.folder, n: chapter.n, kind: .audio))
                 }
             } else {
                 NotReady(what: "The podcast", status: chapter.status["audio"], note: chapter.notes["audio"], bookId: session.entry.id, n: chapter.n, item: "audio")
             }
         }
     }
+
+    /// How much of the podcast and the video has really played (skipping ahead and replays don't add to it).
+    private var listened: some View {
+        let watch = session.progress.watch[String(chapter.n)]
+        let heard = chapter.audio.flatMap(session.file).map { watch?.audio.fraction(media.duration($0)) ?? 0 }
+        let seen = chapter.video.flatMap(session.file).map { watch?.video.fraction(media.duration($0)) ?? 0 }
+        let parts = [heard.map { "Heard \(Self.percent($0)) of the podcast" }, seen.map { "watched \(Self.percent($0)) of the video" }]
+        let text = parts.compactMap { $0 }.joined(separator: " · ")
+        return StepProgressRow(fraction: max(heard ?? 0, seen ?? 0) / Listening.enough,
+                               text: text.prefix(1).uppercased() + text.dropFirst(),
+                               detail: "This step ticks itself off once you've heard or watched most of one (85%). Skipping ahead doesn't count.")
+    }
+
+    static func percent(_ fraction: Double) -> String { "\(Int((min(1, fraction) * 100).rounded(.down)))%" }
 }
 
 struct ChapterVideo: View {
@@ -43,12 +64,20 @@ struct ChapterVideo: View {
     /// What the lock screen and Control Center show: the chapter and the book.
     var title: String? = nil
     var artist: String? = nil
+    /// The chapter it belongs to: watching it (while it's on screen) counts toward Listen & watch.
+    var source: PlaySource? = nil
+    @State private var probe = ViewProbe()
 
     var body: some View {
         PlayerView(player: MediaCenter.shared.player(for: url))
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: corner))
-            .onAppear { if let title { MediaCenter.shared.setNowPlaying(url, title: title, artist: artist) } }
+            .background(VisibilityProbe(probe: probe))
+            .onAppear {
+                if let title { MediaCenter.shared.setNowPlaying(url, title: title, artist: artist) }
+                MediaCenter.shared.track(url, as: source)
+                MediaCenter.shared.shown(url, by: probe)
+            }
     }
 }
 
@@ -124,6 +153,8 @@ struct PodcastControls: View {
     var compact = false
     var title: String? = nil
     var artist: String? = nil
+    /// The chapter it belongs to: listening counts toward Listen & watch, even with the window in the background.
+    var source: PlaySource? = nil
     private var media: MediaCenter { .shared }
 
     var body: some View {
@@ -156,6 +187,7 @@ struct PodcastControls: View {
         .onAppear {
             _ = media.player(for: url)
             if let title { media.setNowPlaying(url, title: title, artist: artist) }
+            media.track(url, as: source)
         }
     }
 }
@@ -165,13 +197,14 @@ struct PodcastPlayer: View {
     let lines: [TranscriptLine]
     let title: String?
     let artist: String?
+    let source: PlaySource?
     private var media: MediaCenter { .shared }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(url: URL, transcript: URL?, title: String? = nil, artist: String? = nil) {
+    init(url: URL, transcript: URL?, title: String? = nil, artist: String? = nil, source: PlaySource? = nil) {
         self.url = url
         self.lines = TranscriptLine.load(transcript)
-        (self.title, self.artist) = (title, artist)
+        (self.title, self.artist, self.source) = (title, artist, source)
     }
 
     private var current: Double? {
@@ -182,7 +215,7 @@ struct PodcastPlayer: View {
     var body: some View {
         CardBox {
             VStack(alignment: .leading, spacing: 12) {
-                PodcastControls(url: url, title: title, artist: artist)
+                PodcastControls(url: url, title: title, artist: artist, source: source)
                 if !lines.isEmpty {
                     Divider()
                     ScrollViewReader { proxy in
@@ -247,9 +280,14 @@ struct WhenDownloaded<Content: View>: View {
 struct ReadStep: View {
     let session: BookSession
     let chapter: Chapter
+    @State private var tracker = ReadingTracker()
+    @Environment(\.chapterViewport) private var viewport
+
+    private var isDone: Bool { session.progress.loop[String(chapter.n)]?[Stage.read.rawValue] != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if !isDone, !tracker.needs.isEmpty { readSoFar }
             if !chapter.guide.isEmpty {
                 CardBox(fill: Theme.sunk) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -265,10 +303,51 @@ struct ReadStep: View {
             }
             switch chapter.read {
             case .pdf(let file):
-                if let url = session.file(file) { PDFReader(url: url).frame(minHeight: 640) }
+                if let url = session.file(file) { PDFReader(url: url, tracker: tracker).frame(minHeight: 640) }
             case .text(let text):
-                ReaderText(text: text, folder: session.entry.folder.appendingPathComponent("chapters"), guide: chapter.guide)
+                ReaderText(text: text, folder: session.entry.folder.appendingPathComponent("chapters"), guide: chapter.guide, tracker: tracker)
             }
+        }
+        .background(VisibilityProbe(probe: tracker.probe))
+        .onAppear { tracker.viewport = viewport }
+        .onChange(of: viewport) { tracker.viewport = viewport }
+        .task(id: chapter.n) { await follow() }
+    }
+
+    /// "Read 40% · 12 of 30 pages", and what's left to do.
+    private var readSoFar: some View {
+        let p = ReadingCredit.progress(session.progress.reading[String(chapter.n)], needs: tracker.needs)
+        let unit = tracker.isPDF ? (p.total == 1 ? "page" : "pages") : (p.total == 1 ? "section" : "sections")
+        let detail = p.fraction >= ReadingCredit.enough && !p.reachedLast
+            ? "Nearly there: this step ticks itself off once you reach the end."
+            : "Pages count as you read them, at your own pace. This step ticks itself off at 85% and the last page."
+        return StepProgressRow(fraction: p.fraction, text: "Read \(ListenStep.percent(p.fraction)) · \(p.counted) of \(p.total) \(unit)", detail: detail)
+    }
+
+    /// Works out what each page needs, then credits reading time once a second while someone is really reading.
+    private func follow() async {
+        switch chapter.read {
+        case .pdf(let file):
+            tracker.isPDF = true
+            if let url = session.file(file) { tracker.needs = await ReadingTracker.pdfNeeds(url) }
+        case .text(let text):
+            tracker.isPDF = false
+            let blocks = ReaderText.blocks(text)
+            tracker.needs = ReadingCredit.sections(blocks).map { section in
+                ReadingCredit.needed(words: section.reduce(0) { $0 + ReadingCredit.words(blocks[$1]) })
+            }
+        }
+        var last = Date()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            let now = Date()
+            defer { last = now }
+            guard !isDone, !tracker.needs.isEmpty else { continue }
+            let earning = ReadingCredit.earning(now: now.timeIntervalSince1970, lastInput: tracker.lastInput?.timeIntervalSince1970,
+                                                appActive: session.isActive,
+                                                windowVisible: tracker.probe.isShown() && tracker.probe.isKey)
+            session.creditReading(chapter.n, visible: tracker.visible(), seconds: now.timeIntervalSince(last),
+                                  needs: tracker.needs, earning: earning)
         }
     }
 }
@@ -291,11 +370,24 @@ struct ReaderText: View {
     let text: String
     let folder: URL
     let guide: [GuideEntry]
+    /// Follows which ~300-word sections are on screen, for the Read step's reading time.
+    var tracker: ReadingTracker? = nil
+
+    static func blocks(_ text: String) -> [String] {
+        text.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
 
     var body: some View {
-        let blocks = text.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let blocks = Self.blocks(text)
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in blockView(block) }
+            ForEach(Array(ReadingCredit.sections(blocks).enumerated()), id: \.offset) { index, section in
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(section, id: \.self) { blockView(blocks[$0]) }
+                }
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ChapterView.scrollSpace)) }) { frame in
+                    tracker?.sectionMoved(index, top: frame.minY, bottom: frame.maxY)
+                }
+            }
         }
         .frame(maxWidth: 680, alignment: .leading)
         .textSelection(.enabled)
@@ -345,14 +437,39 @@ extension ReaderText {
 #if os(macOS)
 struct PDFReader: NSViewRepresentable {
     let url: URL
-    func makeNSView(context: Context) -> PDFView { PDFReader.view(url) }
-    func updateNSView(_ view: PDFView, context: Context) {}
+    var tracker: ReadingTracker? = nil
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFReader.view(url)
+        tracker?.pdfView = view
+        return view
+    }
+    func updateNSView(_ view: PDFView, context: Context) { tracker?.pdfView = view }
 }
 #else
 struct PDFReader: UIViewRepresentable {
     let url: URL
-    func makeUIView(context: Context) -> PDFView { PDFReader.view(url) }
-    func updateUIView(_ view: PDFView, context: Context) {}
+    var tracker: ReadingTracker? = nil
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFReader.view(url)
+        tracker?.pdfView = view
+        // The iPad can't ask the system about input: scrolling the pages is the sign someone is reading.
+        DispatchQueue.main.async { [weak tracker, weak view] in
+            guard let view, let scroll = PDFReader.scrollView(in: view) else { return }
+            tracker?.scrolling = scroll.observe(\.contentOffset) { [weak tracker] _, _ in
+                DispatchQueue.main.async { tracker?.poke() }
+            }
+        }
+        return view
+    }
+    func updateUIView(_ view: PDFView, context: Context) { tracker?.pdfView = view }
+
+    static func scrollView(in view: UIView) -> UIScrollView? {
+        for sub in view.subviews {
+            if let scroll = sub as? UIScrollView { return scroll }
+            if let found = scrollView(in: sub) { return found }
+        }
+        return nil
+    }
 }
 #endif
 
@@ -385,6 +502,9 @@ struct RecallStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if session.progress.loop[String(chapter.n)]?[Stage.recall.rawValue] == nil, !chapter.recall.isEmpty || !chapter.quiz.isEmpty {
+                recallSoFar
+            }
             if !chapter.quiz.isEmpty {
                 Picker("Recall", selection: $showQuiz) {
                     Text("In your own words").tag(false)
@@ -398,6 +518,18 @@ struct RecallStep: View {
                 ownWords
             }
         }
+    }
+
+    /// What finishes the step: one checked answer in your own words, or the whole quiz.
+    private var recallSoFar: some View {
+        let total = chapter.quiz.count
+        let answered = min(session.quiz(chapter.n).i, total)
+        let text = total > 0 ? "Quiz: \(answered) of \(total) answered" : "Answer one question in your own words"
+        let detail = chapter.recall.isEmpty
+            ? "This step ticks itself off when you finish the quiz."
+            : total > 0 ? "This step ticks itself off when Pip checks an answer in your own words, or when you finish the quiz."
+            : "This step ticks itself off when Pip checks your answer."
+        return StepProgressRow(fraction: total > 0 ? Double(answered) / Double(total) : 0, text: text, detail: detail)
     }
 
     @ViewBuilder private var ownWords: some View {
@@ -468,6 +600,7 @@ extension RecallStep {
             feedback = RecallCheck.feedback(prompt.keyPoints, covered: marks)
             checkedBy = "word match"
         }
+        session.recallChecked(chapter.n, answer: answer)  // a real, checked try counts as the Recall step
     }
 }
 
@@ -505,7 +638,7 @@ struct MapStep: View {
                 case .remake:
                     if let map = chapter.mindmap {
                         RemakeView(session: session, chapter: chapter, map: map) {
-                            _ = session.complete(chapter.n, .map)  // remaking it counts as mapping the chapter
+                            session.earn(chapter.n, .map)  // remaking it counts as mapping the chapter
                             mode = .mind
                         }
                     }
@@ -534,6 +667,7 @@ struct RememberStep: View {
             NotReady(what: "Flashcards", status: chapter.status["cards"], note: chapter.notes["cards"], bookId: session.entry.id, n: chapter.n, item: "cards")
         } else if let card = due.first {
             VStack(spacing: 18) {
+                if session.progress.loop[String(chapter.n)]?[Stage.space.rawValue] == nil { seenSoFar }
                 Text("\(due.count) card\(due.count == 1 ? "" : "s") to go").font(Theme.body(13)).foregroundStyle(Theme.ink3)
                 Button { withAnimation(reduceMotion ? nil : .spring(duration: 0.4)) { flipped.toggle() } } label: {
                     Text(PlainMath.clean(flipped ? card.card.back : card.card.front))
@@ -563,6 +697,15 @@ struct RememberStep: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// "Reviewed 4 of 10 cards": every card seen once finishes the step.
+    private var seenSoFar: some View {
+        let seen = AutoSteps.cardsSeen(session.progress, chapter)
+        return StepProgressRow(fraction: Double(seen) / Double(max(1, chapter.cards.count)),
+                               text: "Reviewed \(seen) of \(chapter.cards.count) card\(chapter.cards.count == 1 ? "" : "s")",
+                               detail: "This step ticks itself off once you've seen every card once.")
+            .frame(maxWidth: 560, alignment: .leading)
     }
 }
 

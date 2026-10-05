@@ -7,11 +7,20 @@ public enum AutoSteps {
         !chapter.quiz.isEmpty && QuizProgress(p.quiz[String(chapter.n)]).i >= chapter.quiz.count
     }
 
+    /// Recall: a checked answer counts when it's a real try (at least five words, not the same one over and over).
+    public static func isRealAnswer(_ answer: String) -> Bool {
+        let words = answer.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return words.count >= 5 && Set(words).count >= 3
+    }
+
     /// Remember: every card of the chapter reviewed at least once (here or on another device).
     public static func cardsAllSeen(_ p: StudyProgress, _ chapter: Chapter) -> Bool {
-        !chapter.cards.isEmpty && chapter.cards.indices.allSatisfy { i in
-            p.cards["\(chapter.n):\(i)"].map { $0.reps >= 1 || $0.last > 0 } ?? false
-        }
+        !chapter.cards.isEmpty && cardsSeen(p, chapter) == chapter.cards.count
+    }
+
+    /// How many of the chapter's cards have been reviewed at least once.
+    public static func cardsSeen(_ p: StudyProgress, _ chapter: Chapter) -> Int {
+        chapter.cards.indices.filter { i in p.cards["\(chapter.n):\(i)"].map { $0.reps >= 1 || $0.last > 0 } ?? false }.count
     }
 }
 

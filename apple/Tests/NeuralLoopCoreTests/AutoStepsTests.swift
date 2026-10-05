@@ -24,7 +24,7 @@ private func quizChapter(_ n: Int, questions: Int) -> Chapter {
     let chapter = Chapter(n: 2, cards: [Card(front: "a", back: "b"), Card(front: "c", back: "d")])
     #expect(!AutoSteps.cardsAllSeen(p, chapter))
     p.cards["2:0"] = FSRS.grade(nil, .again, now: 5)
-    #expect(!AutoSteps.cardsAllSeen(p, chapter))
+    #expect(!AutoSteps.cardsAllSeen(p, chapter) && AutoSteps.cardsSeen(p, chapter) == 1)
     p.cards["2:1"] = CardState(last: 9)  // a review from another device, counted by its time
     #expect(AutoSteps.cardsAllSeen(p, chapter))
     p.cards["2:1"] = CardState()          // an empty entry isn't a review
@@ -42,6 +42,13 @@ private func quizChapter(_ n: Int, questions: Int) -> Chapter {
     for stage in [Stage.prime, .recall, .map] { _ = Loop.completeIfOpen(&p, twoChapters, 1, stage, now: 10) }
     do { let result = Loop.completeIfOpen(&p, twoChapters, 1, .space, now: 11); #expect(result == true) }  // this one closed the loop
     do { let result = Loop.completeIfOpen(&p, twoChapters, 9, .read, now: 12); #expect(result == nil) }    // no such chapter
+}
+
+@Test func aCheckedRecallAnswerCountsOnlyWhenItsARealTry() {
+    #expect(!AutoSteps.isRealAnswer(""))
+    #expect(!AutoSteps.isRealAnswer("idk"))
+    #expect(!AutoSteps.isRealAnswer("a s d f"))
+    #expect(AutoSteps.isRealAnswer("Caches keep recent data close to the processor."))
 }
 
 @Test func playingAndReadingNeverTouchUpdatedAt() {

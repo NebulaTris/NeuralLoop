@@ -141,7 +141,7 @@ struct PanelMedia: View {
             Label("Listen & watch · \(chapter.title)", systemImage: "headphones")
                 .font(Theme.display(13, .medium)).foregroundStyle(Theme.ink2).lineLimit(1)
             if let video = chapter.video, let url = BookFiles.url(video, in: folder) {
-                ChapterVideo(url: url, corner: 10, title: chapter.title, artist: bookTitle)
+                ChapterVideo(url: url, corner: 10, title: chapter.title, artist: bookTitle, source: PlaySource(folder: folder, n: chapter.n, kind: .video))
             } else if let status = chapter.status["video"], status == .working || status == .waiting {
                 HStack(spacing: 8) {
                     if status == .working { ProgressView().controlSize(.mini) } else { Image(systemName: "clock").foregroundStyle(Theme.ink3) }
@@ -152,7 +152,7 @@ struct PanelMedia: View {
                 .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 10))
             }
             if let audio = chapter.audio, let url = BookFiles.url(audio, in: folder) {
-                PodcastControls(url: url, compact: true, title: chapter.title, artist: bookTitle)
+                PodcastControls(url: url, compact: true, title: chapter.title, artist: bookTitle, source: PlaySource(folder: folder, n: chapter.n, kind: .audio))
             }
         }
         .padding(10)

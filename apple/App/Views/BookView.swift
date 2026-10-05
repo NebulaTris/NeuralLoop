@@ -152,7 +152,12 @@ struct ChapterView: View {
     let chapter: Chapter
     @State private var stage: Stage = .prime
     @State private var celebrate = false
+    /// A step that just ticked itself off (spec 09): Pip says so gently, for a few seconds.
+    @State private var earned: BookSession.Earned?
+    @State private var viewport: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The chapter's scroll view, for working out what's on screen.
+    static let scrollSpace = "chapterScroll"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -180,8 +185,23 @@ struct ChapterView: View {
                 .frame(maxWidth: 860, alignment: .leading)
                 finishButton.padding(.horizontal, 28).padding(.bottom, 30)
             }
+            .coordinateSpace(name: Self.scrollSpace)
+            .onGeometryChange(for: Double.self, of: { $0.size.height }) { viewport = $0 }
+            .environment(\.chapterViewport, viewport)
         }
+        .overlay(alignment: .bottom) { if let earned, !celebrate { earnedToast(earned).padding(24) } }
         .overlay { if celebrate { closedOverlay } }
+        .onChange(of: session.earned) { _, fresh in
+            guard let fresh, fresh.n == chapter.n else { return }
+            withAnimation(reduceMotion ? nil : .spring) {
+                if fresh.closed { celebrate = true } else { earned = fresh }
+            }
+        }
+        .task(id: earned?.at) {
+            guard earned != nil else { return }
+            try? await Task.sleep(for: .seconds(8))
+            if !Task.isCancelled { withAnimation(reduceMotion ? nil : .easeOut) { earned = nil } }
+        }
         .onAppear {
             // On an iPad, opening a chapter brings its podcast, video, and pages (and the next chapter's) from the Drive.
             DriveSync.shared.want(book: session.entry.id, chapter: chapter.n)
@@ -233,6 +253,31 @@ struct ChapterView: View {
         } label: { Label("I've done this step", systemImage: "checkmark") }
             .buttonStyle(.borderedProminent)
             .disabled(session.progress.loop[String(chapter.n)]?[stage.rawValue] != nil)
+    }
+
+    /// "Nicely done" for a step you finished by doing it, with the way on to the next one. No pressure to take it.
+    private func earnedToast(_ done: BookSession.Earned) -> some View {
+        let next = Loop.nextStage(session.progress, chapter.n)
+        return HStack(spacing: 14) {
+            PipView(pose: .hop, size: 64)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Nicely done!").font(Theme.display(17))
+                Text("You finished \(done.stage.label), so Pip ticked it off for you.").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+            }
+            Spacer(minLength: 8)
+            if let next, next != stage {
+                Button("On to \(next.label)") { stage = next; earned = nil }.buttonStyle(.borderedProminent)
+            }
+            Button { earned = nil } label: { Image(systemName: "xmark") }
+                .buttonStyle(.borderless).help("Close").accessibilityLabel("Close")
+        }
+        .padding(14)
+        .frame(maxWidth: 560)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.line))
+        .shadow(color: .black.opacity(0.1), radius: 18, y: 6)
+        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        .accessibilityElement(children: .contain)
     }
 
     private var closedOverlay: some View {

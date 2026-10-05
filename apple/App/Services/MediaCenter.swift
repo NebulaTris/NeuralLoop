@@ -5,7 +5,15 @@
 import AVFoundation
 import Foundation
 import MediaPlayer
+import NeuralLoopCore
 import Observation
+
+/// Which chapter's podcast or video a file is, so what plays counts toward its Listen & watch step.
+struct PlaySource: Hashable {
+    let folder: URL
+    let n: Int
+    let kind: WatchKind
+}
 
 @MainActor @Observable
 final class MediaCenter {
@@ -23,6 +31,12 @@ final class MediaCenter {
     @ObservationIgnored private var titles: [URL: (title: String, artist: String?)] = [:]
     @ObservationIgnored private var current: URL?
     @ObservationIgnored private var commandsReady = false
+    /// Which chapter each file belongs to, and where its playback was last measured from (media and wall time).
+    @ObservationIgnored private var sources: [URL: PlaySource] = [:]
+    @ObservationIgnored private var samples: [URL: (media: Double, wall: Date)] = [:]
+    /// For videos: the views showing each one, to ask whether a person can see it right now.
+    private final class WeakProbe { weak var probe: ViewProbe?; init(_ p: ViewProbe) { probe = p } }
+    @ObservationIgnored private var seen: [URL: [WeakProbe]] = [:]
     static let keepAtMost = 6
     static let skipSeconds = 15.0
 
@@ -54,7 +68,7 @@ final class MediaCenter {
         guard let player = players[url] else { return }
         player.pause()
         if let observer = observers[url] { player.removeTimeObserver(observer) }
-        (players[url], observers[url], madeFrom[url], durations[url]) = (nil, nil, nil, nil)
+        (players[url], observers[url], madeFrom[url], durations[url], samples[url]) = (nil, nil, nil, nil, nil)
         playing.remove(url)
         if current == url { publishNowPlaying() }
     }
@@ -63,13 +77,29 @@ final class MediaCenter {
     func forget(folder: URL) {
         let base = folder.standardizedFileURL.path
         let prefix = base.hasSuffix("/") ? base : base + "/"
-        let inside = Set(players.keys).union(times.keys).union(titles.keys).filter { $0.standardizedFileURL.path.hasPrefix(prefix) }
+        let inside = Set(players.keys).union(times.keys).union(titles.keys).union(sources.keys).filter { $0.standardizedFileURL.path.hasPrefix(prefix) }
         for url in inside {
             forget(url)
-            (times[url], titles[url], lastUsed[url]) = (nil, nil, nil)
+            (times[url], titles[url], lastUsed[url], sources[url], seen[url]) = (nil, nil, nil, nil, nil)
             if current == url { current = nil }
         }
         if !inside.isEmpty { publishNowPlaying() }
+    }
+
+    /// Says which chapter's podcast or video this file is, so what plays counts toward Listen & watch.
+    func track(_ url: URL, as source: PlaySource?) {
+        if let source { sources[url] = source }
+    }
+
+    /// A view showing this video: it answers whether a person can see it (window visible, app active).
+    func shown(_ url: URL, by probe: ViewProbe) {
+        seen[url] = (seen[url] ?? []).filter { $0.probe != nil && $0.probe !== probe } + [WeakProbe(probe)]
+    }
+
+    /// A video counts only while some view showing it is really visible; views that are gone are let go.
+    private func isSeen(_ url: URL) -> Bool {
+        seen[url] = seen[url]?.filter { $0.probe.map { !$0.isGone } ?? false }
+        return seen[url]?.contains { $0.probe?.isShown(fullScreenPlayer: true) == true } ?? false
     }
 
     /// The title (the chapter) and artist (the book) the lock screen and Control Center show for this file.
@@ -95,6 +125,7 @@ final class MediaCenter {
         let player = player(for: url)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
         times[url] = seconds
+        samples[url] = nil  // a jump: measuring starts again from the new place
         if play { player.play() }
         if current == url { publishNowPlaying() }
     }
@@ -113,8 +144,22 @@ final class MediaCenter {
         } else {
             playing.remove(url)
         }
+        measure(url, time: time, rate: Double(player.rate))
         if durations[url] == nil, let seconds = player.currentItem?.duration.seconds, seconds.isFinite { durations[url] = seconds }
         if wasPlaying != playing.contains(url) { publishNowPlaying() }
+    }
+
+    /// About once a second while playing, the stretch just played goes to the recorder, which keeps it only if it's
+    /// believable (no seeks, at most 2x). A video counts only while it's on screen in the active app.
+    private func measure(_ url: URL, time: Double, rate: Double) {
+        guard rate > 0, time.isFinite, let source = sources[url] else { samples[url] = nil; return }
+        let now = Date()
+        guard let sample = samples[url] else { samples[url] = (time, now); return }
+        let wall = now.timeIntervalSince(sample.wall)
+        guard wall >= 1 || time < sample.media else { return }
+        samples[url] = (time, now)
+        if source.kind == .video && !isSeen(url) { return }
+        PlayRecorder.shared.played(source, from: sample.media, to: time, rate: rate, wallSeconds: wall, length: duration(url))
     }
 
     // MARK: the system's Now Playing and remote controls

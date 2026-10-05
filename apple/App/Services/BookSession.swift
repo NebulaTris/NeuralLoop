@@ -32,6 +32,7 @@ final class BookSession {
         let loaded = ProgressFile.loadMerged(from: entry.folder)
         self.progress = loaded.merged
         self.ownLog = loaded.own.log
+        PlayRecorder.shared.attach(self)  // what plays from the menu bar or shelf now comes here
         observer = NotificationCenter.default.addObserver(forName: Self.progressArrived, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.catchUp() }
         }
@@ -68,6 +69,7 @@ final class BookSession {
     func setQuiz(_ n: Int, _ quiz: QuizProgress) {
         progress.setQuiz(String(n), quiz.json, now: now)
         save()
+        if let chapter = chapter(n), AutoSteps.quizFinished(progress, chapter) { earn(n, .recall) }  // every question answered
     }
 
     func remakeGuess(_ n: Int) -> String {
@@ -118,6 +120,8 @@ final class BookSession {
         progress.cards[id] = FSRS.grade(progress.cards[id], rating, now: now)
         progress.updatedAt = now
         save()
+        if let n = id.split(separator: ":").first.flatMap({ Int($0) }), let chapter = chapter(n),
+           AutoSteps.cardsAllSeen(progress, chapter) { earn(n, .space) }  // every card seen once
     }
 
     func remember(_ n: Int, _ stage: Stage) {
@@ -156,7 +160,97 @@ final class BookSession {
         }
     }
 
-    func stopClock() { clock?.invalidate() }
+    func stopClock() {
+        clock?.invalidate()
+        flushTracking()
+    }
+
+    // MARK: steps that complete themselves (spec 09)
+
+    /// A step the person just earned by doing it: the chapter view shows Pip's gentle "done" (or the loop-closed hug).
+    struct Earned: Equatable {
+        let n: Int
+        let stage: Stage
+        let closed: Bool
+        let at: Double
+    }
+    var earned: Earned?
+
+    /// Each chapter's podcast and video lengths, as the players report them.
+    @ObservationIgnored private var lengths: [Int: [WatchKind: Double]] = [:]
+    @ObservationIgnored private var lastTrackingSave = Date.distantPast
+    @ObservationIgnored private var trackingSave: Task<Void, Never>?
+    @ObservationIgnored private var trackingUnsaved = false
+    /// Listening and reading are written at most this often while they're being tracked.
+    static let trackingSaveEvery = 15.0
+
+    func chapter(_ n: Int) -> Chapter? { book.chapters.first { $0.n == n } }
+
+    /// Ticks a step off because the person really did it: only in an open chapter, only if it isn't done yet (never
+    /// undoing anything), through `complete` like the button.
+    func earn(_ n: Int, _ stage: Stage) {
+        guard chapter(n) != nil, Loop.isUnlocked(progress, book.chapters, n), progress.loop[String(n)]?[stage.rawValue] == nil else { return }
+        let closed = complete(n, stage)
+        earned = Earned(n: n, stage: stage, closed: closed, at: now)
+    }
+
+    /// A believable stretch of the chapter's podcast or video played (see `PlayRecorder`).
+    func recordPlay(_ n: Int, _ kind: WatchKind, from: Double, to: Double, rate: Double, wallSeconds: Double, length: Double) {
+        if length > 0 { lengths[n, default: [:]][kind] = length }
+        guard progress.recordPlay(n, kind, from: from, to: to, rate: rate, wallSeconds: wallSeconds) else { return }
+        checkListening(n)
+        saveTracking()
+    }
+
+    /// Stretches gathered while the book was closed.
+    func addWatching(_ n: Int, _ played: WatchProgress, lengths known: [WatchKind: Double]) {
+        lengths[n, default: [:]].merge(known.filter { $0.value > 0 }) { $1 }
+        progress.addWatching(n, played)
+        checkListening(n)
+        saveTracking()
+    }
+
+    private func checkListening(_ n: Int) {
+        let known = lengths[n] ?? [:]
+        if Listening.isDone(progress.watch[String(n)], audioLength: known[.audio], videoLength: known[.video]) { earn(n, .prime) }
+    }
+
+    /// One reading tick for the pages on screen (`needs`: the seconds each page of the chapter needs).
+    func creditReading(_ n: Int, visible: [Int], seconds: Double, needs: [Double], earning: Bool) {
+        guard progress.creditReading(n, visible: visible, seconds: seconds, pageCount: needs.count, earning: earning) else { return }
+        if ReadingCredit.progress(progress.reading[String(n)], needs: needs).done { earn(n, .read) }
+        saveTracking()
+    }
+
+    /// A recall answer was checked (by the recall model or word matching): a real try counts as the Recall step.
+    func recallChecked(_ n: Int, answer: String) {
+        if AutoSteps.isRealAnswer(answer) { earn(n, .recall) }
+    }
+
+    /// Writes tracked listening and reading at most every 15 seconds (they change every second); like study time,
+    /// they ride along with the next sync.
+    private func saveTracking() {
+        trackingUnsaved = true
+        let wait = Self.trackingSaveEvery - Date().timeIntervalSince(lastTrackingSave)
+        if wait <= 0 {
+            flushTracking()
+        } else if trackingSave == nil {
+            trackingSave = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                if !Task.isCancelled { self?.flushTracking() }
+            }
+        }
+    }
+
+    /// Saves now if tracked listening or reading is waiting to be written (the book closing, say).
+    func flushTracking() {
+        trackingSave?.cancel()
+        trackingSave = nil
+        guard trackingUnsaved else { return }
+        trackingUnsaved = false
+        lastTrackingSave = Date()
+        save(syncSoon: false)
+    }
 
     /// The Mac also checks the app is in front; on the iPad the view's scene phase already says so (`isActive`).
     private static var appIsActive: Bool {
