@@ -413,7 +413,8 @@ struct ResumeCard: View {
                     }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     if let audio = chapter.audio, let url = BookFiles.url(audio, in: entry.folder), FileManager.default.fileExists(atPath: url.path) {
-                        PodcastControls(url: url, compact: true, title: chapter.title, artist: entry.title).frame(maxWidth: 300)
+                        PodcastControls(url: url, compact: true, title: chapter.title, artist: entry.title,
+                                        source: PlaySource(folder: entry.folder, n: chapter.n, kind: .audio)).frame(maxWidth: 300)
                     }
                 }
                 .padding(.top, 4)

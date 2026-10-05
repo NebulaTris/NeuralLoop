@@ -71,6 +71,7 @@ public struct QuizProgress: Codable, Equatable, Sendable {
     public var i: Int = 0
     public var results: [Bool] = []
     public init() {}
+    public init(i: Int, results: [Bool]) { (self.i, self.results) = (i, results) }
 
     public init(_ value: JSONValue?) {
         guard case .object(let object)? = value else { return }
