@@ -23,8 +23,14 @@ import Testing
 
 @Test func thePipelineCommandCarriesTheChoicesButNeverKeys() {
     let args = PipelineCommand.arguments(book: "/b/Caching.epub", out: "/lib/caching", options: .init(media: "1-2", dryRun: true, retry: false))
-    #expect(args == ["/b/Caching.epub", "--out", "/lib/caching", "--no-open", "--media", "1-2", "--dry-run"])
+    #expect(args == ["/b/Caching.epub", "--out", "/lib/caching", "--no-open", "--chapters", "all", "--media", "1-2", "--dry-run"])
     #expect(!args.joined(separator: " ").contains("KEY"))
+}
+
+@Test func aRunPreparesOnlyTheChaptersJustAhead() {
+    let window = PrepWindow(textThrough: 3, mediaThrough: 2)
+    let args = PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init(window: window))
+    #expect(args == ["/b.pdf", "--out", "/lib/b", "--no-open", "--chapters", "1-3", "--media", "1-2"])
 }
 
 @Test func aNewBookIsNamedAfterItsFileNotTheAppsCopy() {
@@ -57,7 +63,7 @@ import Testing
 
 @Test func aRunCanBeToldToUseMyAIForItemsThatAreWaiting() {
     let args = PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init(media: "1", retry: true, engine: "local"))
-    #expect(args == ["/b.pdf", "--out", "/lib/b", "--no-open", "--media", "1", "--retry", "--engine", "local"])
+    #expect(args == ["/b.pdf", "--out", "/lib/b", "--no-open", "--chapters", "all", "--media", "1", "--retry", "--engine", "local"])
 }
 
 @Test func aTitleLosesInvisibleDirectionAndSpacingMarksButKeepsJoiners() {

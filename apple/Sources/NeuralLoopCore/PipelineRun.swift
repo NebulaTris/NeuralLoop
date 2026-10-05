@@ -55,13 +55,21 @@ public enum BookID {
 
 public enum PipelineCommand {
     public struct Options: Codable, Equatable, Sendable {
+        /// Chapters to prepare (`--chapters`): "all", or the just-ahead window's "1-3" (`PrepWindow`).
+        public var chapters: String
+        /// Chapters that also get a podcast and video (`--media`).
         public var media: String
         public var dryRun: Bool
         public var retry: Bool
         /// Override the engine from ai.json for this run ("local" = make waiting items with your own AI now).
         public var engine: String?
-        public init(media: String = "1-2", dryRun: Bool = false, retry: Bool = false, engine: String? = nil) {
-            (self.media, self.dryRun, self.retry, self.engine) = (media, dryRun, retry, engine)
+        public init(chapters: String = "all", media: String = "1-2", dryRun: Bool = false, retry: Bool = false, engine: String? = nil) {
+            (self.chapters, self.media, self.dryRun, self.retry, self.engine) = (chapters, media, dryRun, retry, engine)
+        }
+
+        /// A run for the chapters in `window`.
+        public init(window: PrepWindow, dryRun: Bool = false, retry: Bool = false, engine: String? = nil) {
+            self.init(chapters: window.chaptersSpec, media: window.mediaSpec, dryRun: dryRun, retry: retry, engine: engine)
         }
     }
 
@@ -70,7 +78,7 @@ public enum PipelineCommand {
     /// `title`: what the book is called, for its first run (the pipeline reads the app's copy, `source.pdf`, and names
     /// the book once, when it first splits it).
     public static func arguments(book: String, out: String, options: Options, title: String? = nil) -> [String] {
-        var args = [book, "--out", out, "--no-open", "--media", options.media]
+        var args = [book, "--out", out, "--no-open", "--chapters", options.chapters, "--media", options.media]
         if options.dryRun { args.append("--dry-run") }
         if options.retry { args.append("--retry") }
         if let engine = options.engine { args += ["--engine", engine] }
