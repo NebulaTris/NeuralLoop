@@ -3,13 +3,14 @@
     {"updated": ms, "ended": false,
      "items": [{"n": 1, "item": "audio", "by": "NotebookLM", "step": "NotebookLM is recording the podcast",
                 "started": ms, "updated": ms, "done": 3 | null, "total": 12 | null,
-                "expected": seconds | null}],
+                "fraction": 0-1 | null, "expected": seconds | null}],
      "queue": [{"n": 1, "item": "video"}, ...]}
 
 An item's own code reports its steps with `report(...)`: it finds its item through a context variable, so no
 arguments are threaded through the engines, and it works from `asyncio.to_thread` too. `expected` comes
 from how long the same maker took for the same kind of item recently (`timings`, kept in state.json), else a
-sensible default; local podcasts and videos report `done`/`total` instead. The file is written atomically, at
+sensible default; local podcasts and videos report `done`/`total` and one overall `fraction` across their
+stages instead. The file is written atomically, at
 most every half second unless the step changes, and cleared (`ended: true`) when the run ends.
 """
 
@@ -69,6 +70,7 @@ class Activity:
                 "updated": now,
                 "done": None,
                 "total": None,
+                "fraction": None,
                 "expected": self.expected(by, item),
             }
             self._write(now, force=True)
@@ -108,6 +110,7 @@ class Activity:
         total: int | None,
         by: str | None,
         restart: bool,
+        fraction: float | None = None,
     ) -> None:
         now = self._ms()
         with self._lock:
@@ -119,11 +122,19 @@ class Activity:
             if by is not None:
                 entry["by"] = by
             if restart:
-                entry.update(started=now, expected=self.expected(entry["by"], item), done=None, total=None)
+                entry.update(
+                    started=now,
+                    expected=self.expected(entry["by"], item),
+                    done=None,
+                    total=None,
+                    fraction=None,
+                )
             if step is not None:
                 entry["step"] = step
             if total is not None:
                 entry.update(done=done, total=total)
+            if fraction is not None:
+                entry["fraction"] = round(min(1.0, max(0.0, fraction)), 4)
             entry["updated"] = now
             self._write(now, force=changed)
 
@@ -159,6 +170,7 @@ def report(
     total: int | None = None,
     by: str | None = None,
     restart: bool = False,
+    fraction: float | None = None,
 ) -> None:
     """Say what the item being made is doing now (a no-op outside an item, e.g. in other commands)."""
     current = _current.get()
@@ -166,4 +178,4 @@ def report(
         return
     feed, n, item = current
     with contextlib.suppress(Exception):  # the progress feed is a nicety: it must never break making an item
-        feed._report(n, item, step, done, total, by, restart)
+        feed._report(n, item, step, done, total, by, restart, fraction)

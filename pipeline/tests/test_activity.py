@@ -73,3 +73,44 @@ def test_failed_items_dont_skew_the_estimates_and_closing_clears_the_feed(tmp_pa
     feed.close()
     data = read(tmp_path)
     assert data["items"] == [] and data["queue"] == [] and data["ended"] is True
+
+
+def test_an_item_can_report_its_overall_fraction_across_stages(tmp_path):
+    feed = Activity(tmp_path, timings={})
+
+    async def make():
+        token = feed.begin(1, "video", "Ollama")
+        activity.report("Drawing the video", done=50, total=100, fraction=0.69)
+        item = read(tmp_path)["items"][0]
+        assert item["fraction"] == 0.69 and (item["done"], item["total"]) == (50, 100)
+        activity.report("Finishing the video", fraction=1.7)  # never more than all of it
+        assert read(tmp_path)["items"][0]["fraction"] == 1.0
+        feed.end(1, "video", seconds=10, ok=True, token=token)
+
+    asyncio.run(make())
+
+
+def test_a_local_podcast_and_video_report_one_rising_fraction(options_local):
+    from neuralloop_books.engines.local import LocalEngine
+    from neuralloop_books.models.fake import FakeModel
+    from neuralloop_books.pipeline import run
+    from neuralloop_books.speech.fake import FakeSpeech
+
+    seen: list[tuple[str, float]] = []
+    original = activity.Activity._report
+
+    def spy(self, n, item, step, done, total, by, restart, fraction=None):
+        if fraction is not None and item in ("audio", "video"):
+            seen.append((item, fraction))
+        return original(self, n, item, step, done, total, by, restart, fraction)
+
+    activity.Activity._report = spy
+    try:
+        asyncio.run(run(options_local, LocalEngine.from_options(options_local, FakeModel(), FakeSpeech())))
+    finally:
+        activity.Activity._report = original
+    for kind in ("audio", "video"):
+        values = [f for k, f in seen if k == kind]
+        assert (
+            values and values == sorted(values) and values[-1] >= 0.9 and all(0 < f <= 1 for f in values)
+        ), kind

@@ -13,6 +13,8 @@ public struct PrepActivity: Equatable, Sendable {
         public var started: Double  // Unix ms
         public var done: Int?
         public var total: Int?
+        /// The item's overall progress across its stages (0…1), when the pipeline can count it (local podcasts, videos).
+        public var fraction: Double?
         public var expected: Double?  // seconds
     }
 
@@ -34,7 +36,7 @@ public struct PrepActivity: Equatable, Sendable {
             guard let n = number(e["n"]), let item = e["item"] as? String else { return nil }
             return Item(n: Int(n), item: item, by: e["by"] as? String ?? "", step: e["step"] as? String ?? "",
                         started: number(e["started"]) ?? 0, done: number(e["done"]).map(Int.init),
-                        total: number(e["total"]).map(Int.init), expected: number(e["expected"]))
+                        total: number(e["total"]).map(Int.init), fraction: number(e["fraction"]), expected: number(e["expected"]))
         }
         let queue: [(n: Int, item: String)] = (root["queue"] as? [[String: Any]] ?? []).compactMap { e in
             guard let n = number(e["n"]), let item = e["item"] as? String else { return nil }
@@ -59,11 +61,28 @@ public struct ItemProgress: Equatable, Sendable {
     public var detail: String
     /// Past the usual time: say so, kindly.
     public var slow: Bool
+    /// Timed against how long it usually takes rather than counted (NotebookLM says nothing about its progress).
+    public var estimated = false
+
+    public var percent: Int? { fraction.map { Int(($0 * 100).rounded()) } }
+
+    /// "69%", or "About 34%" when it's an estimate; nil when there's nothing to measure.
+    public var percentText: String? { percent.map { estimated ? "About \($0)%" : "\($0)%" } }
 }
 
 public enum PrepProgress {
     public static func of(_ item: PrepActivity.Item, now: Double) -> ItemProgress {
         let elapsed = max(0, (now - item.started) / 1000)
+        if let overall = item.fraction, overall > 0 {
+            // The pipeline's own measure across every stage: exact, and the best guess at the time left.
+            let fraction = min(0.99, max(0.02, overall))
+            var parts: [String] = []
+            if let total = item.total, total > 0 { parts.append("\(min(item.done ?? 0, total)) of \(total)") }
+            if overall < 1, elapsed > 0 { parts.append(left(elapsed / overall * (1 - overall)).lowercased()) }
+            let detail = parts.isEmpty ? "Almost there" : parts.joined(separator: " · ")
+            return ItemProgress(fraction: fraction, step: item.step, by: item.by,
+                                detail: detail.prefix(1).uppercased() + detail.dropFirst(), slow: false)
+        }
         if let total = item.total, total > 0 {
             let done = min(item.done ?? 0, total)
             let fraction = min(0.99, max(0.02, Double(done) / Double(total)))
@@ -82,7 +101,7 @@ public enum PrepProgress {
             let detail = slow
                 ? "Taking longer than usual. It's still going: NotebookLM can be slow when it's busy."
                 : left(expected - elapsed)
-            return ItemProgress(fraction: max(0.02, fraction), step: item.step, by: item.by, detail: detail, slow: slow)
+            return ItemProgress(fraction: max(0.02, fraction), step: item.step, by: item.by, detail: detail, slow: slow, estimated: true)
         }
         return ItemProgress(fraction: nil, step: item.step, by: item.by, detail: "Started \(minutes(elapsed)) ago", slow: false)
     }

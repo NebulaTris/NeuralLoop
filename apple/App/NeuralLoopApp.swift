@@ -108,7 +108,11 @@ struct RootView: View {
         // Never on top of the move-in sheet; once that closes, the tour follows if it's wanted.
         .sheet(isPresented: Binding(get: { (!welcomed || library.showingTour) && !movingIn },
                                     set: { if !$0 { welcomed = true; library.showingTour = false } })) {
-            GuidedTour { welcomed = true; library.showingTour = false }
+            if welcomed {
+                GuidedTour { library.showingTour = false }
+            } else {
+                FirstLaunch { welcomed = true; library.showingTour = false }  // sign in with Google, then the tour
+            }
         }
         // Development builds only: `open NeuralLoop.app --args -NLOpenSettings YES` opens Settings (for screenshots and checks).
         .task {

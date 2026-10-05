@@ -307,3 +307,108 @@ private struct CompanyScene: View {
         }
     }
 }
+
+/// The very first launch: Google sign-in first (the login opens by itself), then the tour. Help → Take the Tour
+/// shows only the tour.
+struct FirstLaunch: View {
+    let done: () -> Void
+    @State private var signingIn = true
+
+    var body: some View {
+        if signingIn {
+            SignInFirst { withAnimation(.easeInOut(duration: 0.3)) { signingIn = false } }
+        } else {
+            GuidedTour(done: done)
+        }
+    }
+}
+
+/// "Sign in with Google to get started": opens Google's login right away and moves on once it's done.
+private struct SignInFirst: View {
+    let next: () -> Void
+    #if os(macOS)
+    @Environment(AISettings.self) private var settings
+    #endif
+    @State private var drive = DriveAccount.shared
+    @State private var started = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 10)
+            PipView(pose: .hop, size: 200)
+            Text("Hi, I'm Pip! Let's sign you in").font(Theme.display(28)).foregroundStyle(Theme.ink)
+            Text(Self.why).font(Theme.body(15)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
+                .frame(maxWidth: 480).fixedSize(horizontal: false, vertical: true)
+            if busy {
+                Label("Waiting for Google… finish signing in in the window that opened.", systemImage: "hourglass")
+                    .font(Theme.body(14)).foregroundStyle(Theme.accent)
+            } else {
+                Button { Task { await signIn() } } label: { Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus") }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+            }
+            if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 480) }
+            Spacer(minLength: 10)
+            Button("Not now") { next() }.buttonStyle(.borderless).foregroundStyle(Theme.ink2).keyboardShortcut(.cancelAction)
+        }
+        .padding(30)
+        .frame(width: 680, height: 600)
+        .background(Theme.paper)
+        .tint(Theme.accent)
+        .task {
+            guard !started else { return }
+            started = true
+            if signedIn { next(); return }
+            guard canSignIn else { next(); return }  // nothing to sign in to here: straight on to the tour
+            await signIn()
+        }
+    }
+
+    private static var why: String {
+        #if os(macOS)
+        "With Google, NotebookLM makes your podcasts, videos, and quizzes, and your library follows you to your iPad. Google's sign-in opens in your browser; Pip never sees your password."
+        #else
+        "Sign in with the Google account your Mac uses, and your books, progress, and cards come over from it."
+        #endif
+    }
+
+    private func signIn() async {
+        #if os(macOS)
+        await GoogleSignIn.everything(settings)
+        #else
+        await drive.signIn()
+        #endif
+        if signedIn { next() }
+    }
+
+    private var signedIn: Bool {
+        #if os(macOS)
+        settings.account.signedIn
+        #else
+        drive.isSignedIn
+        #endif
+    }
+
+    private var busy: Bool {
+        #if os(macOS)
+        settings.signingIn || drive.signingIn
+        #else
+        drive.signingIn
+        #endif
+    }
+
+    private var canSignIn: Bool {
+        #if os(macOS)
+        true
+        #else
+        drive.isConfigured
+        #endif
+    }
+
+    private var note: String {
+        #if os(macOS)
+        settings.accountNote
+        #else
+        drive.note
+        #endif
+    }
+}

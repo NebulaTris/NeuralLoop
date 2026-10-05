@@ -43,7 +43,11 @@ struct PadRootView: View {
         .tint(Theme.accent)
         .sheet(isPresented: Binding(get: { !welcomed || library.showingTour },
                                     set: { if !$0 { welcomed = true; library.showingTour = false } })) {
-            GuidedTour { welcomed = true; library.showingTour = false }
+            if welcomed {
+                GuidedTour { library.showingTour = false }
+            } else {
+                FirstLaunch { welcomed = true; library.showingTour = false }  // sign in with Google, then the tour
+            }
         }
         .task {
             #if DEBUG

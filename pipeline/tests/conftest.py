@@ -34,3 +34,10 @@ def never_the_real_notebooklm(monkeypatch):
         raise SetupError("NotebookLM is switched off in tests")
 
     monkeypatch.setattr(cli, "_notebooklm_engine", unavailable)
+
+
+@pytest.fixture
+def options_local(epub, tmp_path):
+    from neuralloop_books.pipeline import Options
+
+    return Options(book=epub, out=tmp_path / "book", media="1", log=lambda _: None)

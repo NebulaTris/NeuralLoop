@@ -56,3 +56,24 @@ private let sample = #"""
     #expect(try feed(#"{"ended": true, "items": [], "queue": []}"#).isLive == false)
     #expect(try feed(sample).isLive)
 }
+
+@Test func everyMeasurableItemShowsAPercentageAndEstimatesSaySo() throws {
+    let a = try feed(#"""
+    {"items": [
+      {"n": 1, "item": "video", "by": "Ollama", "step": "Drawing the video", "started": 0, "done": 50, "total": 100, "fraction": 0.69},
+      {"n": 1, "item": "audio", "by": "NotebookLM", "step": "NotebookLM is recording the podcast", "started": 0, "expected": 480},
+      {"n": 2, "item": "audio", "by": "Ollama", "step": "Voicing the podcast", "started": 0, "done": 10, "total": 40},
+      {"n": 2, "item": "quiz", "by": "Ollama", "step": "Writing the quiz", "started": 0}
+    ]}
+    """#)
+    // The pipeline's overall fraction (across voicing and drawing) wins over the stage's own count.
+    let video = PrepProgress.of(try #require(a.item(1, "video")), now: 6.9 * minute)
+    #expect(video.fraction == 0.69 && video.percent == 69 && !video.estimated)
+    #expect(video.percentText == "69%" && video.detail == "50 of 100 · about 3 min left")  // 69 % in 6.9 min: ~3.1 min to go
+    let podcast = PrepProgress.of(try #require(a.item(1, "audio")), now: 3 * minute)
+    #expect(podcast.estimated && podcast.percent == 34 && podcast.percentText == "About 34%")  // NotebookLM gives no progress
+    let counted = PrepProgress.of(try #require(a.item(2, "audio")), now: minute)
+    #expect(counted.percent == 25 && counted.percentText == "25%")
+    let quiz = PrepProgress.of(try #require(a.item(2, "quiz")), now: minute)
+    #expect(quiz.percent == nil && quiz.percentText == nil)
+}

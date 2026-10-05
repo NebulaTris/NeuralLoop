@@ -234,6 +234,8 @@ class LocalEngine:
         return {"mindmap": self._mind_maps[n]}
 
     async def _audio(self, chapter):
+        # One rising fraction: the script (5 %), each line voiced (10-95 %), the mix (96-100 %).
+        activity.report(fraction=0.05)
         style = prompts.PODCAST_FORMATS.get(self.audio_format, prompts.PODCAST_FORMATS["deep-dive"])
         if self.audio_format != "brief":  # a brief is already short
             length = audio_length(self.audio_length, chapter_size(chapter, self.out_dir))
@@ -257,7 +259,8 @@ class LocalEngine:
         line_wavs: list[Path] = []
         position = 0.0
         for i, line in enumerate(script["lines"]):
-            activity.report("Voicing the podcast", done=i, total=len(script["lines"]))
+            lines = len(script["lines"])
+            activity.report("Voicing the podcast", done=i, total=lines, fraction=0.1 + 0.85 * i / lines)
             voice = self.speech.voices[0 if line["speaker"] == "A" else 1]
             pieces = []
             for j, piece in enumerate(audio.split_for_speech(line["text"])):
@@ -283,16 +286,19 @@ class LocalEngine:
             _write_json(transcript_file, transcript)
             line_wavs.append(line_wav)
             position += seconds + LINE_PAUSE
-        activity.report("Mixing the podcast", done=len(line_wavs), total=len(line_wavs))
+        activity.report("Mixing the podcast", done=len(line_wavs), total=len(line_wavs), fraction=0.96)
         wav = self._media(f"{n:02d}-podcast.wav")
         await asyncio.to_thread(audio.join_wavs, line_wavs, wav, LINE_PAUSE)
         final = await asyncio.to_thread(audio.to_m4a, wav)
         transcript["complete"] = True
         _write_json(transcript_file, transcript)
         _remove(line_wavs)
+        activity.report("Finishing the podcast", fraction=1.0)
         return {"audio": f"media/{final.name}", "transcript": f"media/{transcript_file.name}"}
 
     async def _video(self, chapter):
+        # One rising fraction: the explainer (5 %), each slide voiced (10-40 %), each frame drawn (40-98 %).
+        activity.report(fraction=0.05)
         style = prompts.EXPLAINER_FORMATS.get(self.video_format, prompts.EXPLAINER_FORMATS["explainer"])
         explainer = await self._ask(
             "video",
@@ -304,7 +310,10 @@ class LocalEngine:
         n = chapter["n"]
         narration: list[Path] = []
         for k, slide in enumerate(explainer["slides"], 1):
-            activity.report("Voicing the explainer", done=k - 1, total=len(explainer["slides"]))
+            slides = len(explainer["slides"])
+            activity.report(
+                "Voicing the explainer", done=k - 1, total=slides, fraction=0.1 + 0.3 * (k - 1) / slides
+            )
             clips = []
             for j, piece in enumerate(audio.split_for_speech(slide["narration"])):
                 clip = self._clip_path(f"{n:02d}-explainer-{k:02d}-{j}")
@@ -319,7 +328,9 @@ class LocalEngine:
             )
             _remove(clips)
         result = {"explainer": explainer}
+        activity.report("Drawing the video", fraction=0.4)
         film = await self._film(chapter, explainer["slides"], narration)
+        activity.report("Finishing the video", fraction=1.0)
         if film:
             result["video"] = film
         _remove(narration)
@@ -333,7 +344,7 @@ class LocalEngine:
 
         out = self._media(f"{chapter['n']:02d}-explainer.mp4")
         try:
-            activity.report("Drawing the video", done=0, total=1)
+            activity.report("Drawing the video", done=0, total=1, fraction=0.4)
             await asyncio.to_thread(
                 video.render,
                 out,
@@ -342,7 +353,9 @@ class LocalEngine:
                 narration,
                 video.FPS,
                 video.SIZE,
-                lambda i, total: activity.report("Drawing the video", done=i, total=total),
+                lambda i, total: activity.report(
+                    "Drawing the video", done=i, total=total, fraction=0.4 + 0.58 * i / total
+                ),
             )
         except Exception:  # no browser or encoder here: the narrated slideshow still plays in the app
             out.unlink(missing_ok=True)

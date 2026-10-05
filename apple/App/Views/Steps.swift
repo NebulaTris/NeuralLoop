@@ -650,7 +650,15 @@ private struct Loader: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let p = PrepProgress.of(item, now: context.date.timeIntervalSince1970 * 1000)
             VStack(alignment: .leading, spacing: 8) {
-                Text(what).font(Theme.display(18))
+                HStack(alignment: .firstTextBaseline) {
+                    Text(what).font(Theme.display(18))
+                    Spacer(minLength: 12)
+                    if let percent = p.percentText {
+                        Text(percent).font(Theme.display(p.estimated ? 16 : 20)).foregroundStyle(Theme.accent).monospacedDigit()
+                            .help(p.estimated ? "NotebookLM doesn't share its progress, so this is an estimate from how long it usually takes." : "")
+                    }
+                }
+                .frame(maxWidth: 420)
                 Text(p.step.isEmpty ? "Pip is making it right now" : p.step).font(Theme.body(14)).foregroundStyle(Theme.ink2)
                 Group {
                     if let fraction = p.fraction {
@@ -662,7 +670,7 @@ private struct Loader: View {
                 .tint(p.slow ? Theme.butter : Theme.accent)
                 .frame(maxWidth: 420)
                 .accessibilityLabel("\(what) progress")
-                .accessibilityValue(p.fraction.map { "\(Int($0 * 100)) percent, \(p.detail)" } ?? p.detail)
+                .accessibilityValue(p.percent.map { "\(p.estimated ? "about " : "")\($0) percent, \(p.detail)" } ?? p.detail)
                 HStack(spacing: 10) {
                     Text(p.detail).font(Theme.body(13)).foregroundStyle(p.slow ? Theme.ink2 : Theme.ink)
                     if !p.by.isEmpty {
