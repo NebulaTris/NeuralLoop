@@ -140,6 +140,49 @@ class FakeStaleSessionClient(FakeClient):
         return await super()._generate(notebook_id, source_ids, **kwargs)
 
 
+class FakeRotatedSessionClient(FakeClient):
+    """A session another process rotated: every media request is refused, and refreshing this copy doesn't
+    help; only a client opened afresh from the saved session works. `shared` counts across the copies."""
+
+    def __init__(self, shared: dict, delay: float = 0.0):
+        super().__init__(delay)
+        self.shared = shared
+        shared["opened"] = shared.get("opened", 0) + 1
+        self.dead = shared["opened"] == 1
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if self.dead and ("audio_format" in kwargs or "video_format" in kwargs):
+            error = RuntimeError("The server rejected this request (unauthenticated).")
+            error.rpc_code = 16
+            raise error
+        if "audio_format" in kwargs or "video_format" in kwargs:
+            self.shared["generated"] = self.shared.get("generated", 0) + 1
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+
+class FakeStaleWhileWaitingClient(FakeClient):
+    """The session goes stale while NotebookLM records: the first wait is refused after the podcast was asked
+    for, and the retry must wait for that same podcast instead of asking for (and paying for) another."""
+
+    def __init__(self, delay: float = 0.0):
+        super().__init__(delay)
+        self.generated: list[str] = []
+        self.waits = 0
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if "audio_format" in kwargs:
+            self.generated.append(source_ids[0])
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        self.waits += 1
+        if self.waits == 1:
+            error = RuntimeError("The server rejected this request (unauthenticated).")
+            error.rpc_code = 16
+            raise error
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
 class FakeQuotaClient(FakeClient):
     """Like FakeClient, but every media request hits NotebookLM's daily limit."""
 

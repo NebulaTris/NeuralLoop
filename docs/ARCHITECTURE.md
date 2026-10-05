@@ -98,7 +98,7 @@ Entry point `nl_book.py` → `neuralloop_books.cli.main()`. Everything else is t
 
 | Module | What it's for |
 |---|---|
-| `engines/notebooklm.py` | Adds chapters as NotebookLM sources, then `notebook.ChapterMaker` makes each item; refreshes a stale session and retries once |
+| `engines/notebooklm.py` | Adds chapters as NotebookLM sources, then `notebook.ChapterMaker` makes each item; reopens a refused session from the saved one (other NotebookLM processes rotate Google's cookie) and retries, waiting for a podcast or video it already asked for |
 | `notebook.py` | One item through notebooklm-py; recognising quota and auth errors |
 | `engines/local.py` | Your own AI writes each item (checked and retried once with the reason); Rumik voices podcasts and explainers; `video.py` films explainers |
 | `engines/auto.py` | NotebookLM first, the local engine for anything it can't do; records who made each item |

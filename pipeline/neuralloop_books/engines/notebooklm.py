@@ -1,5 +1,7 @@
 """The NotebookLM engine: chapters become sources in one notebook; NotebookLM makes every item."""
 
+import asyncio
+import contextlib
 from types import ModuleType
 
 from ..config import SOURCE_TIMEOUT
@@ -14,6 +16,9 @@ class NotebookLMEngine:
         """Pass a ready `client`, or `open_client`: a coroutine function that opens one in the run loop."""
         self.client, self.enums, self.opts, self._open_client = client, enums, opts, open_client
         self.maker: ChapterMaker | None = None
+        self._reload = asyncio.Lock()
+        self._session = 0  # bumped each time the session is reloaded
+        self._retired: list = []  # earlier sessions, closed when the run ends (an item may still use one)
 
     async def __aenter__(self):
         # notebooklm-py hands back a context manager: the client is what entering it returns.
@@ -22,6 +27,9 @@ class NotebookLMEngine:
         return self
 
     async def __aexit__(self, *exc):
+        for old in self._retired:
+            with contextlib.suppress(Exception):  # an old session failing to close must not fail the run
+                await old.__aexit__(None, None, None)
         return await self._context.__aexit__(*exc)
 
     async def prepare(self, state: BookState) -> None:
@@ -62,11 +70,31 @@ class NotebookLMEngine:
         self.maker = ChapterMaker(client, self.enums, notebook_id, opts.out, media)
 
     async def make(self, task: str, chapter: dict) -> dict:
+        session = self._session
         try:
             return await self.maker.make(task, chapter)
         except Exception as error:  # only a stale session is handled here; anything else goes to the caller
-            if not is_auth_error(error) or not hasattr(self.client, "refresh_auth"):
+            if not is_auth_error(error):
                 raise
-        # The session goes stale during long items: fetch fresh tokens and try once more with NotebookLM.
-        await self.client.refresh_auth()
+        await self._fresh_session(session)
         return await self.maker.make(task, chapter)
+
+    async def _fresh_session(self, failed: int) -> None:
+        """Google's session cookie rotates whenever another NotebookLM process (the app's usage check, a
+        second run) opens the saved session, and the rotated cookie is saved to disk; this run's copy is then
+        refused, and refreshing that copy can't help. So open the saved session again, once for every item
+        that saw it go."""
+        async with self._reload:
+            if self._session != failed:  # another item already reloaded it while this one was failing
+                return
+            if self._open_client is None:
+                if hasattr(self.client, "refresh_auth"):
+                    await self.client.refresh_auth()
+            else:
+                context = await self._open_client()
+                client = await context.__aenter__()
+                self._retired.append(self._context)
+                self._context, self.client = context, client
+                if self.maker is not None:
+                    self.maker.client = client
+            self._session += 1

@@ -130,6 +130,9 @@ final class Library {
 
     func refreshUsage(force: Bool = false) async {
         guard force || Date().timeIntervalSince(usageCheckedAt) > 300 else { return }
+        // Every NotebookLM check rotates Google's session cookie, which leaves a run's copy refused; a run
+        // reloads the saved session when that happens, but don't keep doing it to one in the middle of a podcast.
+        guard force || !entries.contains(where: \.preparing) else { return }
         usageCheckedAt = Date()
         let (_, lines) = await PipelineRunner.once(["--usage"], timeout: .seconds(60))
         if let fresh = lines.compactMap(NotebookLMUsage.parse).first { usage = fresh }

@@ -77,6 +77,7 @@ class MediaOptions:
 class ChapterMaker:
     def __init__(self, client, enums: ModuleType, notebook_id: str, out_dir: Path, media: MediaOptions):
         self.client, self.enums, self.notebook_id = client, enums, notebook_id
+        self.pending: dict[tuple[int, str], str] = {}  # podcasts and videos asked for, until downloaded
         self.out_dir, self.media = out_dir, media
 
     async def make(self, task: str, chapter: dict) -> dict:
@@ -153,44 +154,65 @@ class ChapterMaker:
         return {"mindmap": json.loads(raw.read_text(encoding="utf-8"))}
 
     async def _audio(self, chapter, sources):
-        activity.report("Asking NotebookLM for the podcast")
-        status = await self.client.artifacts.generate_audio(
-            self.notebook_id,
-            source_ids=sources,
-            language=self.media.language,
-            instructions=self.media.instructions,
-            audio_format=self.enums.AudioFormat[AUDIO_FORMATS[self.media.audio]],
-            audio_length=self.enums.AudioLength[
-                audio_length(self.media.length, chapter_size(chapter, self.out_dir)).upper()
-            ],
-        )
-        activity.report("NotebookLM is recording the podcast")
-        await self.client.artifacts.wait_for_completion(
-            self.notebook_id, status.task_id, timeout=AUDIO_TIMEOUT
-        )
-        activity.report("Downloading the podcast")
-        target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
-        saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), status.task_id)
-        # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches the audio.
-        return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
+        async def ask():
+            activity.report("Asking NotebookLM for the podcast")
+            return await self.client.artifacts.generate_audio(
+                self.notebook_id,
+                source_ids=sources,
+                language=self.media.language,
+                instructions=self.media.instructions,
+                audio_format=self.enums.AudioFormat[AUDIO_FORMATS[self.media.audio]],
+                audio_length=self.enums.AudioLength[
+                    audio_length(self.media.length, chapter_size(chapter, self.out_dir)).upper()
+                ],
+            )
+
+        async def fetch(task_id):
+            activity.report("NotebookLM is recording the podcast")
+            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=AUDIO_TIMEOUT)
+            activity.report("Downloading the podcast")
+            target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
+            saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), task_id)
+            # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches.
+            return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
+
+        return await self._once(chapter, "audio", ask, fetch)
 
     async def _video(self, chapter, sources):
-        activity.report("Asking NotebookLM for the video")
-        status = await self.client.artifacts.generate_video(
-            self.notebook_id,
-            source_ids=sources,
-            language=self.media.language,
-            instructions=self.media.instructions,
-            video_format=self.enums.VideoFormat[VIDEO_FORMATS[self.media.video]],
-            video_style=self.enums.VideoStyle[VIDEO_STYLES[self.media.style]],
-        )
-        activity.report("NotebookLM is making the video")
-        await self.client.artifacts.wait_for_completion(
-            self.notebook_id, status.task_id, timeout=VIDEO_TIMEOUT
-        )
-        activity.report("Downloading the video")
-        target = self.out_dir / "media" / f"{chapter['n']:02d}-video.mp4"
-        saved = await self.client.artifacts.download_video(self.notebook_id, str(target), status.task_id)
-        if not saved or not Path(saved).exists():
-            raise UnusableAnswer("No video was produced")
-        return {"video": f"media/{Path(saved).name}", "explainer": None}
+        async def ask():
+            activity.report("Asking NotebookLM for the video")
+            return await self.client.artifacts.generate_video(
+                self.notebook_id,
+                source_ids=sources,
+                language=self.media.language,
+                instructions=self.media.instructions,
+                video_format=self.enums.VideoFormat[VIDEO_FORMATS[self.media.video]],
+                video_style=self.enums.VideoStyle[VIDEO_STYLES[self.media.style]],
+            )
+
+        async def fetch(task_id):
+            activity.report("NotebookLM is making the video")
+            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=VIDEO_TIMEOUT)
+            activity.report("Downloading the video")
+            target = self.out_dir / "media" / f"{chapter['n']:02d}-video.mp4"
+            saved = await self.client.artifacts.download_video(self.notebook_id, str(target), task_id)
+            if not saved or not Path(saved).exists():
+                raise UnusableAnswer("No video was produced")
+            return {"video": f"media/{Path(saved).name}", "explainer": None}
+
+        return await self._once(chapter, "video", ask, fetch)
+
+    async def _once(self, chapter, kind, ask, fetch):
+        """Ask NotebookLM for a podcast or video once: if the session goes stale while it's being made, the
+        retry waits for the same one instead of asking (and spending NotebookLM's allowance) again."""
+        key = (chapter["n"], kind)
+        if key not in self.pending:
+            self.pending[key] = (await ask()).task_id
+        try:
+            result = await fetch(self.pending[key])
+        except Exception as error:  # a stale session keeps the request for the retry; anything else drops it
+            if not is_auth_error(error):
+                self.pending.pop(key, None)
+            raise
+        self.pending.pop(key, None)
+        return result

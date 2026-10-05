@@ -6,7 +6,14 @@ import pytest
 
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import ENUMS, FakeClient, FakeQuotaClient, FakeStaleSessionClient
+from neuralloop_books.fake_client import (
+    ENUMS,
+    FakeClient,
+    FakeQuotaClient,
+    FakeRotatedSessionClient,
+    FakeStaleSessionClient,
+    FakeStaleWhileWaitingClient,
+)
 from neuralloop_books.models import QuotaError, SetupError
 from neuralloop_books.models.fake import FakeModel
 from neuralloop_books.pipeline import Options, run
@@ -339,6 +346,28 @@ def test_a_stale_notebooklm_session_is_refreshed_and_the_item_made_by_notebooklm
     first = state.chapters[0]["tasks"]
     assert first["audio"]["status"] == DONE and first["video"]["status"] == DONE
     assert client.refreshes >= 1
+
+
+def test_a_session_another_process_rotated_is_reloaded_from_disk_and_notebooklm_makes_the_item(options):
+    """The app's usage check rotates Google's cookie and saves it; the run's copy is then refused and
+    refreshing that copy can't help, so the run opens the saved session again and carries on."""
+    shared: dict = {}
+
+    async def reopen():
+        return FakeRotatedSessionClient(shared)
+
+    engine = NotebookLMEngine(None, ENUMS, options, open_client=reopen)
+    state = asyncio.run(run(options, engine))
+    first = state.chapters[0]["tasks"]
+    assert first["audio"]["status"] == DONE and first["video"]["status"] == DONE
+    assert shared["opened"] == 2  # opened once, reloaded once, not once per item
+
+
+def test_a_podcast_already_asked_for_is_waited_for_not_asked_for_again(options):
+    client = FakeStaleWhileWaitingClient()
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["audio"]["status"] == DONE
+    assert client.generated.count(client.generated[0]) == 1  # NotebookLM's allowance spent once
 
 
 def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):
