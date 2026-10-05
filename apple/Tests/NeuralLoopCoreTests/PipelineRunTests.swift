@@ -59,3 +59,23 @@ import Testing
     let args = PipelineCommand.arguments(book: "/b.pdf", out: "/lib/b", options: .init(media: "1", retry: true, engine: "local"))
     #expect(args == ["/b.pdf", "--out", "/lib/b", "--no-open", "--media", "1", "--retry", "--engine", "local"])
 }
+
+@Test func aTitleLosesInvisibleDirectionAndSpacingMarksButKeepsJoiners() {
+    let file = URL(fileURLWithPath: "/lib/inbox/3f2a9c1e-7b4d-4e8a-9c0f-1a2b3c4d5e6f.pdf")
+    let sneaky = "\u{202E}Caching\u{202C} \u{2066}notes\u{2069}\u{200B}\u{2060}\u{FEFF}\u{200E}\u{200F}"
+    #expect(PipelineCommand.bookTitle(given: sneaky, file: file) == "Caching notes")
+    #expect(PipelineCommand.bookTitle(given: "\u{202A}\u{202B}\u{202D}\u{2067}\u{2068}", file: file) == "Your book")
+    // Zero-width joiners stay, so emoji and scripts that need them aren't broken.
+    #expect(PipelineCommand.bookTitle(given: "Family 👩\u{200D}👧 notes", file: file) == "Family 👩\u{200D}👧 notes")
+    #expect(PipelineCommand.bookTitle(given: "क्\u{200C}ष", file: file) == "क्\u{200C}ष")
+    // A file's name is cleaned the same way.
+    #expect(PipelineCommand.title(forFile: URL(fileURLWithPath: "/x/\u{202E}fdp.pdf")) == "fdp")
+}
+
+@Test func aSavedTitleFallsBackToTheOriginalFileNeverTheFolder() {
+    #expect(PipelineCommand.savedTitle(title: "Node.js guide", originalPath: nil) == "Node.js guide")
+    #expect(PipelineCommand.savedTitle(title: "  ", originalPath: "/Users/me/node.js_guide.pdf") == "node.js guide")
+    #expect(PipelineCommand.savedTitle(title: nil, originalPath: "/Users/me/Agents_guide.pdf") == "Agents guide")
+    #expect(PipelineCommand.savedTitle(title: "\u{200B}", originalPath: nil) == nil)  // nothing to go on: the run keeps the book's own name
+    #expect(PipelineCommand.savedTitle(title: nil, originalPath: nil) == nil)
+}
