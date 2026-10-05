@@ -75,6 +75,9 @@ final class Library {
     @ObservationIgnored private var stopping: Set<String> = []
     /// Books whose source file is still being copied in (they show as getting started).
     @ObservationIgnored private var adding: Set<String> = []
+    /// The chapters each run in progress was asked to prepare, so a run that ends after the reader moved on is
+    /// followed by another one right away (`PrepWindow.startAgain`).
+    @ObservationIgnored private var ranWith: [String: PrepWindow] = [:]
     #endif
     /// Books on their way out (waiting for a run to stop before the folder goes): off the shelf, never resumed.
     @ObservationIgnored private var removing: Set<String> = []
@@ -104,6 +107,11 @@ final class Library {
         started = true
         Notifier.shared.start()
         Notifier.shared.openBook = { [weak self] id in if !id.isEmpty { self?.path = [id] } }
+        // Finishing a step can move the chapters Pip prepares just ahead of you.
+        NotificationCenter.default.addObserver(forName: Self.studyMovedNote, object: nil, queue: .main) { [weak self] note in
+            guard let id = note.object as? String else { return }
+            MainActor.assumeIsolated { self?.studyMoved(id) }
+        }
         // A visit counts from when you leave too, so time away is measured from then.
         for visit in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(forName: visit, object: nil, queue: .main) { _ in
@@ -166,8 +174,13 @@ final class Library {
     func reload() { Task { await refresh() } }
 
     /// Reads every book folder off the main thread (reusing what hasn't changed on disk), then updates the shelf.
+    /// When a look is already going, it looks once more and this returns after that, so callers see what's on disk now.
     func refresh() async {
-        if refreshing { refreshAgain = true; return }
+        if refreshing {
+            refreshAgain = true
+            while refreshing { try? await Task.sleep(for: .milliseconds(50)) }
+            return
+        }
         refreshing = true
         defer { refreshing = false }
         repeat {
@@ -479,19 +492,50 @@ final class Library {
 
     #if os(macOS)
 
-    /// "You never press generate": carry on with any book that still has work, unless its last run needs something
-    /// from the person first (setup, a readable book) or keeps failing (then it backs off).
+    /// "You never press generate": carry on with any book that still has work in the chapters just ahead of the
+    /// reader, unless its last run needs something from the person first (setup, a readable book) or keeps failing
+    /// (then it backs off).
     func resumeUnfinished() {
+        for id in scanned.keys { resume(id) }
+    }
+
+    /// One book's turn of `resumeUnfinished`.
+    private func resume(_ id: String) {
         let now = Date().timeIntervalSince1970 * 1000
-        for item in scanned.values where runs[item.id] == nil && item.elsewhere == nil && !adding.contains(item.id) {
-            guard let book = item.book,
-                  AutoResume.hasWork(book, usage: usage, logModified: item.logModified, now: now),
-                  AutoResume.mayStart(after: records[item.id], settingsChangedAt: AISettings.changedAt, now: now),
-                  var path = item.sourcePath, FileManager.default.fileExists(atPath: path)
-            else { continue }
-            path = Self.keepCopy(of: path, in: item.folder) ?? path
-            let retry = book.chapters.contains { $0.status.values.contains(.waiting) }
-            prepare(id: item.id, book: URL(fileURLWithPath: path), options: .init(media: item.media, dryRun: item.dryRun, retry: retry))
+        guard let item = scanned[id], runs[id] == nil, item.elsewhere == nil, !adding.contains(id), !removing.contains(id),
+              let book = item.book else { return }
+        let window = Self.window(item)
+        guard AutoResume.hasWork(book, window: window, usage: usage, logModified: item.logModified, now: now),
+              AutoResume.mayStart(after: records[id], settingsChangedAt: AISettings.changedAt, now: now),
+              var path = item.sourcePath, FileManager.default.fileExists(atPath: path)
+        else { return }
+        path = Self.keepCopy(of: path, in: item.folder) ?? path
+        let retry = book.chapters.contains { $0.status.values.contains(.waiting) }
+        prepare(id: id, book: URL(fileURLWithPath: path), window: window, options: .init(window: window, dryRun: item.dryRun, retry: retry))
+    }
+
+    /// Settings → Your AI: "Prepare whole books right away" (off: each chapter is prepared just before you reach it).
+    static var prepareEverything: Bool {
+        get { UserDefaults.standard.bool(forKey: "prepareEverything") }
+        set { UserDefaults.standard.set(newValue, forKey: "prepareEverything") }
+    }
+
+    /// The chapters to prepare now for a book, from where its reader is (`PrepWindow`).
+    private static func window(_ item: Scanned) -> PrepWindow {
+        PrepWindow.make(book: item.book, progress: item.progress,
+                        everything: PrepWindow.wantsEverything(setting: prepareEverything, media: item.media))
+    }
+
+    /// The whole-books switch changed: books that now have work start (a run going finishes, then the next one
+    /// picks up the wider window).
+    func preparationChanged() { resumeUnfinished() }
+
+    /// A study step was finished in a book (`BookSession.complete`): if that moved the window and there's work in it,
+    /// start a run now. A run already going is followed by another when it ends (`finished`).
+    func studyMoved(_ id: String) {
+        Task {
+            await refresh()  // the progress just saved
+            resume(id)
         }
     }
 
@@ -557,7 +601,8 @@ final class Library {
         let meta: [String: Any] = ["path": copy.path, "originalPath": original.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "title": title, "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
-        prepare(id: id, book: copy, options: .init(media: "1-2", dryRun: practice), title: title)
+        let window = PrepWindow.make(book: nil, progress: StudyProgress(), everything: Self.prepareEverything)
+        prepare(id: id, book: copy, window: window, options: .init(window: window, dryRun: practice), title: title)
         reload()
     }
 
@@ -570,14 +615,16 @@ final class Library {
             options["media"] = "all"
             meta["options"] = options
         }
-        prepare(id: id, book: URL(fileURLWithPath: path), options: .init(media: "all", retry: true))
+        prepare(id: id, book: URL(fileURLWithPath: path), window: .everything, options: .init(window: .everything, retry: true))
         reload()
     }
 
     /// Make a book's waiting items right now with your own AI instead of waiting for NotebookLM.
     func makeWithMyAI(_ id: String) {
         guard startable(id), let path = sourcePath(id) else { return }
-        prepare(id: id, book: URL(fileURLWithPath: path), options: .init(media: scanned[id]?.media ?? "1-2", retry: true, engine: "local"))
+        let window = scanned[id].map(Self.window) ?? PrepWindow.make(book: nil, progress: StudyProgress(), everything: false)
+        prepare(id: id, book: URL(fileURLWithPath: path), window: window,
+                options: .init(window: window, dryRun: scanned[id]?.dryRun ?? false, retry: true, engine: "local"))
         reload()
     }
 
@@ -600,11 +647,12 @@ final class Library {
         return PipelineCommand.savedTitle(title: meta?["title"] as? String, originalPath: meta?["originalPath"] as? String)
     }
 
-    private func prepare(id: String, book: URL, options: PipelineCommand.Options, title: String? = nil) {
+    private func prepare(id: String, book: URL, window: PrepWindow, options: PipelineCommand.Options, title: String? = nil) {
         let out = Self.root.appendingPathComponent(id, isDirectory: true)
         let title = title ?? Self.savedTitle(out)
         let runner = PipelineRunner()
         runs[id] = runner
+        ranWith[id] = window
         do {
             try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options, title: title),
                              log: out.appendingPathComponent("pipeline.log")) { [weak self] line in
@@ -614,6 +662,7 @@ final class Library {
             }
         } catch {
             runs[id] = nil
+            ranWith[id] = nil
             message = "Pip couldn't start preparing: \(error.localizedDescription)"
         }
     }
@@ -626,6 +675,7 @@ final class Library {
     }
 
     private func finished(_ id: String, code: Int32, tail: [String]) {
+        let window = ranWith.removeValue(forKey: id)
         if stopping.remove(id) != nil {  // stopped on purpose (removed): not a failure
             runs[id] = nil
             reload()
@@ -637,11 +687,28 @@ final class Library {
             records[id] = RunRecord.after(records[id], code: code, now: Date().timeIntervalSince1970 * 1000)
             Self.saveRecords(records)
         }
-        reload()
+        Task {
+            await refresh()
+            // The reader moved on while this run was going: prepare the wider window now, not in a few minutes.
+            guard let window, let item = scanned[id], let book = item.book else { return }
+            let now = Self.window(item)
+            if PrepWindow.startAgain(ranWith: window, now: now, code: code, hasWork: now.hasWork(book)) { resume(id) }
+        }
         let outcome = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
         message = code == 0 ? nil : outcome  // success is announced by a notification, not an alert
     }
 
+    #endif
+
+    /// Posted by `studyMoved(in:)`; the Mac's library listens (the iPad never prepares books).
+    nonisolated static let studyMovedNote = Notification.Name("NeuralLoopStudyMoved")
+
+    /// A study step was finished in book `id`: the chapters prepared just ahead may move.
+    static func studyMoved(in id: String) {
+        NotificationCenter.default.post(name: studyMovedNote, object: id)
+    }
+
+    #if os(macOS)
     // MARK: run records (how each book's last run ended, so automatic runs know when to wait)
 
     private static let recordsFile = root.deletingLastPathComponent().appendingPathComponent("runs.json")

@@ -98,6 +98,12 @@ private func progress(closed: Int = 0, readNext: Bool = false) -> StudyProgress 
     #expect(!PrepWindow.startAgain(ranWith: narrow, now: wider, code: 1, hasWork: true))  // failures keep their back-off
 }
 
+@Test func aChapterStillAheadIsOneWithItemsNotPreparedYet() throws {
+    let b = try book(3, "done", ["2:audio": "skipped", "3:study": "skipped"])
+    #expect(!PrepWindow.isAhead(b.chapters[0]))
+    #expect(PrepWindow.isAhead(b.chapters[1]) && PrepWindow.isAhead(b.chapters[2]))
+}
+
 @Test func notYetIsNeitherAnErrorNorNotChosen() {
     let words = PrepWindow.notYet("The podcast")
     #expect(words == "The podcast: Pip will prepare this when you get close.")

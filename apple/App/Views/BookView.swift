@@ -141,6 +141,7 @@ struct BookContent: View {
 
     private func caption(_ chapter: Chapter, unlocked: Bool) -> String {
         if !unlocked { return "Opens when the chapter before is done" }
+        if chapter.status["study"] == .skipped { return "Pip will prepare it when you get close" }
         if chapter.status["study"] != .done { return chapter.status["study"] == .working ? "Pip is preparing it…" : "Waiting its turn" }
         if let next = Loop.nextStage(session.progress, chapter.n) { return "Next: \(next.label)" }
         return "Loop closed"
@@ -260,6 +261,10 @@ struct LockedChapter: View {
             Text("“\(chapter.title)” is waiting for you").font(Theme.display(22))
             Text("It opens when you finish the loop for “\(previous?.title ?? "the chapter before")”. One chapter at a time is how it sticks.")
                 .font(Theme.body(15)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 440)
+            if PrepWindow.isAhead(chapter) {
+                Text("Pip will prepare it when you get close, so your allowance goes to the chapters you're about to study.")
+                    .font(Theme.body(13)).foregroundStyle(Theme.ink3).multilineTextAlignment(.center).frame(maxWidth: 440)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -132,7 +132,10 @@ struct AccountPage: View {
 
 struct AIPage: View {
     @Environment(AISettings.self) private var settings
+    @Environment(Library.self) private var library
     @State private var showItems = false
+    /// Off: each chapter is prepared just before the reader reaches it (spec 08). Read by `Library.prepareEverything`.
+    @AppStorage("prepareEverything") private var prepareEverything = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -145,6 +148,12 @@ struct AIPage: View {
                     }
                 }
             }
+        }
+
+        SettingsCard(title: "When Pip prepares",
+                     note: "Off: Pip prepares each chapter just before you reach it (the next one's podcast and video start when you finish reading). On: everything at once, handy before a trip.") {
+            Toggle("Prepare whole books right away", isOn: $prepareEverything).toggleStyle(.switch)
+                .onChange(of: prepareEverything) { library.preparationChanged() }
         }
 
         ModelPicker(title: "Your AI", note: "Writes reading guides, quizzes, flashcards, maps, podcast scripts, and explainers.",

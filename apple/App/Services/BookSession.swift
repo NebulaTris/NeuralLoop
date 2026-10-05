@@ -111,6 +111,7 @@ final class BookSession {
     func complete(_ n: Int, _ stage: Stage) -> Bool {
         let closed = Loop.complete(&progress, n, stage, now: now)
         save()
+        Library.studyMoved(in: entry.id)  // the chapters Pip prepares just ahead may move (spec 08)
         return closed
     }
 

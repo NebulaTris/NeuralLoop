@@ -69,6 +69,9 @@ public struct PrepWindow: Equatable, Sendable {
         code == 0 && hasWork && ranWith != now
     }
 
+    /// A chapter with items Pip hasn't prepared yet because the reader isn't close to it (they're `skipped`).
+    public static func isAhead(_ chapter: Chapter) -> Bool { chapter.status.values.contains(.skipped) }
+
     /// What to say about an item that isn't made yet because its chapter is still ahead (status `skipped`): not an
     /// error, and not something the person left out.
     public static func notYet(_ what: String) -> String { "\(what): Pip will prepare this when you get close." }
