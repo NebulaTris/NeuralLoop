@@ -755,7 +755,7 @@ struct NotReady: View {
     private var title: String {
         switch status {
         case .working: "\(what): Pip is making it right now."
-        case .skipped: "\(what) wasn't chosen for this chapter. Use Prepare more\(Self.onMac) to add it."
+        case .skipped: PrepWindow.notYet(what)
         case .failed: "\(what) needs another try."
         case .waiting: "\(what) is waiting for NotebookLM."
         default: "\(what) is on Pip's list."
