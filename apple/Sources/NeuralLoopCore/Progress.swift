@@ -51,10 +51,16 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     /// "quiz.3", "recall.3", "remake.2", "mapPos.<id>", "last". Merging keeps the newest of each, so a device saving an
     /// older view never rolls back newer work. Files from before stamps count as 0 (then the newer file wins).
     public var stamps: [String: Double] = [:]
+    /// What of each chapter's podcast and video has really played (spec 09): chapter -> played stretches.
+    public var watch: [String: WatchProgress] = [:]
+    /// Reading time each chapter's pages earned (spec 09): chapter -> pages, page count, furthest page.
+    public var reading: [String: ReadingRecord] = [:]
 
     public init() {}
 
-    enum CodingKeys: String, CodingKey { case cards, loop, quiz, recall, remake, mapPos, mapSeen, last, log, updatedAt, stamps }
+    enum CodingKeys: String, CodingKey {
+        case cards, loop, quiz, recall, remake, mapPos, mapSeen, last, log, updatedAt, stamps, watch, reading
+    }
 
     /// Lenient: one odd card, day, or field (from an older or newer app, or a half-finished edit) is skipped rather
     /// than losing everything else.
@@ -73,6 +79,28 @@ public struct StudyProgress: Codable, Equatable, Sendable {
         log = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .log)) ?? nil)?.compactMapValues(\.value) ?? [:]
         updatedAt = ((try? c.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil) ?? 0
         stamps = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .stamps)) ?? nil)?.compactMapValues(\.value) ?? [:]
+        watch = ((try? c.decodeIfPresent([String: Lossy<WatchProgress>].self, forKey: .watch)) ?? nil)?
+            .compactMapValues(\.value).filter { Int($0.key) != nil } ?? [:]
+        reading = ((try? c.decodeIfPresent([String: Lossy<ReadingRecord>].self, forKey: .reading)) ?? nil)?
+            .compactMapValues(\.value).filter { Int($0.key) != nil } ?? [:]
+    }
+
+    /// Watching and reading are left out while empty, so files from before them stay byte for byte the same.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(cards, forKey: .cards)
+        try c.encode(loop, forKey: .loop)
+        try c.encode(quiz, forKey: .quiz)
+        try c.encode(recall, forKey: .recall)
+        try c.encode(remake, forKey: .remake)
+        try c.encode(mapPos, forKey: .mapPos)
+        try c.encode(mapSeen, forKey: .mapSeen)
+        try c.encodeIfPresent(last, forKey: .last)
+        try c.encode(log, forKey: .log)
+        try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encode(stamps, forKey: .stamps)
+        if !watch.isEmpty { try c.encode(watch, forKey: .watch) }
+        if !reading.isEmpty { try c.encode(reading, forKey: .reading) }
     }
 
     // Changes that carry their own time (use these rather than setting the fields, so merging knows what's newest).
@@ -89,6 +117,7 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     }
 
     /// Merge every device's progress. Cards: the latest review wins. Loop steps: done anywhere is done (earliest time).
+    /// Watching: the union of what played anywhere. Reading: the most seconds for each page, the furthest page.
     /// Study log: seconds add up across devices (each device's own file holds only its own study time). Each quiz,
     /// recall, remake, map position, and where you left off: the newest stamp wins (a tie, as with files from before
     /// stamps, goes to the most recently updated device).
@@ -106,6 +135,8 @@ public struct StudyProgress: Codable, Equatable, Sendable {
                 out.loop[chapter, default: [:]].merge(steps) { min($0, $1) }
             }
             for (day, seconds) in device.log { out.log[day, default: 0] += seconds }
+            out.watch.merge(device.watch) { $0.union($1) }
+            out.reading.merge(device.reading) { $0.merged($1) }
             newest(\.quiz, "quiz", from: device)
             newest(\.recall, "recall", from: device)
             newest(\.remake, "remake", from: device)
