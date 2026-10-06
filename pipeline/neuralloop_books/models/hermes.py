@@ -19,8 +19,8 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _QUOTA_HINTS = ("rate limit", "ratelimit", "quota", "429", "insufficient", "credit")
 TOOLS_ON = (
     "Hermes Agent can't be used safely yet: it lets the model run tools, and a book's text could steer them. "
-    "Choose another AI in Settings. If you trust every book you add, you can allow it anyway with "
-    '"hermesTools": true in ai.json.'
+    "Choose another AI in Settings. If you trust every book you add, you can allow it anyway: "
+    'turn on "Let Hermes use its tools" in Settings.'
 )
 
 

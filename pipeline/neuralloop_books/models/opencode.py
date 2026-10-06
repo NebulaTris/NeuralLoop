@@ -23,6 +23,10 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _QUOTA_HINTS = ("rate limit", "ratelimit", "quota", "429", "insufficient", "credit")
 NO_TOOLS = json.dumps({"permission": {"*": "deny"}})
 _standalone: dict[str, bool] = {}  # executable -> whether its `run` has --standalone
+FREE_TIER = (
+    "opencode's free models only work inside opencode itself. Type a model you've connected in opencode in "
+    "Settings (for example deepseek/deepseek-v4-pro), or choose another AI."
+)
 UPDATE = (
     "Update opencode to use it safely: this version can't run on a private server, so NeuralLoop can't "
     "switch its tools off. Run: opencode upgrade"
@@ -85,6 +89,8 @@ class OpencodeModel:
             stdout, stderr = await communicate(process, TIMEOUT)
         if process.returncode != 0:
             detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
+            if "free tier can only be used from within opencode" in detail.lower():
+                raise SetupError(FREE_TIER)
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):
                 raise QuotaError(detail[:200])
             raise RuntimeError(f"opencode failed: {detail[:200]}")

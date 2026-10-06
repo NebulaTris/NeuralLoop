@@ -26,7 +26,7 @@ def test_a_missing_key_is_a_setup_error(provider, variable):
 
 
 def test_models_get_defaults_and_overrides():
-    assert models.make_model("anthropic", None, env={"ANTHROPIC_API_KEY": "k"}).model == "claude-opus-5"
+    assert models.make_model("anthropic", None, env={"ANTHROPIC_API_KEY": "k"}).model == "claude-opus-5-5"
     assert models.make_model("openai", "my-model", env={"OPENAI_API_KEY": "k"}).model == "my-model"
     router = models.make_model("openrouter", None, env={"OPENROUTER_API_KEY": "k"})
     assert router.base_url == "https://openrouter.ai/api/v1"
@@ -322,7 +322,7 @@ def test_openrouter_checks_by_asking_not_by_looking_up_the_model(monkeypatch):
 def test_openai_compatible_requests_never_hang_for_long():
     from neuralloop_books.models.openai_compat import REQUEST_TIMEOUT, OpenAICompatModel
 
-    model = OpenAICompatModel("custom", "m", api_key="none", base_url="http://localhost:1234/v1")
+    model = OpenAICompatModel("custom", "m", api_key="none", base_url="https://api.example.ai/v1")
     assert model.client.timeout == REQUEST_TIMEOUT <= 300 and model.client.max_retries <= 1
 
 
@@ -585,3 +585,18 @@ def test_an_openai_compatible_timeout_fails_one_item_not_the_run():
         with pytest.raises(RuntimeError) as caught:
             asyncio.run(model.complete("quiz", "S", "C", "P"))
         assert not isinstance(caught.value, SetupError)
+
+
+def test_only_claude_models_that_can_think_adaptively_are_asked_to():
+    from neuralloop_books.models.anthropic import adaptive_thinking
+
+    for model in (
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-sonnet-4-6",
+        "claude-opus-4-8",
+        "claude-next",
+    ):
+        assert adaptive_thinking(model), model
+    for model in ("claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-sonnet-4-20250514"):
+        assert not adaptive_thinking(model), model

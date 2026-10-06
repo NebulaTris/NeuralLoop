@@ -71,7 +71,7 @@ PROVIDER_KEYS = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 DEFAULT_MODELS = {
-    "anthropic": "claude-opus-5",
+    "anthropic": "claude-opus-5-5",
     "openai": "gpt-6-sol",
     "openrouter": "deepseek/deepseek-v4.1-flash",
     # opencode and hermes: whatever the person set up in them; custom: you name it
