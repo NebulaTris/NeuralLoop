@@ -23,6 +23,21 @@ import Testing
     #expect(lm.choice(model: "qwen2.5-7b-instruct") == ModelChoice(provider: "custom", model: "qwen2.5-7b-instruct", baseUrl: "http://localhost:1234/v1"))
     #expect(ProviderPreset.matching(ModelChoice(provider: "custom", baseUrl: "http://localhost:1234/v1"))?.id == "lmstudio")
     #expect(ProviderPreset.matching(ModelChoice(provider: "custom", baseUrl: "https://api.together.xyz/v1"))?.id == "custom")
+    // The pipeline adds /v1 and a scheme when they're missing, so these are all LM Studio too.
+    for address in ["http://127.0.0.1:1234/v1", "http://localhost:1234", "http://localhost:1234/v1/", "localhost:1234"] {
+        #expect(ProviderPreset.matching(ModelChoice(provider: "custom", baseUrl: address))?.id == "lmstudio", "\(address)")
+    }
+    #expect(ProviderPreset.matching(ModelChoice(provider: "custom", baseUrl: "http://localhost:8000/v1"))?.id == "custom")
+    // Left empty, the pipeline uses the model loaded in LM Studio.
+    #expect(lm.choice(model: nil).model == nil)
+}
+
+@Test func defaultModelsMatchThePipeline() {
+    // pipeline/neuralloop_books/config.py DEFAULT_MODELS
+    #expect(ProviderPreset.named("anthropic")?.defaultModel == "claude-opus-5-5")
+    #expect(ProviderPreset.named("openai")?.defaultModel == "gpt-6-sol")
+    #expect(ProviderPreset.named("openrouter")?.defaultModel == "deepseek/deepseek-v4.1-flash")
+    #expect(ProviderPreset.named("anthropic")?.suggestions.first == "claude-opus-5-5")
 }
 
 @Test func eachProviderSaysWhichKeyItNeeds() {
