@@ -55,28 +55,40 @@ final class PlayRecorder {
     }
 
     /// Writes what was gathered into each closed book's progress.json (this device's own file), and ticks
-    /// Listen & watch off where it's earned.
+    /// Listen & watch off where it's earned. The reading and writing (book.json can be large) happen off the main
+    /// thread, one write after another.
     func flush() {
         let gathered = pending
         pending = [:]
+        var writes: [(folder: URL, chapters: [Int: WatchProgress], lengths: [Int: [WatchKind: Double]])] = []
         for (folder, chapters) in gathered {
             if let session = session(for: folder) {  // it opened meanwhile
                 for (n, played) in chapters { session.addWatching(n, played, lengths: lengths[folder]?[n] ?? [:]) }
                 continue
             }
-            let loaded = ProgressFile.loadMerged(from: folder)  // other devices' steps count toward what's open
-            var progress = loaded.merged
-            var chaptersOfBook: [Chapter]?  // read only when a step is earned (book.json can be large)
-            for (n, played) in chapters {
-                progress.addWatching(n, played)
-                let known = lengths[folder]?[n] ?? [:]
-                guard progress.loop[String(n)]?[Stage.prime.rawValue] == nil,
-                      Listening.isDone(progress.watch[String(n)], audioLength: known[.audio], videoLength: known[.video]) else { continue }
-                if chaptersOfBook == nil { chaptersOfBook = Library.loadBook(folder)?.chapters ?? [] }
-                _ = Loop.completeIfOpen(&progress, chaptersOfBook ?? [], n, .prime, now: Date().timeIntervalSince1970 * 1000)
-            }
-            ProgressFile.save(progress, ownLog: loaded.own.log, to: folder)
+            writes.append((folder, chapters, lengths[folder] ?? [:]))
         }
-        if !gathered.isEmpty { DriveSync.shared.soon() }
+        guard !writes.isEmpty else { return }
+        Self.writer.async {
+            for write in writes { Self.write(write.chapters, lengths: write.lengths, to: write.folder) }
+            DispatchQueue.main.async { DriveSync.shared.soon() }
+        }
+    }
+
+    private static let writer = DispatchQueue(label: "app.neuralloop.play-recorder")
+
+    nonisolated private static func write(_ chapters: [Int: WatchProgress], lengths: [Int: [WatchKind: Double]], to folder: URL) {
+        let loaded = ProgressFile.loadMerged(from: folder)  // other devices' steps count toward what's open
+        var progress = loaded.merged
+        var chaptersOfBook: [Chapter]?  // read only when a step is earned (book.json can be large)
+        for (n, played) in chapters {
+            progress.addWatching(n, played)
+            let known = lengths[n] ?? [:]
+            guard progress.loop[String(n)]?[Stage.prime.rawValue] == nil,
+                  Listening.isDone(progress.watch[String(n)], audioLength: known[.audio], videoLength: known[.video]) else { continue }
+            if chaptersOfBook == nil { chaptersOfBook = Library.loadBook(folder)?.chapters ?? [] }
+            _ = Loop.completeIfOpen(&progress, chaptersOfBook ?? [], n, .prime, now: Date().timeIntervalSince1970 * 1000)
+        }
+        ProgressFile.save(progress, ownLog: loaded.own.log, to: folder)
     }
 }

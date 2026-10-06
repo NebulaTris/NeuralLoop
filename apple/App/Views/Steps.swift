@@ -130,20 +130,26 @@ struct PlayerView: UIViewControllerRepresentable {
 }
 #endif
 
-struct TranscriptLine: Decodable, Identifiable {
+struct TranscriptLine: Decodable, Identifiable, Sendable {
     let speaker: String
     let voice: String
     let text: String
     let start: Double
     var id: Double { start }
 
-    /// Lines from the transcript file next to a podcast our own voices made. NotebookLM's podcasts have none.
-    static func load(_ url: URL?) -> [TranscriptLine] {
+    /// Lines from the transcript file next to a podcast our own voices made (NotebookLM's podcasts have none), and
+    /// whether every line is voiced yet (the pipeline rewrites the file after each one).
+    static func load(_ url: URL?) -> (lines: [TranscriptLine], complete: Bool) {
         guard let url, let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let raw = object["lines"], let linesData = try? JSONSerialization.data(withJSONObject: raw)
-        else { return [] }
-        return (try? JSONDecoder().decode([TranscriptLine].self, from: linesData)) ?? []
+        else { return ([], true) }
+        let complete = object["complete"] as? Bool ?? true
+        return ((try? JSONDecoder().decode([TranscriptLine].self, from: linesData)) ?? [], complete)
+    }
+
+    static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 }
 
@@ -194,17 +200,38 @@ struct PodcastControls: View {
 
 struct PodcastPlayer: View {
     let url: URL
-    let lines: [TranscriptLine]
+    let transcript: URL?
     let title: String?
     let artist: String?
     let source: PlaySource?
+    /// Read off the main thread once (not on every redraw while it plays), and again only while the podcast is
+    /// still being voiced and the file changed.
+    @State private var lines: [TranscriptLine] = []
     private var media: MediaCenter { .shared }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(url: URL, transcript: URL?, title: String? = nil, artist: String? = nil, source: PlaySource? = nil) {
         self.url = url
-        self.lines = TranscriptLine.load(transcript)
+        self.transcript = transcript
         (self.title, self.artist, self.source) = (title, artist, source)
+    }
+
+    private func followTranscript() async {
+        guard let transcript else { lines = []; return }
+        var seen: Date?
+        var first = true
+        while !Task.isCancelled {
+            let modified = await Task.detached { TranscriptLine.modified(transcript) }.value
+            if first || modified != seen {
+                first = false
+                seen = modified
+                let loaded = await Task.detached { TranscriptLine.load(transcript) }.value
+                if Task.isCancelled { return }
+                lines = loaded.lines
+                if loaded.complete && !loaded.lines.isEmpty { return }
+            }
+            try? await Task.sleep(for: .seconds(3))
+        }
     }
 
     private var current: Double? {
@@ -243,6 +270,7 @@ struct PodcastPlayer: View {
                 }
             }
         }
+        .task(id: transcript) { await followTranscript() }
     }
 }
 
