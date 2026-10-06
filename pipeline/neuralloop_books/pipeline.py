@@ -99,6 +99,7 @@ async def run(opts: Options, engine) -> BookState:
         return await _run(opts, engine)
 
 
+NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
 ALREADY_RUNNING = "This book is already being prepared. Pip will keep going with that run."
 
 
@@ -145,9 +146,10 @@ async def _run(opts: Options, engine) -> BookState:
         feed = Activity(opts.out, state.data.get("timings", {}))
         feed.queue([(c["n"], t) for c, t in pending])
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
-        # (engine, item kind) pairs that hit a limit: later items of that kind made by the same engine wait.
-        # Keyed by engine, so a limit on auto's fallback never stops NotebookLM trying the next ones.
-        quota_hit: set[tuple[str, str]] = set()
+        # (engine, item kind) pairs that hit a limit (or that NotebookLM didn't answer after patient retries)
+        # -> why: later items of that kind made by the same engine wait without trying. Keyed by engine, so a
+        # limit on auto's fallback never stops NotebookLM trying the next ones.
+        quota_hit: dict[tuple[str, str], str] = {}
 
         def lane(task: str) -> asyncio.Semaphore:
             return lanes["media" if task in MEDIA_TASKS else "text"]
@@ -175,12 +177,12 @@ async def _run(opts: Options, engine) -> BookState:
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
     if (engine.name, task) in quota_hit:
-        entry.update(status=WAITING, error=quota_message(engine.name))
+        entry.update(status=WAITING, error=quota_hit[engine.name, task])
         state.save()
         return
     async with limiter:
         if (engine.name, task) in quota_hit:  # another item of this kind hit the limit while we waited
-            entry.update(status=WAITING, error=quota_message(engine.name))
+            entry.update(status=WAITING, error=quota_hit[engine.name, task])
             state.save()
             return
         entry["status"] = WORKING
@@ -200,15 +202,15 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             raise  # e.g. a revoked key: stop the run and say what to fix
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
-                entry.update(
-                    status=WAITING, error="NotebookLM didn't answer this time; Pip will try again next run."
-                )
+                # The rest of this kind wait too, instead of each spending minutes on the same retries.
+                quota_hit[made_by(error, engine.name), task] = NOT_ANSWERING
+                entry.update(status=WAITING, error=NOT_ANSWERING)
                 opts.log(
                     f"  … chapter {chapter['n']} {task}: NotebookLM didn't answer; will try again next run"
                 )
             elif is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
-                quota_hit.add((who, task))
+                quota_hit[who, task] = quota_message(who)
                 entry.update(status=WAITING, error=quota_message(who))
                 opts.log(f"  … chapter {chapter['n']} {task}: {who} limit reached; will continue next run")
             else:

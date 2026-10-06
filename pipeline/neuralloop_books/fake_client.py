@@ -232,6 +232,7 @@ class FakeDownClient(FakeClient):
 
     async def _generate(self, notebook_id, source_ids=None, **kwargs):
         if "audio_format" in kwargs or "video_format" in kwargs:
+            self.asked = getattr(self, "asked", 0) + 1
             raise TimeoutError("Request timed out calling CREATE_ARTIFACT")
         return await super()._generate(notebook_id, source_ids, **kwargs)
 

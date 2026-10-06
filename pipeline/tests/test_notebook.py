@@ -6,7 +6,14 @@ import pytest
 
 from neuralloop_books.fake_client import ENUMS, FakeClient
 from neuralloop_books.models import QuotaError
-from neuralloop_books.notebook import ChapterMaker, MediaOptions, UnusableAnswer, is_quota_error
+from neuralloop_books.notebook import (
+    ChapterMaker,
+    MediaOptions,
+    NotebookLMBusy,
+    UnusableAnswer,
+    is_quota_error,
+    is_transient_error,
+)
 
 
 class EmptyClient(FakeClient):
@@ -65,3 +72,51 @@ def test_quota_errors_are_recognised(error):
 )
 def test_other_errors_that_mention_numbers_are_not_quota_errors(message):
     assert not is_quota_error(RuntimeError(message))
+
+
+def _named(name, message, base=Exception, **attrs):
+    error = type(name, (base,), {})(message)
+    for key, value in attrs.items():
+        setattr(error, key, value)
+    return error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("Request timed out calling LIST_ARTIFACTS"),
+        ConnectionResetError("connection reset by peer"),
+        _named("RPCTimeoutError", "RPC timed out"),
+        _named("ServerError", "Server error", status_code=503),
+        _named("ServerError", "something broke", status_code=502),
+        RuntimeError("HTTP 503 Service Unavailable"),
+        RuntimeError("server returned status 504"),
+        RuntimeError("Error 502 from the server"),
+        RuntimeError("502 Bad Gateway"),
+        RuntimeError("The service is temporarily unavailable"),
+        _named("RPCError", "try again", rpc_code="UNAVAILABLE"),
+    ],
+)
+def test_hiccups_are_transient(error):
+    assert is_transient_error(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _named("ArtifactFeatureUnavailableError", "Audio generation is unavailable"),
+        RuntimeError("Video generation is unavailable"),
+        _named("ArtifactNotFoundError", "Artifact abc not found"),
+        _named("SourceNotFoundError", "Source unavailable"),
+        _named("ValidationError", "Invalid video style"),
+        json.JSONDecodeError("Expecting value", "x" * 600, 504),  # "(char 504)"
+        RuntimeError("Chapter 503 is missing"),
+        RuntimeError("couldn't parse line 502"),
+        RuntimeError("Request timed out: daily limit reached"),  # a limit beats a hiccup
+        _named("AuthError", "timed out (unauthenticated)"),  # a sign-in beats a hiccup
+        NotebookLMBusy("NotebookLM didn't answer (Request timed out) after 4 tries"),  # already waited out
+        UnusableAnswer("timed out answer"),
+    ],
+)
+def test_lasting_problems_are_not_transient(error):
+    assert not is_transient_error(error)

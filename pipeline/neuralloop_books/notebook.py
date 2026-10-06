@@ -49,20 +49,44 @@ class NotebookLMBusy(RuntimeError):
 _TRANSIENT = re.compile(
     r"timed?\s*out|timeout|deadline[\s_]exceeded|temporarily\s+unavailable|\bunavailable\b"
     r"|connection\s+(?:reset|refused|closed|aborted|error)|server\s+(?:error|disconnected)"
-    r"|remote\s*protocol|\b50[234]\b|bad\s+gateway|service\s+unavailable|gateway\s+time-?out",
+    r"|remote\s*protocol|bad\s+gateway|service\s+unavailable|gateway\s+time-?out"
+    # A 502/503/504 only as an HTTP status, never "(char 504)" or "Chapter 503".
+    r"|\b(?:status|error|code|http(?:/[\d.]+)?)[\s:=]*50[234]\b|\b50[234]\s+(?:service|bad|gateway)\b",
+    re.IGNORECASE,
+)
+# Lasting problems: retrying the same request can't help (a feature turned off for this account, something
+# that isn't there, a request NotebookLM rejects). The item fails, or auto makes it another way.
+_LASTING_NAMES = (
+    "FeatureUnavailable",
+    "NotFound",
+    "Validation",
+    "Configuration",
+    "Unsupported",
+    "ClientError",
+)
+_LASTING = re.compile(
+    r"\bgeneration\s+is\s+unavailable\b|\bfeature\s+(?:is\s+)?(?:unavailable|not\s+available)\b"
+    r"|\bnot\s+found\b|\binvalid\s+argument\b",
     re.IGNORECASE,
 )
 
 
 def is_transient_error(error: BaseException) -> bool:
     """A hiccup worth waiting out (slow answer, dropped connection, busy server), not a limit or a sign-in."""
-    if is_quota_error(error) or is_auth_error(error) or isinstance(error, UnusableAnswer):
+    if is_quota_error(error) or is_auth_error(error) or isinstance(error, (UnusableAnswer, ValueError)):
+        return False  # ValueError: a JSONDecodeError or another answer we couldn't read; asking won't help
+    if getattr(error, "try_later", False):
+        return False  # already waited out patiently (NotebookLMBusy)
+    names = " ".join(cls.__name__ for cls in type(error).__mro__)
+    if any(k in names for k in _LASTING_NAMES) or _LASTING.search(str(error)):
         return False
     if isinstance(error, (TimeoutError, ConnectionError)):
         return True
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and (status >= 500 or status == 408):
+        return True
     if getattr(error, "rpc_code", None) in (4, 14, "4", "14", "DEADLINE_EXCEEDED", "UNAVAILABLE"):
         return True
-    names = " ".join(cls.__name__ for cls in type(error).__mro__)
     if any(
         k in names for k in ("Timeout", "ConnectError", "ReadError", "RemoteProtocolError", "NetworkError")
     ):

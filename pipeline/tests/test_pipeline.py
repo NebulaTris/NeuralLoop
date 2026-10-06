@@ -433,6 +433,22 @@ def test_notebooklm_not_answering_leaves_media_waiting_for_the_next_run_not_fail
     assert first["quiz"]["status"] == DONE  # other items carry on
 
 
+def test_once_notebooklm_gave_up_on_a_kind_of_item_the_rest_of_that_kind_wait_without_retrying(
+    options, no_retry_pause
+):
+    """Each item would otherwise spend minutes of patient retries before waiting too."""
+    from neuralloop_books import config
+
+    options.media = "all"
+    client = FakeDownClient()
+    state = run_with(options, client)
+    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
+    assert client.asked == 2 * tries  # chapter 1's podcast and video; chapter 2's never asked
+    second = state.chapters[1]["tasks"]
+    assert (second["audio"]["status"], second["video"]["status"]) == (WAITING, WAITING)
+    assert "try again" in second["audio"]["error"].lower() and "limit" not in second["audio"]["error"]
+
+
 def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):
     """SDK and command-line errors can quote the request; state.json and book.json sync to Drive."""
     key = "sk-ant-api03-" + "k" * 40
