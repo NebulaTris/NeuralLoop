@@ -139,6 +139,9 @@ extension SyncPlan {
                 plan.uploads.append(SyncFile(path: file.path, md5: file.md5, size: file.size, id: theirs?.id))
             }
         }
+        // An inbox book's sidecar (its title) goes up before the book, so a Mac never sees the book without it.
+        let isSidecar = { (file: SyncFile) in SyncLayout.isInbox(file.path) && file.path.hasSuffix(".json") }
+        plan.uploads = plan.uploads.filter(isSidecar) + plan.uploads.filter { !isSidecar($0) }
 
         for file in remote where SyncLayout.isSafeRemote(file.path) && file.size <= SyncLayout.maxDownloadBytes
             && SyncLayout.removedBook(file.path) == nil && !(SyncLayout.book(file.path).map(removed.contains) ?? false) {
@@ -182,13 +185,38 @@ extension SyncPlan {
 /// same progress files. A device whose progress file in the Drive isn't what it last uploaded there knows another
 /// device is writing it, and takes a new id.
 public enum DeviceClash {
-    /// `local`: this device's files by path → md5 (a Drive copy matching what's here is ours, even if the answer to our
-    /// upload got lost on the way back).
-    public static func found(remote: [SyncFile], device: String, lastUploaded: [String: String], local: [String: String] = [:]) -> Bool {
+    /// `local`: this device's files by path → md5, and `attempted`: what it sent without hearing back (wifi dropped, the
+    /// Mac slept). A Drive copy matching either is ours: the upload landed, only its answer got lost on the way back.
+    public static func found(remote: [SyncFile], device: String, lastUploaded: [String: String], attempted: [String: [String]] = [:],
+                             local: [String: String] = [:]) -> Bool {
         remote.contains { file in
             guard SyncLayout.progressDevice(file.path) == device, let mine = lastUploaded[file.path] else { return false }
-            return file.md5 != mine && file.md5 != local[file.path]
+            return file.md5 != mine && file.md5 != local[file.path] && !(attempted[file.path] ?? []).contains(file.md5)
         }
+    }
+}
+
+/// What this device has sent as its own progress, so a file in the Drive can be recognised as ours.
+public enum SentProgress {
+    /// How many recent sends per file are remembered while their answers are outstanding.
+    public static let keep = 5
+
+    /// The md5s sent to one file whose answers haven't come back, oldest first: `md5` joins as the newest.
+    public static func remembered(_ sent: [String], adding md5: String) -> [String] {
+        Array((sent.filter { $0 != md5 } + [md5]).suffix(keep))
+    }
+
+    /// Progress files under an id this device gave up (`retired`: path → the md5s it wrote there). A copy holding one of
+    /// those md5s is ours: it leaves the Drive and is never counted as another device. Any other copy was written by
+    /// someone else since (a real second device on that id): it's theirs, and is kept and counted like any device's.
+    public static func retiredOnDrive(remote: [SyncFile], retired: [String: [String]]) -> (ours: [SyncFile], foreign: Set<String>) {
+        var ours: [SyncFile] = []
+        var foreign = Set<String>()
+        for file in remote where SyncLayout.progressDevice(file.path) != nil {
+            guard let md5s = retired[file.path] else { continue }
+            if md5s.contains(file.md5) { ours.append(file) } else { foreign.insert(file.path) }
+        }
+        return (ours, foreign)
     }
 }
 

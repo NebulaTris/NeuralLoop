@@ -170,13 +170,13 @@ final class DriveSync {
         }
         var engine = sharedEngine()
         do {
-            var report = try await engine.sync(wantedMedia: wantedMedia)
+            var report = try await engine.sync(wantedMedia: wantedMedia, account: account.email)
             if report.deviceClash, !signingOutNow {
                 // Another device has been using this id: take a new one and sync as that.
                 device = DeviceIdentity.replace(role: Self.role)
                 self.engine = nil
                 engine = sharedEngine()
-                report = try await engine.sync(wantedMedia: wantedMedia)
+                report = try await engine.sync(wantedMedia: wantedMedia, account: account.email)
             }
             removedBooks = await engine.removedBooks
             for id in report.removedElsewhere { onRemovedElsewhere(id) }

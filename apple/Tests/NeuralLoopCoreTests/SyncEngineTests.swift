@@ -584,3 +584,141 @@ private func whileHeld(_ drive: HeldDrive) async {
     let sneaky = "\u{202A}A\u{202B}B\u{202C}C\u{202D}D\u{2066}E\u{2067}F\u{2068}G\u{2069}H\u{200E}I\u{200F}J\u{061C}K\u{200B}L\u{2060}M\u{FEFF}N\u{00AD}O"
     #expect(DeviceInfo(id: "d", name: sneaky, kind: .mac, lastSync: 1).name == "ABCDEFGHIJKLMNO")
 }
+
+// MARK: device ids: lost answers, other accounts, retired ids
+
+/// Seconds studied in a book here, every device's file merged (what the year log shows).
+private func studied(_ root: URL, _ book: String) -> Double {
+    ProgressFile.loadMerged(from: root.appendingPathComponent("books/\(book)")).merged.log.values.reduce(0, +)
+}
+
+/// A Drive that stores the next progress upload and then loses the answer (wifi dropped, the Mac slept).
+private actor LossyDrive: DriveStore {
+    let inner: MemoryDrive
+    private var loseNext = false
+    init(_ inner: MemoryDrive) { self.inner = inner }
+    func loseNextAnswer() { loseNext = true }
+    func list() async throws -> [SyncFile] { try await inner.list() }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        let stored = try await inner.upload(source, as: path, replacing: id)
+        if loseNext, SyncLayout.progressDevice(path) != nil { loseNext = false; throw URLError(.networkConnectionLost) }
+        return stored
+    }
+    func delete(_ file: SyncFile) async throws { try await inner.delete(file) }
+}
+
+@Test func anUploadThatLandedButWhoseAnswerWasLostIsNotAClash() async throws {
+    let drive = MemoryDrive()
+    let lossy = LossyDrive(drive)
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    try write(#"{"log":{"2026-09-29":200}}"#, mac, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: lossy).sync()
+    try write(#"{"log":{"2026-09-29":215}}"#, mac, "books/mcp/progress.json")
+    await lossy.loseNextAnswer()
+    let lost = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: lossy).sync()
+    #expect(!lost.problems.isEmpty)
+    try write(#"{"log":{"2026-09-29":2300}}"#, mac, "books/mcp/progress.json")  // a study tick since
+    let next = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: lossy).sync()
+    #expect(!next.deviceClash && next.uploaded == 1)
+    #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"2026-09-29":2300}}"#.utf8))
+}
+
+/// One Drive per Google account; the person signs in to one, then the other.
+private actor TwoAccounts: DriveStore {
+    let a = MemoryDrive(), b = MemoryDrive()
+    private var onB = false
+    func use(b: Bool) { onB = b }
+    private var drive: MemoryDrive { onB ? b : a }
+    func list() async throws -> [SyncFile] { try await drive.list() }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await drive.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        try await drive.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws { try await drive.delete(file) }
+}
+
+@Test func signingInToAnotherGoogleAccountAndBackIsNotAClash() async throws {
+    let accounts = TwoAccounts()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    try write(#"{"log":{"d":1}}"#, mac, "books/mcp/progress.json")
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts)
+    _ = try await engine.sync(account: "sam@example.com")
+    await accounts.use(b: true)
+    try write(#"{"log":{"d":22}}"#, mac, "books/mcp/progress.json")
+    #expect(try await !engine.sync(account: "work@example.com").deviceClash)
+    await accounts.use(b: false)
+    try write(#"{"log":{"d":333}}"#, mac, "books/mcp/progress.json")
+    let back = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts).sync(account: "Sam@example.com")
+    #expect(!back.deviceClash && back.uploaded == 1)
+    #expect(await accounts.a.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":333}}"#.utf8))
+}
+
+@Test func afterANewIDThisDevicesStudyTimeIsCountedOnce() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    try write(#"{"log":{"2026-09-29":215}}"#, mac, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync()
+    // A copy an older version already brought down as "another device".
+    try write(#"{"log":{"2026-09-29":215}}"#, mac, "books/mcp/devices/mac1.json")
+    // What the app does after a clash: the same library, a new id.
+    let fresh = SyncEngine(root: mac, device: "mac-2", role: .mac, store: drive)
+    let report = try await fresh.sync()
+    #expect(!report.deviceClash && report.problems.isEmpty)
+    #expect(studied(mac, "mcp") == 215)
+    #expect(read(mac, "books/mcp/devices/mac1.json") == nil)
+    #expect(await drive.data(at: "books/mcp/progress/mac1.json") == nil)
+    #expect(await drive.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"2026-09-29":215}}"#.utf8))
+    _ = try await fresh.sync()
+    #expect(studied(mac, "mcp") == 215)
+}
+
+@Test func aRealSecondDeviceOnTheOldIDIsStillCountedAfterTheClash() async throws {
+    let drive = MemoryDrive()
+    let a = try temporaryRoot(), b = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+    try write(#"{"title":"MCP"}"#, a, "books/mcp/book.json")
+    try write(#"{"title":"Other"}"#, a, "books/other/book.json")
+    try write(#"{"log":{"d":1}}"#, a, "books/mcp/progress.json")
+    try write(#"{"log":{"o":1}}"#, a, "books/other/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)  // a restored copy, same id
+    try write(#"{"log":{"d":2}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    try write(#"{"log":{"d":3}}"#, b, "books/mcp/progress.json")
+    #expect(try await SyncEngine(root: b, device: "mac1", role: .mac, store: drive).sync().deviceClash)
+    let copy = SyncEngine(root: b, device: "mac-2", role: .mac, store: drive)
+    _ = try await copy.sync()
+    // The other Mac's file stays and is counted; the one only we wrote leaves the Drive.
+    #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":2}}"#.utf8))
+    #expect(read(b, "books/mcp/devices/mac1.json") == #"{"log":{"d":2}}"#)
+    #expect(await drive.data(at: "books/other/progress/mac1.json") == nil && read(b, "books/other/devices/mac1.json") == nil)
+    // The other Mac sends it again: now it's theirs, comes down here, and stays in the Drive.
+    let original = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    #expect(!original.deviceClash)
+    _ = try await copy.sync()
+    _ = try await copy.sync()
+    #expect(await drive.data(at: "books/other/progress/mac1.json") == Data(#"{"log":{"o":1}}"#.utf8))
+    #expect(read(b, "books/other/devices/mac1.json") == #"{"log":{"o":1}}"#)
+}
+
+@Test func anInboxBookWaitsOneSyncForItsTitleThenGoesAhead() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u1.pdf")
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u2.pdf")
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: drive)
+    #expect(try await macSync.sync().arrived.isEmpty)  // the title may be on its way
+    await drive.insert(Data(#"{"title":"Clean Code"}"#.utf8), as: "inbox/u2.json")
+    let second = try await macSync.sync()
+    #expect(second.arrived.map(\.lastPathComponent) == ["u1.pdf", "u2.pdf"])
+    #expect(read(mac, "inbox/u2.json") == #"{"title":"Clean Code"}"#)
+}

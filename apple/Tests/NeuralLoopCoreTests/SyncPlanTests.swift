@@ -29,7 +29,7 @@ private func file(_ path: String, _ md5: String = "a", id: String? = nil) -> Syn
 @Test func booksAddedOnThePadTravelThroughTheInbox() {
     let padLocal = [file("inbox/u1.epub"), file("inbox/u1.json")]
     let up = SyncPlan.make(local: padLocal, remote: [], device: "ipad1", role: .pad)
-    #expect(up.uploads.map(\.path) == ["inbox/u1.epub", "inbox/u1.json"])
+    #expect(up.uploads.map(\.path) == ["inbox/u1.json", "inbox/u1.epub"])  // the title goes first
     let remote = [file("inbox/u1.epub", id: "i1"), file("inbox/u1.json", id: "i2"), file("inbox/u0.pdf", id: "i0")]
     let mac = SyncPlan.make(local: [], remote: remote, device: "mac1", role: .mac, takenInbox: ["inbox/u0.pdf"])
     #expect(mac.downloads.map(\.path) == ["inbox/u1.epub", "inbox/u1.json"])
@@ -109,6 +109,30 @@ private func dated(_ path: String, _ md5: String, id: String, at seconds: Double
     #expect(!DeviceClash.found(remote: remote, device: "mac1", lastUploaded: ["books/mcp/progress/mac1.json": "mine"],
                                local: ["books/mcp/progress/mac1.json": "theirs"]))
     #expect(!DeviceClash.found(remote: remote, device: "ipad1", lastUploaded: ["books/mcp/progress/mac1.json": "mine"]))
+}
+
+// An upload whose answer never came back (wifi dropped, the Mac slept) may still have landed: any of the last few
+// md5s sent there count as ours, so it isn't mistaken for another device writing our file.
+@Test func aProgressFileWeSentButNeverHeardBackAboutIsStillOurs() {
+    let path = "books/mcp/progress/mac1.json"
+    let remote = [file(path, "sent", id: "r1")]
+    #expect(!DeviceClash.found(remote: remote, device: "mac1", lastUploaded: [path: "older"], attempted: [path: ["x", "sent"]],
+                               local: [path: "newer"]))
+    #expect(DeviceClash.found(remote: remote, device: "mac1", lastUploaded: [path: "older"], attempted: [path: ["x"]],
+                              local: [path: "newer"]))
+    #expect(SentProgress.remembered(["a", "b", "c", "d", "e"], adding: "f") == ["b", "c", "d", "e", "f"])
+    #expect(SentProgress.remembered(["a", "b"], adding: "a") == ["b", "a"])
+}
+
+// After a new device id, the old id's progress files are ours: they leave the Drive (never counted as another
+// device), unless someone else wrote them since (a real second device on that id), which is kept.
+@Test func theOldIDsProgressIsOursUnlessSomeoneElseWroteIt() {
+    let remote = [file("books/a/progress/mac1.json", "ours", id: "r1"), file("books/b/progress/mac1.json", "theirs", id: "r2"),
+                  file("books/c/progress/mac1.json", "ours-c", id: "r3")]
+    let retired = ["books/a/progress/mac1.json": ["ours"], "books/b/progress/mac1.json": ["ours-b"], "books/d/progress/mac1.json": ["x"]]
+    let found = SentProgress.retiredOnDrive(remote: remote, retired: retired)
+    #expect(found.ours.compactMap(\.id) == ["r1"])
+    #expect(found.foreign == ["books/b/progress/mac1.json"])
 }
 
 @Test func inboxRetriesBackOffAndStopAfterFive() {
