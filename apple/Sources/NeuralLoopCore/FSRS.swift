@@ -41,8 +41,11 @@ public enum FSRS {
             next.s = w[rating.rawValue - 1]
             next.d = clamp(w[4] - (r - 3) * w[5])
         } else {
-            let recall = retrievability(elapsedDays: (now - card.last) / dayMs, stability: card.s)
+            // Another device's clock can put `last` after `now`: count that as no time elapsed, never negative.
+            let recall = retrievability(elapsedDays: max(0, now - card.last) / dayMs, stability: card.s)
             let d = card.d
+            // Mean reversion targets w[4] - w[5] (the study site's JavaScript scheduler did), where the FSRS-4.5
+            // reference uses D0(3) = w[4]. Kept on purpose so existing schedules stay exact (FSRSTests pins it).
             next.d = clamp(w[7] * (w[4] - w[5]) + (1 - w[7]) * (d - w[6] * (r - 3)))
             if rating == .again {
                 next.s = w[11] * pow(d, -w[12]) * (pow(card.s + 1, w[13]) - 1) * exp(w[14] * (1 - recall))

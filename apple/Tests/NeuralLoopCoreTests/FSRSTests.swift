@@ -32,6 +32,18 @@ let day = FSRS.dayMs
     #expect(abs(lapse.d - 6.8260892378) < 1e-9)
 }
 
+@Test func aReviewDatedBeforeTheLastOneCountsAsNoTimeElapsed() {
+    // Another device's clock ran ahead, so `last` is later than now: the card must stay sane, not collapse to NaN.
+    let first = FSRS.grade(nil, .good, now: 10 * day)
+    let early = FSRS.grade(first, .good, now: 9 * day)
+    let sameMoment = FSRS.grade(first, .good, now: 10 * day)
+    #expect(early.s.isFinite && early.d.isFinite && early.due.isFinite)
+    #expect(abs(early.s - sameMoment.s) < 1e-9)
+    #expect(early.s >= first.s)
+    let lapse = FSRS.grade(first, .again, now: 9 * day)
+    #expect(lapse.s.isFinite && lapse.s >= 0.1)
+}
+
 @Test func formatsWaits() {
     #expect(FSRS.formatWait(due: 10 * 60_000, now: 0) == "10 min")
     #expect(FSRS.formatWait(due: 3 * 3_600_000, now: 0) == "3 h")

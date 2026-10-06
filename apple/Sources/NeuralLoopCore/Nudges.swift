@@ -392,10 +392,15 @@ public enum Nudges {
         return best.map { Nudge(emoji: "🧶", headline: "Loose yarn in “\($0.title)”", body: "Next: \($0.next). Pip saved your spot.") }
     }
 
-    /// When nudges resume after "pause until tomorrow": tomorrow at the end of quiet hours.
+    /// When nudges resume after "pause until tomorrow": the next end of quiet hours after `now` (pressed after
+    /// midnight, that's this morning, not the morning after).
     public static func pauseUntilTomorrow(now: Date, quietEnd: Int, calendar: Calendar = .current) -> Double {
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
-        let resume = calendar.date(bySettingHour: min(max(quietEnd, 0), 23), minute: 0, second: 0, of: tomorrow) ?? tomorrow
+        let hour = min(max(quietEnd, 0), 23)
+        let today = calendar.startOfDay(for: now)
+        let thisMorning = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: today) ?? today
+        if thisMorning > now { return thisMorning.timeIntervalSince1970 * 1000 }
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        let resume = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: tomorrow) ?? tomorrow
         return resume.timeIntervalSince1970 * 1000
     }
 }
