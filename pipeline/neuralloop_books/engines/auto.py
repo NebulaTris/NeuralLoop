@@ -9,7 +9,7 @@ import asyncio
 from .. import activity
 from ..config import MEDIA_TASKS
 from ..models import SetupError, safe_message
-from ..notebook import is_quota_error
+from ..notebook import is_auth_error, is_quota_error
 
 
 class AutoEngine:
@@ -61,9 +61,11 @@ class AutoEngine:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
             except Exception as error:  # this item is made locally instead; the book always finishes
-                if task in MEDIA_TASKS and (is_quota_error(error) or getattr(error, "try_later", False)):
+                if task in MEDIA_TASKS and (
+                    is_quota_error(error) or is_auth_error(error) or getattr(error, "try_later", False)
+                ):
                     # People want NotebookLM's own podcasts and videos: wait for its limit to reset, or for
-                    # it to answer again (marked waiting, tried next run) rather than make them here.
+                    # it to answer (or take its session) again, rather than make them here.
                     raise _tagged(error, self.primary.name) from None
                 if task in self._fallback_limited:
                     # The fallback is at its limit for this kind of item: this one fails (or waits) as

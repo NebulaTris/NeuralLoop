@@ -183,6 +183,29 @@ class FakeStaleWhileWaitingClient(FakeClient):
         return await super()._wait(notebook_id, task_id, **kwargs)
 
 
+class FakeStaleTwiceWhileWaitingClient(FakeClient):
+    """A long video sees Google's cookie rotate twice: the first `stale` status checks are refused, each after
+    the session was refreshed, and the item must keep refreshing (a few times) rather than give up."""
+
+    def __init__(self, stale: int = 2, delay: float = 0.0):
+        super().__init__(delay)
+        self.stale, self.waits = stale, 0
+        self.generated: list[str] = []
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if "audio_format" in kwargs or "video_format" in kwargs:
+            self.generated.append(f"{source_ids[0]}:{'audio' if 'audio_format' in kwargs else 'video'}")
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        self.waits += 1
+        if self.waits <= self.stale:
+            error = RuntimeError("The server rejected this request (unauthenticated).")
+            error.rpc_code = 16
+            raise error
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
 class FakeSlowClient(FakeClient):
     """NotebookLM answering slowly: the first status check of every podcast and video times out (it's still
     being made), and the item must ride it out with the same podcast or video, asked for once."""

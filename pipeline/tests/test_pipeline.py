@@ -14,6 +14,7 @@ from neuralloop_books.fake_client import (
     FakeRotatedSessionClient,
     FakeSlowClient,
     FakeStaleSessionClient,
+    FakeStaleTwiceWhileWaitingClient,
     FakeStaleWhileWaitingClient,
 )
 from neuralloop_books.models import QuotaError, SetupError
@@ -387,6 +388,25 @@ def test_a_podcast_already_asked_for_is_waited_for_not_asked_for_again(options):
     state = run_with(options, client)
     assert state.chapters[0]["tasks"]["audio"]["status"] == DONE
     assert client.generated.count(client.generated[0]) == 1  # NotebookLM's allowance spent once
+
+
+def test_a_session_that_goes_stale_twice_during_one_item_is_refreshed_each_time(options):
+    """A video can take an hour, long enough for Google's cookie to rotate twice."""
+    client = FakeStaleTwiceWhileWaitingClient(stale=2)
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (DONE, DONE)
+    assert client.refreshes == 2
+    assert len(client.generated) == len(set(client.generated))  # asked for once, waited for again
+
+
+def test_a_session_that_never_recovers_leaves_media_waiting_not_failed(options):
+    client = FakeStaleTwiceWhileWaitingClient(stale=1_000)
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (WAITING, WAITING)
+    # A few refreshes per item that waits on NotebookLM (quiz and cards in both chapters, media in the first).
+    assert client.refreshes <= 3 * 6
 
 
 @pytest.fixture

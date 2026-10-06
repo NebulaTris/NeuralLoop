@@ -245,6 +245,16 @@ def test_a_podcast_notebooklm_could_not_answer_waits_but_a_quiz_is_made_locally(
     assert caught.value.engine_name == "NotebookLM"
 
 
+@pytest.mark.parametrize("task", ["audio", "video"])
+def test_a_podcast_whose_notebooklm_session_keeps_failing_waits_for_notebooklm(task):
+    error = RuntimeError("The server rejected this request (unauthenticated).")
+    error.rpc_code = 16
+    primary, fallback = Recorder("NotebookLM", fail_make={task: error}), Recorder("Ollama")
+    with pytest.raises(RuntimeError) as caught:
+        run(AutoEngine(lambda: primary, lambda: fallback, lambda _: None), task)
+    assert caught.value.engine_name == "NotebookLM" and not fallback.prepared
+
+
 def test_a_fallback_that_stops_working_mid_run_fails_only_that_item():
     """Ollama dying (or a key being refused) after the fallback started must not cancel NotebookLM's items:
     the item fails on its own as NotebookLM's, and the fallback isn't asked again this run."""

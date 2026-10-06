@@ -72,16 +72,25 @@ class NotebookLMEngine:
 
     async def make(self, task: str, chapter: dict) -> dict:
         delays = list(config.NOTEBOOKLM_RETRY_DELAYS)
-        reloaded = False
+        reloads = 0
         while True:
             session = self._session
             try:
                 return await self.maker.make(task, chapter)
             except Exception as error:  # a stale session or a hiccup is handled here; anything else goes up
-                if is_auth_error(error) and not reloaded:
-                    reloaded = True
-                    await self._fresh_session(session)
-                    continue
+                if is_auth_error(error):
+                    # A long video can see the cookie rotate more than once: reload whenever it went stale
+                    # during this attempt, a few times per item.
+                    if reloads < config.NOTEBOOKLM_SESSION_RELOADS:
+                        reloads += 1
+                        await self._fresh_session(session)
+                        continue
+                    if task in config.MEDIA_TASKS:
+                        # A podcast or video waits for NotebookLM (next run), never made on the Mac instead.
+                        raise NotebookLMBusy(
+                            f"NotebookLM kept refusing the session ({_short(error)})"
+                        ) from error
+                    raise
                 if not is_transient_error(error):
                     raise
                 if not delays:
