@@ -150,3 +150,20 @@ func progress(_ json: String) throws -> StudyProgress {
     try Data("{}".utf8).write(to: folder.appendingPathComponent("progress.json"))  // our own file doesn't count
     #expect(ProgressFile.devicesSignature(in: folder) == ProgressFile.devicesSignature(in: folder))
 }
+
+@Test func theDevicesSignatureSeesASameSizeRewriteAndIgnoresOtherFiles() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let file = folder.appendingPathComponent("devices/ipad1.json")
+    try Data(#"{"a":1}"#.utf8).write(to: file)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: file.path)
+    let before = ProgressFile.devicesSignature(in: folder)
+    // Sync rewrites the iPad's file with the same size: only the modification time tells.
+    try Data(#"{"a":2}"#.utf8).write(to: file)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 2_000)], ofItemAtPath: file.path)
+    let after = ProgressFile.devicesSignature(in: folder)
+    #expect(after != before)
+    try Data("x".utf8).write(to: folder.appendingPathComponent("devices/notes.txt"))
+    #expect(ProgressFile.devicesSignature(in: folder) == after)
+}

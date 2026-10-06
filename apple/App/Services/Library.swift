@@ -33,6 +33,8 @@ private struct Scanned: Sendable {
     let bookModified: Date?
     let progress: StudyProgress
     let progressModified: Date?
+    /// Other devices' progress files (`ProgressFile.devicesSignature`): sync rewrites them without touching ours.
+    let devicesSignature: String
     let addedAt: Double
     let media: String
     let dryRun: Bool
@@ -253,7 +255,9 @@ final class Library {
                 let bookModified = modified(bookFile) ?? modified(folder.appendingPathComponent("book-data.js"))
                 let book = old != nil && old?.bookModified == bookModified ? old?.book : loadBook(folder)
                 let progressModified = modified(folder.appendingPathComponent("progress.json"))
-                let progress = old != nil && old?.progressModified == progressModified ? old!.progress : ProgressFile.loadMerged(from: folder).merged
+                let devicesSignature = ProgressFile.devicesSignature(in: folder)
+                let progress = old != nil && old?.progressModified == progressModified && old?.devicesSignature == devicesSignature
+                    ? old!.progress : ProgressFile.loadMerged(from: folder).merged
                 let meta = (try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("meta.json")))) as? [String: Any]
                 let options = meta?["options"] as? [String: Any]
                 // A run started elsewhere (the command line, or before a relaunch) holds the book's lock.
@@ -269,7 +273,7 @@ final class Library {
                     : (try? Data(contentsOf: activityFile)).flatMap(PrepActivity.read)
                 return Scanned(
                     id: id, folder: folder, book: book, bookModified: bookModified, progress: progress, progressModified: progressModified,
-                    addedAt: meta?["addedAt"] as? Double ?? 0, media: options?["media"] as? String ?? "1-2",
+                    devicesSignature: devicesSignature, addedAt: meta?["addedAt"] as? Double ?? 0, media: options?["media"] as? String ?? "1-2",
                     dryRun: options?["dryRun"] as? Bool ?? false, sourcePath: meta?["path"] as? String,
                     logModified: (modified(log)?.timeIntervalSince1970 ?? 0) * 1000,
                     elsewhere: elsewhere,
