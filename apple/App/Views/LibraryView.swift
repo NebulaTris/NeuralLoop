@@ -374,8 +374,14 @@ struct BookCard: View {
                 }
                 HStack(spacing: 6) {
                     if entry.preparing { ProgressView().controlSize(.mini) }
-                    Text(entry.preparing ? (entry.lastLine.isEmpty ? "Pip is getting started…" : entry.lastLine) : madeWith)
-                        .font(Theme.body(11)).foregroundStyle(Theme.ink3).lineLimit(1)
+                    if let problem = entry.problem {
+                        Image(systemName: "bandage").font(.system(size: 11)).foregroundStyle(Theme.ink2).accessibilityHidden(true)
+                        Text(problem.card).font(Theme.body(11)).foregroundStyle(Theme.ink2).lineLimit(2)
+                            .help(problem.detail)
+                    } else {
+                        Text(entry.preparing ? (entry.lastLine.isEmpty ? "Pip is getting started…" : entry.lastLine) : madeWith)
+                            .font(Theme.body(11)).foregroundStyle(Theme.ink3).lineLimit(1)
+                    }
                 }
             }
             .padding(16)

@@ -20,9 +20,21 @@ struct BookEntry: Identifiable, Equatable {
     var lastLine: String
     /// What the pipeline is making right now (its activity.json), for the progress loader.
     var activity: PrepActivity? = nil
+    /// How the last automatic run went wrong, for the book card (runs the person started say so in an alert instead).
+    var problem: RunProblem? = nil
 
     var title: String { book?.title ?? id.replacingOccurrences(of: "-", with: " ") }
     var readyChapters: Int { book?.chapters.filter { $0.status["study"] == .done }.count ?? 0 }
+}
+
+/// An automatic run that ended badly: a short line for the book card, and the whole story for its tooltip.
+struct RunProblem: Equatable {
+    let code: Int32
+    let detail: String
+
+    var card: String {
+        code == 3 ? "Pip needs a little setup first: Settings → Your AI" : "Pip hit a snag. Open the book and choose Prepare more."
+    }
 }
 
 /// What one look at a book folder found (read off the main thread).
@@ -84,7 +96,11 @@ final class Library {
     /// The chapters each run in progress was asked to prepare, so a run that ends after the reader moved on is
     /// followed by another one right away (`PrepWindow.startAgain`).
     @ObservationIgnored private var ranWith: [String: PrepWindow] = [:]
+    /// Runs the person started (adding a book, Prepare more, Make with my AI): only these end in an alert.
+    @ObservationIgnored private var startedByPerson: Set<String> = []
     #endif
+    /// Automatic runs that ended badly, shown on their book's card until the next run starts (only the Mac runs any).
+    @ObservationIgnored private var problems: [String: RunProblem] = [:]
     /// Books on their way out (waiting for a run to stop before the folder goes): off the shelf, never resumed.
     @ObservationIgnored private var removing: Set<String> = []
     @ObservationIgnored private var scanned: [String: Scanned] = [:]
@@ -206,7 +222,8 @@ final class Library {
                 : item.elsewhereLine ?? item.elsewhere.map { $0.n == 0 ? "Pip is getting started…" : "Making the \(Self.itemName($0.item)) for chapter \($0.n)…" } ?? ""
             let preparing = running || item.elsewhere != nil
             return BookEntry(id: item.id, folder: item.folder, book: item.book, progress: item.progress,
-                             preparing: preparing, lastLine: line, activity: preparing ? item.activity : nil)
+                             preparing: preparing, lastLine: line, activity: preparing ? item.activity : nil,
+                             problem: preparing ? nil : problems[item.id])
         }
         #if os(macOS)
         announce(updated)
@@ -556,7 +573,7 @@ final class Library {
             couldNotCopy(file, folder: folder)
             return false
         }
-        startNew(id, folder: folder, copy: copy, original: file, practice: false, title: title)
+        startNew(id, folder: folder, copy: copy, original: file, practice: false, title: title, byPerson: false)
         return true
     }
 
@@ -571,7 +588,7 @@ final class Library {
         Task {
             let copied = await Task.detached(priority: .userInitiated) { Self.copySource(file, to: copy) }.value
             adding.remove(id)
-            if copied { startNew(id, folder: folder, copy: copy, original: file, practice: practice, title: title) } else { couldNotCopy(file, folder: folder) }
+            if copied { startNew(id, folder: folder, copy: copy, original: file, practice: practice, title: title, byPerson: true) } else { couldNotCopy(file, folder: folder) }
         }
         return true
     }
@@ -605,12 +622,12 @@ final class Library {
 
     /// The chosen title goes into meta.json, so every later run (resumed, "Prepare more") names the book the same way,
     /// even when the first run stopped before the pipeline saved anything.
-    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool, title: String) {
+    private func startNew(_ id: String, folder: URL, copy: URL, original: URL, practice: Bool, title: String, byPerson: Bool) {
         let meta: [String: Any] = ["path": copy.path, "originalPath": original.path, "addedAt": Date().timeIntervalSince1970 * 1000,
                                    "title": title, "options": ["media": "1-2", "dryRun": practice]]
         try? JSONSerialization.data(withJSONObject: meta).write(to: folder.appendingPathComponent("meta.json"))
         let window = PrepWindow.make(book: nil, progress: StudyProgress(), everything: Self.prepareEverything)
-        prepare(id: id, book: copy, window: window, options: .init(window: window, dryRun: practice), title: title)
+        prepare(id: id, book: copy, window: window, options: .init(window: window, dryRun: practice), title: title, byPerson: byPerson)
         reload()
     }
 
@@ -623,7 +640,7 @@ final class Library {
             options["media"] = "all"
             meta["options"] = options
         }
-        prepare(id: id, book: URL(fileURLWithPath: path), window: .everything, options: .init(window: .everything, retry: true))
+        prepare(id: id, book: URL(fileURLWithPath: path), window: .everything, options: .init(window: .everything, retry: true), byPerson: true)
         reload()
     }
 
@@ -632,7 +649,7 @@ final class Library {
         guard startable(id), let path = sourcePath(id) else { return }
         let window = scanned[id].map(Self.window) ?? PrepWindow.make(book: nil, progress: StudyProgress(), everything: false)
         prepare(id: id, book: URL(fileURLWithPath: path), window: window,
-                options: .init(window: window, dryRun: scanned[id]?.dryRun ?? false, retry: true, engine: "local"))
+                options: .init(window: window, dryRun: scanned[id]?.dryRun ?? false, retry: true, engine: "local"), byPerson: true)
         reload()
     }
 
@@ -655,12 +672,15 @@ final class Library {
         return PipelineCommand.savedTitle(title: meta?["title"] as? String, originalPath: meta?["originalPath"] as? String)
     }
 
-    private func prepare(id: String, book: URL, window: PrepWindow, options: PipelineCommand.Options, title: String? = nil) {
+    private func prepare(id: String, book: URL, window: PrepWindow, options: PipelineCommand.Options, title: String? = nil,
+                         byPerson: Bool = false) {
         let out = Self.root.appendingPathComponent(id, isDirectory: true)
         let title = title ?? Self.savedTitle(out)
         let runner = PipelineRunner()
         runs[id] = runner
         ranWith[id] = window
+        problems[id] = nil
+        if byPerson { startedByPerson.insert(id) } else { startedByPerson.remove(id) }
         do {
             try runner.start(arguments: PipelineCommand.arguments(book: book.path, out: out.path, options: options, title: title),
                              log: out.appendingPathComponent("pipeline.log")) { [weak self] line in
@@ -671,6 +691,7 @@ final class Library {
         } catch {
             runs[id] = nil
             ranWith[id] = nil
+            startedByPerson.remove(id)
             message = "Pip couldn't start preparing: \(error.localizedDescription)"
         }
     }
@@ -684,6 +705,7 @@ final class Library {
 
     private func finished(_ id: String, code: Int32, tail: [String]) {
         let window = ranWith.removeValue(forKey: id)
+        let byPerson = startedByPerson.remove(id) != nil
         if stopping.remove(id) != nil {  // stopped on purpose (removed): not a failure
             runs[id] = nil
             reload()
@@ -695,6 +717,15 @@ final class Library {
             records[id] = RunRecord.after(records[id], code: code, now: Date().timeIntervalSince1970 * 1000)
             Self.saveRecords(records)
         }
+        let outcome = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
+        // Success is announced by a notification, not an alert. A failed run the person started gets an alert; one
+        // Pip started on its own (resuming, backing off) only says so on the book's card, never popping up.
+        if code == 0 {
+            problems[id] = nil
+            if byPerson { message = nil }
+        } else if let outcome {
+            if byPerson { message = outcome } else { problems[id] = RunProblem(code: code, detail: outcome) }
+        }
         Task {
             await refresh()
             // The reader moved on while this run was going: prepare the wider window now, not in a few minutes.
@@ -702,8 +733,6 @@ final class Library {
             let now = Self.window(item)
             if PrepWindow.startAgain(ranWith: window, now: now, code: code, hasWork: now.hasWork(book)) { resume(id) }
         }
-        let outcome = Self.outcome(title: entry(id)?.title ?? "Your book", code: code, tail: tail)
-        message = code == 0 ? nil : outcome  // success is announced by a notification, not an alert
     }
 
     #endif
