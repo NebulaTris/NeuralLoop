@@ -6,6 +6,7 @@ fake (fake_client.py) run exactly the same code.
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -131,7 +132,8 @@ class MediaOptions:
 class ChapterMaker:
     def __init__(self, client, enums: ModuleType, notebook_id: str, out_dir: Path, media: MediaOptions):
         self.client, self.enums, self.notebook_id = client, enums, notebook_id
-        self.pending: dict[tuple[int, str], str] = {}  # podcasts and videos asked for, until downloaded
+        self.pending: dict[tuple[int, str], str] = {}  # items asked for, until downloaded
+        self.whole_waits: dict[tuple[int, str], int] = {}  # waits that ran their whole timeout, per item
         self.out_dir, self.media = out_dir, media
 
     async def make(self, task: str, chapter: dict) -> dict:
@@ -186,15 +188,18 @@ class ChapterMaker:
         return {"cards": cards}
 
     async def _generate_and_download(self, chapter, task, generate, download, sources):
-        activity.report("Asking NotebookLM")
-        status = await generate(self.notebook_id, source_ids=sources)
-        activity.report("NotebookLM is making it")
-        await self.client.artifacts.wait_for_completion(
-            self.notebook_id, status.task_id, timeout=LIGHT_TIMEOUT
-        )
-        raw = self._raw(chapter, task)
-        await download(self.notebook_id, str(raw), status.task_id, output_format="json")
-        return json.loads(raw.read_text(encoding="utf-8"))
+        async def ask():
+            activity.report("Asking NotebookLM")
+            return await generate(self.notebook_id, source_ids=sources)
+
+        async def fetch(task_id):
+            activity.report("NotebookLM is making it")
+            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=LIGHT_TIMEOUT)
+            raw = self._raw(chapter, task)
+            await download(self.notebook_id, str(raw), task_id, output_format="json")
+            return json.loads(raw.read_text(encoding="utf-8"))
+
+        return await self._once(chapter, task, ask, fetch, LIGHT_TIMEOUT)
 
     async def _mindmap(self, chapter, sources):
         mind_map = await self.client.mind_maps.generate(
@@ -230,7 +235,7 @@ class ChapterMaker:
             # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches.
             return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
 
-        return await self._once(chapter, "audio", ask, fetch)
+        return await self._once(chapter, "audio", ask, fetch, AUDIO_TIMEOUT)
 
     async def _video(self, chapter, sources):
         async def ask():
@@ -254,19 +259,38 @@ class ChapterMaker:
                 raise UnusableAnswer("No video was produced")
             return {"video": f"media/{Path(saved).name}", "explainer": None}
 
-        return await self._once(chapter, "video", ask, fetch)
+        return await self._once(chapter, "video", ask, fetch, VIDEO_TIMEOUT)
 
-    async def _once(self, chapter, kind, ask, fetch):
-        """Ask NotebookLM for a podcast or video once: if the session goes stale while it's being made, the
-        retry waits for the same one instead of asking (and spending NotebookLM's allowance) again."""
+    async def _once(self, chapter, kind, ask, fetch, timeout: float):
+        """Ask NotebookLM for an item once: if the session goes stale or a check times out while it's being
+        made, the retry waits for the same one instead of asking (and spending NotebookLM's allowance) again.
+        A wait that runs its whole `timeout` gets one more; after that the item waits for the next run."""
         key = (chapter["n"], kind)
         if key not in self.pending:
             self.pending[key] = (await ask()).task_id
+        started = time.monotonic()
         try:
             result = await fetch(self.pending[key])
         except Exception as error:  # a stale session or a hiccup keeps the request for the retry
+            if _whole_wait_ran_out(error, time.monotonic() - started, timeout):
+                self.whole_waits[key] = self.whole_waits.get(key, 0) + 1
+                if self.whole_waits[key] >= 2:
+                    self.pending.pop(key, None)
+                    self.whole_waits.pop(key, None)
+                    raise NotebookLMBusy(
+                        f"NotebookLM was still making it after waiting {2 * timeout / 60:.0f} minutes"
+                    ) from error
             if not (is_auth_error(error) or is_transient_error(error)):
                 self.pending.pop(key, None)
             raise
         self.pending.pop(key, None)
+        self.whole_waits.pop(key, None)
         return result
+
+
+def _whole_wait_ran_out(error: BaseException, seconds: float, timeout: float) -> bool:
+    """The wait for an item ran its whole timeout (not one slow status check that timed out)."""
+    names = " ".join(cls.__name__ for cls in type(error).__mro__)
+    if "WaitTimeout" in names or "ArtifactTimeout" in names:
+        return True
+    return isinstance(error, TimeoutError) and seconds >= 0.9 * timeout

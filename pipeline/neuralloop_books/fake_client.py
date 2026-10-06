@@ -227,6 +227,31 @@ class FakeSlowClient(FakeClient):
         return await super()._wait(notebook_id, task_id, **kwargs)
 
 
+class WaitTimeoutError(TimeoutError):
+    """notebooklm-py's name for a wait that ran its whole timeout (not one slow status check)."""
+
+
+class FakeSlowQuizClient(FakeClient):
+    """NotebookLM still making a quiz when the whole wait runs out, `timeouts` times in a row."""
+
+    def __init__(self, timeouts: int = 1, delay: float = 0.0):
+        super().__init__(delay)
+        self.timeouts, self.quiz_waits = timeouts, 0
+        self.quizzes_asked: list[str] = []
+        self.artifacts.generate_quiz = self._generate_quiz
+
+    async def _generate_quiz(self, notebook_id, source_ids=None, **kwargs):
+        self.quizzes_asked.append(source_ids[0])
+        return SimpleNamespace(task_id=f"{source_ids[0]}|quiz")
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        if str(task_id).endswith("|quiz"):
+            self.quiz_waits += 1
+            if self.quiz_waits <= self.timeouts:
+                raise WaitTimeoutError(f"Task {task_id} did not complete in {kwargs.get('timeout')}s")
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
 class FakeDownClient(FakeClient):
     """NotebookLM not answering at all for podcasts and videos (every request times out)."""
 

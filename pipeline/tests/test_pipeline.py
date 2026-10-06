@@ -13,6 +13,7 @@ from neuralloop_books.fake_client import (
     FakeQuotaClient,
     FakeRotatedSessionClient,
     FakeSlowClient,
+    FakeSlowQuizClient,
     FakeStaleSessionClient,
     FakeStaleTwiceWhileWaitingClient,
     FakeStaleWhileWaitingClient,
@@ -431,6 +432,25 @@ def test_notebooklm_not_answering_leaves_media_waiting_for_the_next_run_not_fail
     assert first["audio"]["status"] == "waiting_quota" and first["video"]["status"] == "waiting_quota"
     assert "try again" in first["video"]["error"].lower()
     assert first["quiz"]["status"] == DONE  # other items carry on
+
+
+def test_a_quiz_still_being_made_when_the_wait_runs_out_is_waited_for_not_asked_for_again(
+    options, no_retry_pause
+):
+    options.chapters, options.media = "1", "none"
+    client = FakeSlowQuizClient(timeouts=1)
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE
+    assert client.quizzes_asked == ["source-1"]  # NotebookLM's allowance spent once
+
+
+def test_a_quiz_that_outlasts_two_whole_waits_waits_for_the_next_run(options, no_retry_pause):
+    """A whole wait is 15 minutes: one more is patient, three more would be an hour."""
+    options.chapters, options.media = "1", "none"
+    client = FakeSlowQuizClient(timeouts=1_000)
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == WAITING
+    assert client.quiz_waits == 2 and client.quizzes_asked == ["source-1"]
 
 
 def test_once_notebooklm_gave_up_on_a_kind_of_item_the_rest_of_that_kind_wait_without_retrying(
