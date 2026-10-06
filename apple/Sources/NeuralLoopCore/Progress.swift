@@ -148,6 +148,14 @@ public struct StudyProgress: Codable, Equatable, Sendable {
         }
         return out
     }
+
+    /// Two copies of this device's own file (two windows on one book, each saving its own): merged like devices,
+    /// except study time, which both copies counted from the same start, so each day keeps the larger count.
+    public static func mergedSameDevice(_ a: StudyProgress, _ b: StudyProgress) -> StudyProgress {
+        var out = merged([a, b])
+        out.log = a.log.merging(b.log) { max($0, $1) }
+        return out
+    }
 }
 
 /// The study site writes `true` for closedShown and timestamps for steps; accept both as numbers.

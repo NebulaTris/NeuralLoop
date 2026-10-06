@@ -35,6 +35,16 @@ func progress(_ json: String) throws -> StudyProgress {
     #expect(StudyProgress.merged([mac, ipad]).log == ["2026-09-28": 900, "2026-09-27": 60])
 }
 
+@Test func twoCopiesOfThisDevicesFileMergeWithoutCountingStudyTimeTwice() throws {
+    // Two windows on one book: each kept its own copy; the file on disk has the other window's reviews and steps.
+    let mine = try progress(#"{"cards":{"1:0":{"s":3,"d":5,"reps":1,"last":100,"due":500}},"loop":{"1":{"prime":10}},"log":{"2026-09-28":600},"updatedAt":100}"#)
+    let disk = try progress(#"{"cards":{"1:1":{"s":3,"d":5,"reps":1,"last":200,"due":600}},"loop":{"1":{"read":20}},"log":{"2026-09-28":615,"2026-09-27":30},"updatedAt":200}"#)
+    let merged = StudyProgress.mergedSameDevice(mine, disk)
+    #expect(Set(merged.cards.keys) == ["1:0", "1:1"])
+    #expect(merged.loop["1"] == ["prime": 10, "read": 20])
+    #expect(merged.log == ["2026-09-28": 615, "2026-09-27": 30])
+}
+
 @Test func aDeviceSavesTheMergedViewButOnlyItsOwnStudyTime() throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)

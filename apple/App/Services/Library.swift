@@ -50,7 +50,11 @@ private struct Scanned: Sendable {
 final class Library {
     var entries: [BookEntry] = []
     var path: [String] = []
-    var isPicking = false
+    var isPicking = false {
+        didSet { if !isPicking { pickerWindow = nil } }
+    }
+    /// The one window showing the "Add a book" file picker (the window in front when it was asked for).
+    var pickerWindow: String?
     /// The guided tour, asked for from Help (Mac) or Settings (iPad): whether it's up, which window shows it, and a
     /// number that changes with every request (the tour is keyed on it, so asking again starts it over in place).
     private(set) var tour = TourRequest()
