@@ -46,12 +46,16 @@ def default_path() -> Path | None:
 
 
 def _choice(data, fallback: ModelChoice) -> ModelChoice:
+    """A choice from ai.json; what it leaves out comes from `fallback`, but a model or address only when it's
+    for the same provider (recall on Claude must never be asked for Ollama's gemma2:2b)."""
     if not isinstance(data, dict):
         return fallback
+    provider = str(data.get("provider") or fallback.provider)
+    same = provider == fallback.provider
     return ModelChoice(
-        provider=str(data.get("provider") or fallback.provider),
-        model=data.get("model") or fallback.model,
-        base_url=data.get("baseUrl") or fallback.base_url,
+        provider=provider,
+        model=data.get("model") or (fallback.model if same else None),
+        base_url=data.get("baseUrl") or (fallback.base_url if same else None),
     )
 
 
