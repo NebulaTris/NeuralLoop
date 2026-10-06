@@ -6,13 +6,19 @@ needs text back, so every tool is denied (the model isn't even offered one), the
 ignored, and it runs in an empty folder with a minimal environment (none of our providers' keys). opencode 2
 serves every `run` from one background service with the person's own settings, where these rules wouldn't
 apply; so a private server (`--standalone`) is required, and an opencode without it must be updated first.
+The person's global opencode config is layered after our rules (the last matching rule wins), so an agent
+permission there (`agent.build.permission.bash: allow`) would switch tools back on: opencode runs with its
+home and config folders pointed at the empty folder, keeping only its data (sign-ins) and cache folders.
 """
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping
+from pathlib import Path
 
 from ..prompts import wrap_chapter
 from . import QuotaError, SetupError, agent_env, communicate
@@ -33,9 +39,25 @@ UPDATE = (
 )
 
 
-def locked_down_env() -> dict[str, str]:
-    """Only the basics, and none of the person's own opencode settings (they could turn tools back on)."""
-    return {**agent_env(), "OPENCODE_CONFIG_CONTENT": NO_TOOLS, "OPENCODE_DISABLE_PROJECT_CONFIG": "1"}
+def locked_down_env(empty: str, env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Only the basics, and none of the person's own opencode settings (they could turn tools back on):
+    home and config are the `empty` folder; data (where `opencode auth login` keeps sign-ins), cache, and
+    state stay the person's own."""
+    env = os.environ if env is None else env
+    home = Path(env.get("HOME") or Path.home())
+    own = {
+        "XDG_DATA_HOME": env.get("XDG_DATA_HOME") or str(home / ".local" / "share"),
+        "XDG_CACHE_HOME": env.get("XDG_CACHE_HOME") or str(home / ".cache"),
+        "XDG_STATE_HOME": env.get("XDG_STATE_HOME") or str(home / ".local" / "state"),
+    }
+    return {
+        **agent_env(env=env),
+        **own,
+        "HOME": empty,
+        "XDG_CONFIG_HOME": str(Path(empty) / "config"),
+        "OPENCODE_CONFIG_CONTENT": NO_TOOLS,
+        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+    }
 
 
 class OpencodeModel:
@@ -58,15 +80,17 @@ class OpencodeModel:
     async def _has_standalone(self) -> bool:
         if self.executable not in _standalone:
             try:
-                process = await asyncio.create_subprocess_exec(
-                    self.executable,
-                    "run",
-                    "--help",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=locked_down_env(),
-                )
-                stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
+                with tempfile.TemporaryDirectory(prefix="neuralloop-opencode-") as empty:
+                    process = await asyncio.create_subprocess_exec(
+                        self.executable,
+                        "run",
+                        "--help",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=empty,
+                        env=locked_down_env(empty),
+                    )
+                    stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
                 _standalone[self.executable] = b"--standalone" in stdout + stderr
             except (OSError, asyncio.TimeoutError, TimeoutError):  # an old or odd opencode: not safe to run
                 _standalone[self.executable] = False
@@ -84,7 +108,7 @@ class OpencodeModel:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=empty,
-                env=locked_down_env(),
+                env=locked_down_env(empty),
             )
             stdout, stderr = await communicate(process, TIMEOUT)
         if process.returncode != 0:

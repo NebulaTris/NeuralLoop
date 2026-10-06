@@ -91,7 +91,7 @@ public struct ProviderPreset: Identifiable, Equatable, Sendable {
         .init(id: "openrouter", title: "OpenRouter", detail: "One key for hundreds of models, including DeepSeek, Qwen, Llama, and Hermes.",
               provider: "openrouter", keyVariable: "OPENROUTER_API_KEY", keyOptional: false, defaultModel: "deepseek/deepseek-v4.1-flash", baseUrl: nil,
               suggestions: ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro-0813"]),
-        .init(id: "opencode", title: "opencode", detail: "Uses the model you've chosen in opencode. Type one to override it, for example deepseek/deepseek-v4-pro.",
+        .init(id: "opencode", title: "opencode", detail: "A model you've connected in opencode (opencode auth login), for example deepseek/deepseek-v4-pro. NeuralLoop runs it without your own opencode settings, so its tools stay off.",
               provider: "opencode", keyVariable: nil, keyOptional: false, defaultModel: "", baseUrl: nil,
               suggestions: ["deepseek/deepseek-v4-pro", "anthropic/claude-sonnet-5"]),
         .init(id: "hermes", title: "Hermes Agent", detail: "Nous Research's Hermes Agent, as you've set it up (hermes setup). It's an agent: if its tools are on, text in a book could steer it, so turn its tools off in Hermes first.",

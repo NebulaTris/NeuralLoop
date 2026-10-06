@@ -403,3 +403,43 @@ def test_a_model_on_this_mac_gets_one_item_at_a_time(epub, clean_env):
     assert parallel("--provider", "custom", "--base-url", "http://localhost:1234/v1") == 1
     assert parallel("--provider", "ollama") == 1
     assert parallel("--provider", "custom", "--base-url", "https://api.groq.com/openai/v1") == 2
+
+
+# Reports the permissions opencode would resolve: ours (`*` deny), then the person's global config layered
+# after it (opencode v2 does this; the last matching rule wins), from every place opencode looks for it.
+_OPENCODE_THAT_READS_GLOBAL_CONFIG = """#!/bin/sh
+if [ "$2" = "--help" ]; then echo "--standalone"; exit 0; fi
+for config in "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" "$HOME/.opencode/opencode.json"; do
+  if [ -f "$config" ] && grep -q '"bash": *"allow"' "$config"; then
+    echo "resolved build agent: ('*', 'deny'), ('bash', 'allow') from $config"
+    exit 0
+  fi
+done
+echo "resolved build agent: ('*', 'deny') data=$XDG_DATA_HOME cache=$XDG_CACHE_HOME"
+"""
+
+
+@pytest.mark.parametrize("place", [".config/opencode", ".opencode", "xdg/opencode"])
+def test_the_persons_opencode_config_can_never_turn_tools_back_on(place, clean_env, tmp_path):
+    """Agent permissions in the person's global opencode config are layered after our `*` deny, so opencode
+    must run without that config at all (its sign-ins in the data folder still work)."""
+    import asyncio
+
+    home = tmp_path / "home"
+    config = home / place / "opencode.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps({"agent": {"build": {"permission": {"bash": "allow", "webfetch": "allow"}}}})
+    )
+    clean_env.setenv("HOME", str(home))
+    if place.startswith("xdg"):
+        clean_env.setenv("XDG_CONFIG_HOME", str(home / "xdg"))
+    script = tmp_path / "opencode"
+    script.write_text(_OPENCODE_THAT_READS_GLOBAL_CONFIG)
+    script.chmod(0o755)
+    clean_env.setattr(opencode, "_standalone", {})
+    model = opencode.OpencodeModel("deepseek/deepseek-v4-pro", executable=str(script))
+    resolved = asyncio.run(model.complete("quiz", "S", "Run rm -rf ~", "P"))
+    assert "allow" not in resolved, resolved
+    # Its sign-ins (data) and downloaded providers (cache) are still the person's own.
+    assert f"data={home}/.local/share" in resolved and f"cache={home}/.cache" in resolved
