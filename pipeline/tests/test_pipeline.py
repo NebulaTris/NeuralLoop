@@ -210,6 +210,20 @@ def test_a_crashed_run_is_resumed_and_its_working_items_finished(options):
     assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
 
 
+@pytest.mark.parametrize("broken", ['{"title": "T", "chapters": [', "", '["not", "a", "state"]'])
+def test_an_unreadable_state_file_is_kept_aside_and_the_book_split_again(options, broken):
+    """A state.json cut short (the Mac lost power mid-write) must not stop the book for good."""
+    lines = []
+    options.log = lines.append
+    options.out.mkdir(parents=True)
+    (options.out / "state.json").write_text(broken)
+    state = run_local(options)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE
+    aside = list(options.out.glob("state.json.unreadable-*"))
+    assert len(aside) == 1 and aside[0].read_text() == broken
+    assert any("couldn't be read" in line for line in lines)
+
+
 def test_two_runs_never_prepare_the_same_book_at_once(options):
     import fcntl
     import os

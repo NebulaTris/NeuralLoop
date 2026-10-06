@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from . import aiconfig
+from .chapters import UnreadableBookError, UnsafeBookError
 from .config import (
     AUDIO_FORMATS,
     AUDIO_LENGTHS,
@@ -21,7 +22,7 @@ from .config import (
     VIDEO_STYLES,
 )
 from .models import SetupError, resolve_provider, safe_message
-from .pipeline import Options, run
+from .pipeline import BookProblem, Options, run
 from .state import FAILED, WAITING
 
 SAMPLE_BOOK = Path(__file__).resolve().parent.parent / "sample" / "sample-book.epub"
@@ -368,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     except SetupError as error:
         print(safe_message(error, 1000))
         return 3
-    except ValueError as error:
+    except (BookProblem, UnreadableBookError, UnsafeBookError) as error:
         print(safe_message(error, 1000))
         return 2
     except Exception as error:

@@ -17,7 +17,7 @@ from .engines.auto import made_by
 from .models import SetupError, safe_message
 from .notebook import is_quota_error
 from .selection import parse_selection
-from .state import DONE, FAILED, WAITING, WORKING, BookState
+from .state import DONE, FAILED, WAITING, WORKING, BookState, UnreadableState
 
 
 @dataclass
@@ -55,12 +55,12 @@ def prepare_state(opts: Options) -> BookState:
     """Load the saved state, or split the book and create it; then mark what this run should make."""
     for sub in ("chapters", "media", "raw"):
         (opts.out / sub).mkdir(parents=True, exist_ok=True)
-    state = BookState.load(opts.out / "state.json")
+    state = _load_state(opts)
     if state is None:
         opts.log(f"Splitting {safe_message(opts.book.name)} into chapters…")
         chapters = split_book(opts.book, opts.out / "chapters")
         if not chapters:
-            raise ValueError("Couldn't find any chapters in this book.")
+            raise BookProblem("Couldn't find any chapters in this book.")
         title = clean_title(opts.title or opts.book.stem.replace("_", " ").replace("-", " ")) or "Book"
         state = BookState.create(
             opts.out / "state.json",
@@ -72,7 +72,10 @@ def prepare_state(opts: Options) -> BookState:
     state.ensure_tasks()
     state.reset_interrupted()  # safe: the book's lock means no other run is working on it
     count = len(state.chapters)
-    chosen, media = parse_selection(opts.chapters, count), parse_selection(opts.media, count)
+    try:
+        chosen, media = parse_selection(opts.chapters, count), parse_selection(opts.media, count)
+    except ValueError as error:
+        raise BookProblem(str(error)) from error
     state.apply_selection(
         chosen,
         media,
@@ -87,6 +90,22 @@ def prepare_state(opts: Options) -> BookState:
         f"podcast + video for {len(chosen & media)}."
     )
     return state
+
+
+class BookProblem(ValueError):
+    """The run can't go on until the person changes something (the chapters asked for, the book itself)."""
+
+
+def _load_state(opts: Options) -> BookState | None:
+    """The saved state; one that can't be read is kept aside (never deleted) and the book is split again."""
+    path = opts.out / "state.json"
+    try:
+        return BookState.load(path)
+    except UnreadableState:
+        aside = path.with_name(f"state.json.unreadable-{time.strftime('%Y%m%d-%H%M%S')}")
+        os.replace(path, aside)
+        opts.log(f"This book's saved progress couldn't be read; kept it as {aside.name}, starting afresh.")
+        return None
 
 
 def book_options(opts: Options) -> dict:
@@ -117,7 +136,7 @@ def _book_lock(out: Path):
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             handle.close()
-            raise ValueError(ALREADY_RUNNING) from None
+            raise BookProblem(ALREADY_RUNNING) from None
         try:
             same_file = os.stat(path).st_ino == os.fstat(handle.fileno()).st_ino
         except FileNotFoundError:

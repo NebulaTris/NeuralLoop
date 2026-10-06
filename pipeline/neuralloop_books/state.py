@@ -1,6 +1,7 @@
 """The saved progress of one book (state.json), so every run can resume where the last one stopped."""
 
 import json
+import os
 from pathlib import Path
 
 from .config import MEDIA_TASKS, TASKS
@@ -15,6 +16,10 @@ TODO, WORKING, DONE, SKIPPED, WAITING, FAILED = (
 )
 
 
+class UnreadableState(ValueError):
+    """state.json is there but isn't a book's state (cut short, or not JSON)."""
+
+
 class BookState:
     def __init__(self, path: Path, data: dict):
         self.path = path
@@ -22,7 +27,16 @@ class BookState:
 
     @classmethod
     def load(cls, path: Path) -> "BookState | None":
-        return cls(path, json.loads(path.read_text(encoding="utf-8"))) if path.exists() else None
+        """The saved state, None when there's none yet; UnreadableState when the file can't be used."""
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise UnreadableState(f"state.json isn't valid JSON ({error})") from error
+        if not isinstance(data, dict) or not isinstance(data.get("chapters"), list):
+            raise UnreadableState("state.json doesn't hold a book's chapters")
+        return cls(path, data)
 
     @classmethod
     def create(
@@ -38,8 +52,11 @@ class BookState:
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=1, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.path)
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(self.data, indent=1, ensure_ascii=False))
+            handle.flush()
+            os.fsync(handle.fileno())  # on disk before it's swapped in: a power cut never leaves half a file
+        os.replace(tmp, self.path)
 
     @property
     def chapters(self) -> list[dict]:

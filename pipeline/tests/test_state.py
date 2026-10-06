@@ -15,6 +15,28 @@ def statuses(state, task):
     return [c["tasks"][task]["status"] for c in state.chapters]
 
 
+def test_saving_reaches_the_disk_before_the_file_is_swapped_in(tmp_path, monkeypatch):
+    import os
+
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(os, "replace", lambda a, b: (events.append("replace"), real_replace(a, b))[1])
+    make_state(tmp_path)
+    assert events[:2] == ["fsync", "replace"] and (tmp_path / "state.json").exists()
+
+
+def test_an_unreadable_state_file_is_reported_not_returned(tmp_path):
+    import pytest
+
+    from neuralloop_books.state import UnreadableState
+
+    for text in ('{"chapters": [', "[]", '{"title": "no chapters"}'):
+        (tmp_path / "state.json").write_text(text)
+        with pytest.raises(UnreadableState):
+            BookState.load(tmp_path / "state.json")
+
+
 def test_media_only_for_selected_chapters(tmp_path):
     state = make_state(tmp_path)
     state.apply_selection({1, 2, 3}, {1}, audio=True, video=True, retry=False)

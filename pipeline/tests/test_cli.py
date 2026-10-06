@@ -105,6 +105,29 @@ def test_a_broken_book_exits_2_with_a_friendly_message(tmp_path, capsys):
     assert "This book couldn't be read" in capsys.readouterr().out
 
 
+def test_a_corrupt_state_file_does_not_say_the_book_is_unreadable(epub, tmp_path, capsys):
+    """Exit 2 makes the app wait for a settings change: only a book that can't be read earns it."""
+    out = tmp_path / "o"
+    out.mkdir()
+    (out / "state.json").write_text('{"chapters": [')
+    assert main([str(epub), "--dry-run", "--no-open", "--out", str(out)]) == 0
+
+
+def test_only_book_problems_exit_2_and_other_value_errors_are_not_mistaken_for_one(
+    epub, tmp_path, monkeypatch
+):
+    import json
+
+    from neuralloop_books import cli
+
+    async def fails(opts, engine):
+        json.loads("{broken")
+
+    monkeypatch.setattr(cli, "run", fails)
+    with pytest.raises(ValueError):
+        main([str(epub), "--dry-run", "--no-open", "--out", str(tmp_path / "o")])
+
+
 def test_only_real_sign_in_problems_are_reported_as_not_signed_in(epub, tmp_path, capsys, monkeypatch):
     from neuralloop_books import cli
 
