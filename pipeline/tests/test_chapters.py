@@ -3,7 +3,12 @@ import zipfile
 
 import pytest
 
-from neuralloop_books.chapters import UnsafeBookError, is_appendix, is_front_matter, split_book
+from neuralloop_books.chapters import (
+    UnsafeBookError,
+    is_appendix,
+    is_front_matter,
+    split_book,
+)
 from neuralloop_books.testing import LONG, write_epub, write_pdf
 
 
@@ -515,3 +520,125 @@ def test_bookmarks_pointing_nowhere_are_skipped(tmp_path, monkeypatch):
         ("Caching", [5, 8]),
         ("Queues", [9, 12]),
     ]
+
+
+# ---------------------------------------------------------------- EPUB tables of contents with levels
+
+
+def _sectioned(word: str) -> str:
+    """A chapter body with two sections that the table of contents links to by anchor."""
+    return f'{word} {LONG}</p><h2 id="a">First</h2><p>{LONG}</p><h2 id="b">Second</h2><p>{LONG}'
+
+
+def _titles(book, out):
+    return [c["title"] for c in split_book(book, out)]
+
+
+class TestEpubContentsWithLevels:
+    """A nav document and an NCX with the same levels split the same way, the way PDF bookmarks do:
+    parts open into their chapters, chapters keep their sections inside."""
+
+    @pytest.mark.parametrize("nav", [True, False])
+    @pytest.mark.parametrize("part_page", [True, False])
+    @pytest.mark.parametrize("name", ["Chapter {k}: Topic {p}.{k}", "Topic {p}.{k}"])
+    def test_parts_open_into_their_chapters(self, tmp_path, nav, part_page, name):
+        """Three parts of four chapters, each chapter its own file (a part's own title page, or none)."""
+        chapters, toc = [], []
+        for p in range(1, 4):
+            if part_page:
+                chapters.append((f"Part {p}", "A short opener."))
+            first = len(chapters)
+            kids = []
+            for k in range(1, 5):
+                kids.append((name.format(p=p, k=k), len(chapters), []))
+                chapters.append((name.format(p=p, k=k), f"Body {p}.{k} {LONG}"))
+            toc.append((f"Part {p}", first - 1 if part_page else first, kids))
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        expected = [name.format(p=p, k=k) for p in range(1, 4) for k in range(1, 5)]
+        assert _titles(book, tmp_path / "out") == expected
+        assert f"Body 2.3 {LONG[:20]}" in (tmp_path / "out" / "07.md").read_text()
+
+    @pytest.mark.parametrize("nav", [True, False])
+    @pytest.mark.parametrize("section", ["{n}.{k} Basics", "Basics {k}"])
+    def test_chapters_keep_their_sections_inside(self, tmp_path, nav, section):
+        names = ["Intro", "Caching", "Queues", "Logs"]
+        chapters = [("Intro", LONG)] + [(t, _sectioned(t)) for t in names[1:]]
+        toc = [("Intro", 0, [])] + [
+            (
+                t,
+                n,
+                [
+                    (section.format(n=n, k=1), f"doc{n}.xhtml#a", []),
+                    (section.format(n=n, k=2), f"doc{n}.xhtml#b", []),
+                ],
+            )
+            for n, t in enumerate(names)
+            if n
+        ]
+        out = tmp_path / "out"
+        assert _titles(write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc), out) == names
+        text = (out / "02.md").read_text()
+        assert "## First" in text and "## Second" in text
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_one_chapter_with_sections_among_plain_ones_stays_whole(self, tmp_path, nav):
+        chapters = [("Intro", LONG), ("Caching", _sectioned("Caching")), ("Queues", LONG)]
+        toc = [
+            ("Intro", 0, []),
+            ("Caching", 1, [("Why caches", "doc1.xhtml#a", []), ("Eviction", "doc1.xhtml#b", [])]),
+            ("Queues", 2, []),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Intro", "Caching", "Queues"]
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_parts_chapters_and_sections_mixed_with_front_and_back_matter(self, tmp_path, nav):
+        chapters = [
+            ("Contents", "toc"),
+            ("Preface", LONG),
+            ("Part I", "Opener."),
+            ("Chapter 1", _sectioned("One")),
+            ("Chapter 2", LONG),
+            ("Part II", "Opener."),
+            ("Chapter 3", LONG),
+            ("Chapter 4", _sectioned("Four")),
+            ("Appendix A: Full tutorial", LONG * 10),
+            ("Index", LONG),
+        ]
+
+        def sections(n):
+            return [(f"{n}.1 First", f"doc{n}.xhtml#a", []), (f"{n}.2 Second", f"doc{n}.xhtml#b", [])]
+
+        toc = [
+            ("Contents", 0, []),
+            ("Preface", 1, []),
+            ("Part I", 2, [("Chapter 1", 3, sections(3)), ("Chapter 2", 4, [])]),
+            ("Part II", 5, [("Chapter 3", 6, []), ("Chapter 4", 7, sections(7))]),
+            ("Appendix A: Full tutorial", 8, []),
+            ("Index", 9, []),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == [
+            "Preface",
+            "Chapter 1",
+            "Chapter 2",
+            "Chapter 3",
+            "Chapter 4",
+            "Appendix A: Full tutorial",
+        ]
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_a_single_entry_for_the_whole_book_opens_into_its_chapters(self, tmp_path, nav):
+        chapters = [("My Book", "Title page."), ("Caching", LONG), ("Queues", LONG), ("Logs", LONG)]
+        toc = [("My Book", 0, [("Caching", 1, []), ("Queues", 2, []), ("Logs", 3, [])])]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Caching", "Queues", "Logs"]
+
+    def test_part_headings_without_links_still_give_their_chapters(self, tmp_path):
+        chapters = [("Caching", LONG), ("Queues", LONG), ("Logs", LONG)]
+        toc = [
+            ("Part I", None, [("Caching", 0, []), ("Queues", 1, [])]),
+            ("Part II", None, [("Logs", 2, [])]),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Caching", "Queues", "Logs"]

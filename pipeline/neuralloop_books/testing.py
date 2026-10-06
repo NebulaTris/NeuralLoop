@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 LONG = "Systems change and engineers adapt with care. " * 50
+TocEntry = tuple[str, "int | str | None", list]  # (title, target, children): see write_epub
 
 
 def write_epub(
@@ -13,18 +14,18 @@ def write_epub(
     files: dict[str, bytes] | None = None,
     anchors: bool = False,
     one_file: bool = False,
+    toc: list[TocEntry] | None = None,
 ) -> Path:
     """chapters: (title, body HTML). files: extra entries under OEBPS/, e.g. {"images/a.png": b"..."}.
 
     anchors: each chapter sits in <section id="chN"> and the table of contents links to "file#chN".
     one_file: every chapter in one XHTML file (implies anchors), the way some converters write books.
+    toc: a nested table of contents instead of one entry per chapter: (title, target, children), where the
+    target is a chapter's index, an href ("doc2.xhtml#s1"), or None for a heading without a link (nav only).
     """
     anchors = anchors or one_file
     docs = [(f"doc{i}.xhtml", title, body) for i, (title, body) in enumerate(chapters)]
-    links = [
-        (f"doc{0 if one_file else i}.xhtml" + (f"#ch{i}" if anchors else ""), t)
-        for i, (_, t, _) in enumerate(docs)
-    ]
+    entries: list[TocEntry] = toc if toc is not None else [(t, i, []) for i, (_, t, _) in enumerate(docs)]
     if one_file:
         docs = docs[:1]
     manifest = "".join(
@@ -35,6 +36,12 @@ def write_epub(
     else:
         manifest += '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
     spine = "".join(f'<itemref idref="d{i}"/>' for i in range(len(docs)))
+
+    def href_of(target: int | str | None) -> str | None:
+        if target is None or isinstance(target, str):
+            return target
+        return f"doc{0 if one_file else target}.xhtml" + (f"#ch{target}" if anchors else "")
+
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("mimetype", "application/epub+zip")
         z.writestr(
@@ -45,16 +52,12 @@ def write_epub(
             "OEBPS/content.opf", f"<package><manifest>{manifest}</manifest><spine>{spine}</spine></package>"
         )
         if nav:
-            items = "".join(f'<li><a href="{href}">{t}</a></li>' for href, t in links)
+            items = _nav_items(entries, href_of)
             z.writestr(
                 "OEBPS/nav.xhtml", f'<html><body><nav epub:type="toc"><ol>{items}</ol></nav></body></html>'
             )
         else:
-            points = "".join(
-                f'<navPoint id="p{i}"><navLabel><text>{t}</text></navLabel><content src="{href}"/></navPoint>'
-                for i, (href, t) in enumerate(links)
-            )
-            z.writestr("OEBPS/toc.ncx", f"<ncx><navMap>{points}</navMap></ncx>")
+            z.writestr("OEBPS/toc.ncx", f"<ncx><navMap>{_nav_points(entries, href_of)}</navMap></ncx>")
         sections = [
             (f'<section id="ch{i}">' if anchors else "")
             + f"<h1>{t}</h1><h2>Part one</h2><p>{body}</p>"
@@ -67,6 +70,26 @@ def write_epub(
         for name, data in (files or {}).items():
             z.writestr(f"OEBPS/{name}", data)
     return path
+
+
+def _nav_items(entries: list[TocEntry], href_of) -> str:
+    html = ""
+    for title, target, children in entries:
+        href = href_of(target)
+        label = f'<a href="{href}">{title}</a>' if href else f"<span>{title}</span>"
+        inner = f"\n<ol>{_nav_items(children, href_of)}</ol>" if children else ""
+        html += f"\n<li>{label}{inner}</li>"
+    return html
+
+
+def _nav_points(entries: list[TocEntry], href_of) -> str:
+    return "".join(
+        f"<navPoint><navLabel><text>{title}</text></navLabel>"
+        + (f'<content src="{href_of(target)}"/>' if target is not None else "")
+        + _nav_points(children, href_of)
+        + "</navPoint>"
+        for title, target, children in entries
+    )
 
 
 def write_pdf(path: Path, pages: int, outline: list[tuple[str, int, list[tuple[str, int]]]]) -> Path:

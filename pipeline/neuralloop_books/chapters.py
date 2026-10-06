@@ -392,36 +392,153 @@ def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[st
     return spine, toc
 
 
+class _TocEntry:
+    """One table-of-contents entry: its title, where it points (file in the archive, or None for a heading
+    without a link), the #fragment, and the entries nested under it."""
+
+    __slots__ = ("file", "fragment", "kids", "title")
+
+    def __init__(self, title: str = "", file: str | None = None, fragment: str = ""):
+        self.title, self.file, self.fragment, self.kids = title, file, fragment, []
+
+
+# Every pattern here stops at the next tag it can't belong to, and each part of the file is looked at once, so
+# a hostile file can't make reading the contents take quadratic time.
+_NAV_TAG = re.compile(r"<(/?)(ol|ul|li|a)\b([^<>]*)>", re.IGNORECASE)
+_NCX_TAG = re.compile(r"<(/?)(navPoint|text|content)\b([^<>]*)>")
+_HREF = re.compile(r"""\bhref\s*=\s*["']([^"']+)["']""")
+_SRC = re.compile(r"""\bsrc\s*=\s*["']([^"']+)["']""")
+
+
+def _label(markup: str) -> str:
+    return " ".join(html.unescape(re.sub(r"<[^<>]*>", "", markup)).split())
+
+
 def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str, str]]:
-    # Every pattern here stops at the next tag it can't belong to, so a hostile file can't make matching take
-    # quadratic time (a "<nav" or "<a" that never closes would otherwise be rescanned to the end each time).
     text = _read(book, nav)
     start = next((tag for tag in re.finditer(r"<nav\b[^<>]*>", text) if "toc" in tag.group()), None)
     end = text.find("</nav>", start.end()) if start else -1
     if end < 0:
         return []
-    block = text[start.end() : end]
-    top_level = (
-        re.sub(r"<ol\b[^<>]*>(?:(?!<ol\b).)*?</ol>", "", block, flags=re.DOTALL)
-        if block.count("<ol") > 2
-        else block
-    )
-    links = []
-    for attributes, label in re.findall(r"<a\b([^<>]*)>((?:(?!<a\b).)*?)</a>", top_level, re.DOTALL):
-        href = re.search(r'\bhref="([^"]+)"', attributes)
-        if href:
-            links.append((re.sub(r"<[^>]+>", "", html.unescape(label)).strip(), *_target(nav, href.group(1))))
-    return links
+    return _toc_chapters(_nav_tree(text[start.end() : end], nav))
+
+
+def _nav_tree(block: str, nav: str) -> list[_TocEntry]:
+    """The nav's nested lists as entries. A list item's title is its link's text, or (a heading with no
+    link, like "<span>Part I</span>") the text before its own nested list."""
+    root: list[_TocEntry] = []
+    lists = [root]  # the open lists; new items go into the innermost
+    items: list[
+        tuple[_TocEntry, int, int]
+    ] = []  # open items: (entry, depth of its list, where its text starts)
+    link: tuple[_TocEntry, int] | None = None  # a link waiting for its </a>: (entry, where its text starts)
+
+    def close_items(depth: int, at: int) -> None:
+        while items and items[-1][1] >= depth:
+            entry, _, since = items.pop()
+            if not entry.title and entry.file is None:
+                entry.title = _label(block[since:at])
+
+    for tag in _NAV_TAG.finditer(block):
+        closing, name, attributes = tag.group(1), tag.group(2).lower(), tag.group(3)
+        if name == "a":
+            if link and closing:
+                link[0].title = _label(block[link[1] : tag.start()])
+            link = None
+            href = None if closing else _HREF.search(attributes)
+            if href:
+                file, fragment = _target(nav, href.group(1))
+                owner = items[-1][0] if items and items[-1][1] == len(lists) else None
+                if owner is None or owner.file is not None or owner.title:
+                    owner = _TocEntry()  # a link outside a list item, or a second link in one
+                    lists[-1].append(owner)
+                owner.file, owner.fragment = file, fragment
+                link = (owner, tag.end())
+        elif name == "li" and not closing:
+            close_items(len(lists), tag.start())  # an item left open ends where the next one starts
+            entry = _TocEntry()
+            lists[-1].append(entry)
+            items.append((entry, len(lists), tag.end()))
+        elif name == "li":
+            close_items(len(lists), tag.start())
+        elif not closing:  # a nested list belongs to the item it's in; its heading text ends here
+            owner = items[-1][0] if items and items[-1][1] == len(lists) else None
+            if owner is not None and not owner.title and owner.file is None:
+                owner.title = _label(block[items[-1][2] : tag.start()])
+            lists.append(owner.kids if owner is not None else lists[-1])
+        elif len(lists) > 1:
+            close_items(len(lists), tag.start())
+            lists.pop()
+    return root
 
 
 def _ncx_toc(book: zipfile.ZipFile, ncx: str) -> list[tuple[str, str, str]]:
-    points = re.findall(
-        r"<navPoint\b[^<>]*>\s*<navLabel>\s*<text>([^<]*)</text>"
-        r"(?:(?!<navPoint\b).)*?<content\b[^<>]*?src=\"([^\"]+)\"",
-        _read(book, ncx),
-        re.DOTALL,
-    )
-    return [(html.unescape(label).strip(), *_target(ncx, src)) for label, src in points]
+    text = _read(book, ncx)
+    root: list[_TocEntry] = []
+    open_points: list[_TocEntry] = []
+    for tag in _NCX_TAG.finditer(text):
+        closing, name, attributes = tag.group(1), tag.group(2), tag.group(3)
+        point = open_points[-1] if open_points else None
+        if name == "navPoint" and not closing:
+            entry = _TocEntry()
+            (point.kids if point else root).append(entry)
+            open_points.append(entry)
+        elif name == "navPoint":
+            if open_points:
+                open_points.pop()
+        elif name == "text" and not closing and point and not point.title:
+            after = text.find("<", tag.end())
+            point.title = _label(text[tag.end() : after if after >= 0 else len(text)])
+        elif name == "content" and point and point.file is None:
+            src = _SRC.search(attributes)
+            if src:
+                point.file, point.fragment = _target(ncx, src.group(1))
+    return _toc_chapters(root)
+
+
+def _toc_chapters(entries: list[_TocEntry]) -> list[tuple[str, str, str]]:
+    """The entries that start chapters, (title, file, fragment) in table-of-contents order, by the same rules
+    as PDF bookmarks: a single entry for the whole book, or a few groupings ("Foundations", "Practice") and
+    "Part II" entries with chapters inside open into those chapters; a chapter keeps its sections inside."""
+    real = [e for e in entries if not is_front_matter(e.title)]
+    inner = sum(len(e.kids) for e in real)
+    grouped = len(real) <= 1 or (len(real) < 4 and inner >= 4)
+    top = {id(e) for e in entries}
+    opened: list[_TocEntry] = []
+    for entry in entries:
+        opened.extend(_opened(entry, grouped) if not is_front_matter(entry.title) else [entry])
+    flat: list[_TocEntry] = []
+    for entry in opened:  # parts inside the book's own entry open too
+        flat.extend(_opened(entry, False) if id(entry) not in top else [entry])
+    return [(e.title, e.file, e.fragment) for e in flat if e.file is not None]
+
+
+def _opened(entry: _TocEntry, grouped: bool) -> list[_TocEntry]:
+    """The entry, or (when it holds chapters) its own opening pages followed by its chapters."""
+    kids = entry.kids
+    if not kids:
+        return [entry]
+    if entry.file is not None:
+        if _CHAPTER.match(entry.title) or _sections(entry):
+            return [entry]
+        holds = _PART.match(entry.title) and (any(_CHAPTER.match(k.title) for k in kids) or len(kids) >= 2)
+        if not holds and not (grouped and len(kids) >= 2):
+            return [entry]
+    first = kids[0]
+    if entry.file is None or (entry.file, entry.fragment) == (first.file, first.fragment):
+        return list(kids)  # nothing of its own before its first chapter: the chapter names it
+    if entry.file == first.file and not entry.fragment and not first.fragment:
+        return list(kids)
+    return [entry, *kids]
+
+
+def _sections(entry: _TocEntry) -> bool:
+    """Whether the entries inside are sections of it rather than chapters: mostly numbered sections ("6.1"),
+    or mostly anchors inside its own file."""
+    kids = entry.kids
+    numbered = sum(bool(_SECTION.match(k.title)) for k in kids)
+    own_file = sum(k.file == entry.file and bool(k.fragment) for k in kids)
+    return numbered * 2 > len(kids) or own_file * 2 > len(kids)
 
 
 def _target(toc_file: str, href: str) -> tuple[str, str]:
