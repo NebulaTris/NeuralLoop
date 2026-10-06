@@ -1,7 +1,8 @@
 // Runs the book pipeline and streams its output lines.
 // Where the pipeline lives, in order: the runtime packaged inside the app (Contents/Resources/runtime, `make package`;
-// it's covered by the app's signature, so nothing outside the app can swap it), NEURALLOOP_PIPELINE (a folder with
-// nl_book.py) with NEURALLOOP_PYTHON, then (development builds) the repo this app was built from.
+// it's covered by the app's signature, so nothing outside the app can swap it), then, in development builds only,
+// NEURALLOOP_PIPELINE (a folder with nl_book.py) with NEURALLOOP_PYTHON, then the repo this app was built from. A
+// Release build never runs anything from outside the app.
 
 import Foundation
 import NeuralLoopCore
@@ -18,10 +19,12 @@ final class PipelineRunner: @unchecked Sendable {
         let fm = FileManager.default
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime/bin/neuralloop"),
            fm.isExecutableFile(atPath: bundled.path) { return (bundled, []) }
+        #if DEBUG
         let env = ProcessInfo.processInfo.environment
         if let folder = env["NEURALLOOP_PIPELINE"], let python = env["NEURALLOOP_PYTHON"] {
             return (URL(fileURLWithPath: python), [folder + "/nl_book.py"])
         }
+        #endif
         if let repo = Bundle.main.object(forInfoDictionaryKey: "NeuralLoopRepo") as? String, !repo.isEmpty {
             let root = URL(fileURLWithPath: repo).standardizedFileURL
             let python = root.appendingPathComponent(".venv/bin/python")
