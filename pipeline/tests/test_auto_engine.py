@@ -224,3 +224,22 @@ def test_only_an_item_notebooklm_failed_says_so_in_the_progress_feed(monkeypatch
     primary = Recorder("NotebookLM", fail_make={"audio": RuntimeError("generation failed")})
     run(AutoEngine(lambda: primary, lambda: Recorder("Ollama"), lambda _: None), "quiz", "audio")
     assert steps == [("NotebookLM couldn't, so Ollama is making it", {"by": "Ollama", "restart": True})]
+
+
+def test_a_podcast_notebooklm_could_not_answer_waits_but_a_quiz_is_made_locally():
+    from neuralloop_books.notebook import NotebookLMBusy
+
+    busy = NotebookLMBusy("NotebookLM didn't answer (Request timed out) after 4 tries")
+    primary = Recorder("NotebookLM", fail_make={"video": busy, "quiz": NotebookLMBusy("slow")})
+    fallback = Recorder("Ollama")
+    assert run(AutoEngine(lambda: primary, lambda: fallback, lambda _: None), "quiz") == [{"quiz": "Ollama"}]
+    with pytest.raises(NotebookLMBusy) as caught:
+        run(
+            AutoEngine(
+                lambda: Recorder("NotebookLM", fail_make={"video": busy}),
+                lambda: Recorder("Ollama"),
+                lambda _: None,
+            ),
+            "video",
+        )
+    assert caught.value.engine_name == "NotebookLM"

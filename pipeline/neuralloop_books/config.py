@@ -57,6 +57,10 @@ SOURCE_TIMEOUT = 900.0
 LIGHT_TIMEOUT = 900.0
 AUDIO_TIMEOUT = 2400.0
 VIDEO_TIMEOUT = 3600.0
+# NotebookLM is sometimes slow or drops a connection mid-item: pause and try again this many times before
+# giving up (a podcast or video already asked for is waited for again, never asked for twice). Then the item
+# waits for the next run instead of failing.
+NOTEBOOKLM_RETRY_DELAYS = (20, 60, 120)
 
 
 def quota_message(engine_name: str) -> str:

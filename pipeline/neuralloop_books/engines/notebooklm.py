@@ -4,8 +4,9 @@ import asyncio
 import contextlib
 from types import ModuleType
 
+from .. import activity, config
 from ..config import SOURCE_TIMEOUT
-from ..notebook import ChapterMaker, MediaOptions, is_auth_error
+from ..notebook import ChapterMaker, MediaOptions, NotebookLMBusy, is_auth_error, is_transient_error
 from ..state import SKIPPED, BookState
 
 
@@ -70,14 +71,27 @@ class NotebookLMEngine:
         self.maker = ChapterMaker(client, self.enums, notebook_id, opts.out, media)
 
     async def make(self, task: str, chapter: dict) -> dict:
-        session = self._session
-        try:
-            return await self.maker.make(task, chapter)
-        except Exception as error:  # only a stale session is handled here; anything else goes to the caller
-            if not is_auth_error(error):
-                raise
-        await self._fresh_session(session)
-        return await self.maker.make(task, chapter)
+        delays = list(config.NOTEBOOKLM_RETRY_DELAYS)
+        reloaded = False
+        while True:
+            session = self._session
+            try:
+                return await self.maker.make(task, chapter)
+            except Exception as error:  # a stale session or a hiccup is handled here; anything else goes up
+                if is_auth_error(error) and not reloaded:
+                    reloaded = True
+                    await self._fresh_session(session)
+                    continue
+                if not is_transient_error(error):
+                    raise
+                if not delays:
+                    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
+                    raise NotebookLMBusy(
+                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                    ) from error
+                pause = delays.pop(0)
+                activity.report(f"NotebookLM is slow right now, trying again in {pause} s")
+                await asyncio.sleep(pause)
 
     async def _fresh_session(self, failed: int) -> None:
         """Google's session cookie rotates whenever another NotebookLM process (the app's usage check, a
@@ -98,3 +112,8 @@ class NotebookLMEngine:
                 if self.maker is not None:
                     self.maker.client = client
             self._session += 1
+
+
+def _short(error: BaseException) -> str:
+    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    return text[:100]

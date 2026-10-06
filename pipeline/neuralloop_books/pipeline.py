@@ -199,7 +199,14 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
         except SetupError:
             raise  # e.g. a revoked key: stop the run and say what to fix
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
-            if is_quota_error(error):
+            if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
+                entry.update(
+                    status=WAITING, error="NotebookLM didn't answer this time; Pip will try again next run."
+                )
+                opts.log(
+                    f"  … chapter {chapter['n']} {task}: NotebookLM didn't answer; will try again next run"
+                )
+            elif is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
                 quota_hit.add((who, task))
                 entry.update(status=WAITING, error=quota_message(who))

@@ -40,6 +40,36 @@ class UnusableAnswer(ValueError):
     """NotebookLM answered, but not with something we can use."""
 
 
+class NotebookLMBusy(RuntimeError):
+    """NotebookLM didn't answer after several patient tries: the item waits for the next run."""
+
+    try_later = True
+
+
+_TRANSIENT = re.compile(
+    r"timed?\s*out|timeout|deadline[\s_]exceeded|temporarily\s+unavailable|\bunavailable\b"
+    r"|connection\s+(?:reset|refused|closed|aborted|error)|server\s+(?:error|disconnected)"
+    r"|remote\s*protocol|\b50[234]\b|bad\s+gateway|service\s+unavailable|gateway\s+time-?out",
+    re.IGNORECASE,
+)
+
+
+def is_transient_error(error: BaseException) -> bool:
+    """A hiccup worth waiting out (slow answer, dropped connection, busy server), not a limit or a sign-in."""
+    if is_quota_error(error) or is_auth_error(error) or isinstance(error, UnusableAnswer):
+        return False
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return True
+    if getattr(error, "rpc_code", None) in (4, 14, "4", "14", "DEADLINE_EXCEEDED", "UNAVAILABLE"):
+        return True
+    names = " ".join(cls.__name__ for cls in type(error).__mro__)
+    if any(
+        k in names for k in ("Timeout", "ConnectError", "ReadError", "RemoteProtocolError", "NetworkError")
+    ):
+        return True
+    return bool(_TRANSIENT.search(f"{type(error).__name__} {error}"))
+
+
 def is_quota_error(error: BaseException) -> bool:
     from .models import QuotaError
 
@@ -210,8 +240,8 @@ class ChapterMaker:
             self.pending[key] = (await ask()).task_id
         try:
             result = await fetch(self.pending[key])
-        except Exception as error:  # a stale session keeps the request for the retry; anything else drops it
-            if not is_auth_error(error):
+        except Exception as error:  # a stale session or a hiccup keeps the request for the retry
+            if not (is_auth_error(error) or is_transient_error(error)):
                 self.pending.pop(key, None)
             raise
         self.pending.pop(key, None)

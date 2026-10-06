@@ -9,8 +9,10 @@ from neuralloop_books.engines.notebooklm import NotebookLMEngine
 from neuralloop_books.fake_client import (
     ENUMS,
     FakeClient,
+    FakeDownClient,
     FakeQuotaClient,
     FakeRotatedSessionClient,
+    FakeSlowClient,
     FakeStaleSessionClient,
     FakeStaleWhileWaitingClient,
 )
@@ -385,6 +387,30 @@ def test_a_podcast_already_asked_for_is_waited_for_not_asked_for_again(options):
     state = run_with(options, client)
     assert state.chapters[0]["tasks"]["audio"]["status"] == DONE
     assert client.generated.count(client.generated[0]) == 1  # NotebookLM's allowance spent once
+
+
+@pytest.fixture
+def no_retry_pause(monkeypatch):
+    from neuralloop_books import config
+
+    monkeypatch.setattr(config, "NOTEBOOKLM_RETRY_DELAYS", (0, 0, 0))
+
+
+def test_a_slow_notebooklm_is_ridden_out_and_still_makes_the_podcast_and_video(options, no_retry_pause):
+    """A status check that times out while NotebookLM is still making the video isn't a failure."""
+    client = FakeSlowClient()
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (DONE, DONE)
+    assert len(client.generated) == len(set(client.generated))  # each asked for once, never twice
+
+
+def test_notebooklm_not_answering_leaves_media_waiting_for_the_next_run_not_failed(options, no_retry_pause):
+    state = run_with(options, FakeDownClient())
+    first = state.chapters[0]["tasks"]
+    assert first["audio"]["status"] == "waiting_quota" and first["video"]["status"] == "waiting_quota"
+    assert "try again" in first["video"]["error"].lower()
+    assert first["quiz"]["status"] == DONE  # other items carry on
 
 
 def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):

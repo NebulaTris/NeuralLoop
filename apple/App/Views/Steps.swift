@@ -770,6 +770,8 @@ struct NotReady: View {
 
     private var detail: String {
         guard status == .waiting else { return note ?? "" }
+        // Waiting because NotebookLM didn't answer (not its limit): the pipeline's own words say so.
+        if let note, note.localizedCaseInsensitiveContains("didn't answer") { return note }
         #if os(iOS)
         return "NotebookLM is at its limit for now. Your Mac will try again when it resets, and it'll show up here."
         #else

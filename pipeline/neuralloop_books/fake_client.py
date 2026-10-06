@@ -183,6 +183,36 @@ class FakeStaleWhileWaitingClient(FakeClient):
         return await super()._wait(notebook_id, task_id, **kwargs)
 
 
+class FakeSlowClient(FakeClient):
+    """NotebookLM answering slowly: the first status check of every podcast and video times out (it's still
+    being made), and the item must ride it out with the same podcast or video, asked for once."""
+
+    def __init__(self, delay: float = 0.0):
+        super().__init__(delay)
+        self.generated: list[str] = []
+        self.timed_out: set[str] = set()
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if "audio_format" in kwargs or "video_format" in kwargs:
+            self.generated.append(f"{source_ids[0]}:{'audio' if 'audio_format' in kwargs else 'video'}")
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        if task_id not in self.timed_out:
+            self.timed_out.add(task_id)
+            raise TimeoutError("Request timed out calling LIST_ARTIFACTS")
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
+class FakeDownClient(FakeClient):
+    """NotebookLM not answering at all for podcasts and videos (every request times out)."""
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if "audio_format" in kwargs or "video_format" in kwargs:
+            raise TimeoutError("Request timed out calling CREATE_ARTIFACT")
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+
 class FakeQuotaClient(FakeClient):
     """Like FakeClient, but every media request hits NotebookLM's daily limit."""
 
