@@ -2,6 +2,9 @@
 
 import NeuralLoopCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct BookView: View {
     let entry: BookEntry
@@ -52,6 +55,7 @@ struct BookContent: View {
     #endif
     let session: BookSession
     @State private var selected: Int?
+    @State private var confirmingRemove = false
     #if DEBUG
     @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")  // development: `-NLBookMap YES`
     #else
@@ -90,6 +94,29 @@ struct BookContent: View {
                 Button("Prepare more") { library.prepareMore(session.entry.id) }
             }
             #endif
+            // The shelf's right-click menu has these too; here they're a click (or Tab) away.
+            Menu {
+                #if os(macOS)
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.entry.folder]) }
+                Divider()
+                #endif
+                Button("Remove book…", role: .destructive) { confirmingRemove = true }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .help("More for this book")
+        }
+        .confirmationDialog("Remove “\(session.book.title)”?", isPresented: $confirmingRemove, titleVisibility: .visible) {
+            Button("Remove book", role: .destructive) {
+                let id = session.entry.id
+                session.isActive = false
+                session.stopClock()
+                library.path = []
+                library.removeBook(id)
+            }
+            Button("Keep it", role: .cancel) {}
+        } message: {
+            Text("Its chapters, podcasts, videos, and your progress go to the Trash, and it leaves your other devices too.")
         }
         .onAppear {
             selected = session.progress.last?.n ?? session.book.chapters.first?.n
@@ -230,6 +257,9 @@ struct ChapterView: View {
                     .foregroundStyle(stage == s ? Theme.accent : (done ? Theme.mint : Theme.ink2))
                 }
                 .buttonStyle(.plain)
+                // VoiceOver hears which step is open and which are done, not just the colours.
+                .accessibilityLabel(done ? "\(s.label), done" : s.label)
+                .accessibilityAddTraits(stage == s ? .isSelected : [])
             }
         }
     }

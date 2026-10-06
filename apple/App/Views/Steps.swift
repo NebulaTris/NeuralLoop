@@ -507,7 +507,23 @@ extension PDFReader {
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.document = PDFDocument(url: url)
+        view.delegate = PDFLinkGuard.shared
         return view
+    }
+}
+
+/// Links in a chapter's PDF open in the browser, like the text reader's; anything else (file:, other apps' schemes)
+/// is ignored. Links to other pages of the chapter aren't URLs and keep working.
+final class PDFLinkGuard: NSObject, PDFViewDelegate {
+    static let shared = PDFLinkGuard()
+
+    func pdfViewWillClick(onLink sender: PDFView, with url: URL) {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #else
+        UIApplication.shared.open(url)
+        #endif
     }
 }
 
@@ -570,6 +586,7 @@ struct RecallStep: View {
                 Text(prompt.prompt).font(Theme.display(21))
                 Text("No peeking. Pulling it out of your head is the whole trick.").font(Theme.body(13)).foregroundStyle(Theme.ink2)
                 TextEditor(text: $answer)
+                    .accessibilityLabel("Your answer, in your own words")
                     .font(Theme.body(15)).frame(minHeight: 150).padding(8)
                     .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))

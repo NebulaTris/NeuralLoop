@@ -115,7 +115,7 @@ struct QuizView: View {
         return VStack(spacing: 12) {
             PipView(pose: great ? .proud : .hug, size: 140)
             Text("\(quiz.right) of \(total) right").font(Theme.display(24))
-            Text(great ? "Wonderful! That chapter's really sinking in." : "Nice work. The ones you missed are great flashcard material.")
+            Text(great ? "Wonderful! That chapter's really sinking in." : "Nice work. The ones that slipped by are great flashcard material.")
                 .font(Theme.body(14)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
             HStack {
                 if let onDone { Button(onDone.label, action: onDone.action).buttonStyle(.borderedProminent) }
