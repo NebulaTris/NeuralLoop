@@ -243,3 +243,33 @@ def test_a_podcast_notebooklm_could_not_answer_waits_but_a_quiz_is_made_locally(
             "video",
         )
     assert caught.value.engine_name == "NotebookLM"
+
+
+def test_a_fallback_that_stops_working_mid_run_fails_only_that_item():
+    """Ollama dying (or a key being refused) after the fallback started must not cancel NotebookLM's items:
+    the item fails on its own as NotebookLM's, and the fallback isn't asked again this run."""
+    primary = Recorder("NotebookLM", fail_make={"quiz": RuntimeError("boom"), "cards": RuntimeError("bang")})
+    fallback = Recorder("Ollama", fail_make={"quiz": SetupError("Ollama stopped running")})
+    tries = []
+    original = fallback.make
+
+    async def counting(task, chapter):
+        tries.append(task)
+        return await original(task, chapter)
+
+    fallback.make = counting
+    engine = AutoEngine(lambda: primary, lambda: fallback, lambda _: None)
+
+    async def go():
+        async with engine:
+            await engine.prepare(State())
+            with pytest.raises(RuntimeError, match="boom") as first:
+                await engine.make("quiz", {"n": 1})
+            with pytest.raises(RuntimeError, match="bang"):
+                await engine.make("cards", {"n": 1})
+            return first.value, await engine.make("study", {"n": 1})
+
+    first, study = asyncio.run(go())
+    assert not isinstance(first, SetupError) and made_by(first, "Auto") == "NotebookLM"
+    assert tries == ["quiz"]  # the broken fallback isn't asked again
+    assert study == {"study": "NotebookLM", "_by": "NotebookLM"}

@@ -56,6 +56,7 @@ class AutoEngine:
         state.save()
 
     async def make(self, task: str, chapter: dict) -> dict:
+        primary_error: BaseException | None = None
         if self.primary is not None:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
@@ -77,12 +78,20 @@ class AutoEngine:
                     f"  ↪ chapter {chapter['n']} {task}: NotebookLM couldn't ({_short(error)}); "
                     f"making it with {fallback.name}"
                 )
+                primary_error = error
         fallback = await self._fallback_ready()
         try:
-            if self.primary is not None:  # NotebookLM tried this item and couldn't: the clock restarts
+            if primary_error is not None:  # NotebookLM tried this item and couldn't: the clock restarts
                 step = f"NotebookLM couldn't, so {fallback.name} is making it"
                 activity.report(step, by=fallback.name, restart=True)
             return {**await fallback.make(task, chapter), "_by": fallback.name}
+        except SetupError as error:
+            if primary_error is None:
+                raise  # the fallback is the whole run's engine: stop and say what to fix
+            # The fallback stopped working mid-run (Ollama quit, a key was refused): NotebookLM's items carry
+            # on, this one fails (or waits) as NotebookLM's, and the fallback isn't asked again this run.
+            self._fallback_error = error
+            raise _tagged(primary_error, self.primary.name) from None
         except Exception as error:  # say who failed, so a limit is reported under the right name
             if self.primary is not None and is_quota_error(error):
                 self._fallback_limited.add(task)
