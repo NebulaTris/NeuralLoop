@@ -12,6 +12,20 @@ struct LibraryView: View {
     @Environment(Library.self) private var library
     @State private var dropping = false
     @State private var removing: BookEntry?
+    /// This window, for the file picker (only one window shows it).
+    @State private var windowID = UUID().uuidString
+    #if os(macOS)
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
+
+    /// The picker was asked for and no window has it yet: the window in front takes it.
+    private func claimPicker() {
+        guard library.isPicking, library.pickerWindow == nil else { return }
+        #if os(macOS)
+        guard controlActiveState == .key else { return }
+        #endif
+        library.pickerWindow = windowID
+    }
 
     private let columns = [GridItem(.adaptive(minimum: 250, maximum: 320), spacing: 20)]
 
@@ -65,9 +79,17 @@ struct LibraryView: View {
         #else
         .onDrop(of: Self.bookTypes, isTargeted: $dropping) { providers in dropped(providers) }
         #endif
-        .fileImporter(isPresented: $library.isPicking, allowedContentTypes: Self.bookTypes) { result in
+        // Every library window has this view; only one of them (the one in front) shows the picker.
+        .fileImporter(isPresented: Binding(get: { library.isPicking && library.pickerWindow == windowID },
+                                           set: { if !$0 { library.isPicking = false } }),
+                      allowedContentTypes: Self.bookTypes) { result in
             if case .success(let url) = result { addBook(url) }
         }
+        .onChange(of: library.isPicking, initial: true) { claimPicker() }
+        .onDisappear { if library.pickerWindow == windowID { library.pickerWindow = nil } }  // closed: another may take it
+        #if os(macOS)
+        .onChange(of: controlActiveState) { claimPicker() }
+        #endif
         .alert(library.message ?? "", isPresented: Binding(get: { library.message != nil }, set: { if !$0 { library.message = nil } })) {
             Button("OK", role: .cancel) {}
         }
@@ -352,8 +374,14 @@ struct BookCard: View {
                 }
                 HStack(spacing: 6) {
                     if entry.preparing { ProgressView().controlSize(.mini) }
-                    Text(entry.preparing ? (entry.lastLine.isEmpty ? "Pip is getting started…" : entry.lastLine) : madeWith)
-                        .font(Theme.body(11)).foregroundStyle(Theme.ink3).lineLimit(1)
+                    if let problem = entry.problem {
+                        Image(systemName: "bandage").font(.system(size: 11)).foregroundStyle(Theme.ink2).accessibilityHidden(true)
+                        Text(problem.card).font(Theme.body(11)).foregroundStyle(Theme.ink2).lineLimit(2)
+                            .help(problem.detail)
+                    } else {
+                        Text(entry.preparing ? (entry.lastLine.isEmpty ? "Pip is getting started…" : entry.lastLine) : madeWith)
+                            .font(Theme.body(11)).foregroundStyle(Theme.ink3).lineLimit(1)
+                    }
                 }
             }
             .padding(16)

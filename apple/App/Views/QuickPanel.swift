@@ -112,8 +112,10 @@ struct QuickPanel: View {
     }
 
     private func open(_ bookId: String?) {
-        openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
+        // The window that's already there comes forward (out of the Dock if minimized); a new one only if none is open.
+        // Two windows on one book would each keep their own copy of its progress.
+        if Notifier.shared.openMainWindow == nil { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
+        Notifier.shared.showLibrary()
         if let bookId { library.path = [bookId] }
     }
 

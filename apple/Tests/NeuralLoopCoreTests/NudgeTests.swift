@@ -10,6 +10,24 @@ private func book(_ titles: [Int: String] = [:]) throws -> Book {
     return try JSONDecoder().decode(Book.self, from: Data(#"{"title":"B","chapters":[\#(chapters)]}"#.utf8))
 }
 
+@Test func pauseUntilTomorrowResumesAtTheNextEndOfQuietHours() {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    func at(_ day: Int, _ hour: Int) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 3, day: day, hour: hour, minute: 30))!
+    }
+    func resume(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: Nudges.pauseUntilTomorrow(now: date, quietEnd: 8, calendar: calendar) / 1000)
+    }
+    let morning = calendar.date(from: DateComponents(year: 2026, month: 3, day: 11, hour: 8))!
+    // In the evening: tomorrow morning.
+    #expect(resume(at(10, 20)) == morning)
+    // Just after midnight: this morning, not the morning after (that would be a ~31 h pause).
+    #expect(resume(at(11, 1)) == morning)
+    // During the day, after quiet hours ended: the next morning.
+    #expect(resume(at(11, 9)) == calendar.date(byAdding: .day, value: 1, to: morning)!)
+}
+
 private func withDueCards(reps: Int, count: Int) throws -> (book: Book, progress: StudyProgress) {
     var p = StudyProgress()
     for i in 0..<count { p.cards["1:\(i)"] = CardState(s: 1, d: 5, reps: reps, last: 0, due: nowMs - 1) }

@@ -357,6 +357,9 @@ private struct SignInFirst: View {
         .task {
             guard !started else { return }
             started = true
+            #if os(macOS)
+            await settings.refreshAccount()  // already signed in to NotebookLM: no browser window for nothing
+            #endif
             if signedIn { next(); return }
             guard canSignIn else { next(); return }  // nothing to sign in to here: straight on to the tour
             await signIn()

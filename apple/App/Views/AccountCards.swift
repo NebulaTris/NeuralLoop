@@ -83,6 +83,8 @@ struct Initials: View {
 @MainActor
 enum GoogleSignIn {
     static func everything(_ settings: AISettings) async {
+        // A NotebookLM session that's already there (from before, or the command line) is kept, never signed in again.
+        if !settings.account.signedIn { await settings.refreshAccount() }
         if !settings.account.signedIn { await settings.signIn() }
         let drive = DriveAccount.shared
         guard settings.account.signedIn, drive.isConfigured, !drive.isSignedIn else { return }

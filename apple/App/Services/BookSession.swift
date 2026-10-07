@@ -19,6 +19,9 @@ final class BookSession {
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
     /// What other devices' files looked like when they were last merged in (see `catchUp`).
     @ObservationIgnored private var devicesSeen = ""
+    /// When this device's progress.json was last read or written here: a different date means something else saved
+    /// it (another window on this book, the menu bar's player), so `save` merges that in rather than writing over it.
+    @ObservationIgnored private var ownSeen: Date?
     @ObservationIgnored nonisolated(unsafe) private var observer: NSObjectProtocol?
 
     /// Posted after sync brings in another device's progress.
@@ -30,6 +33,7 @@ final class BookSession {
         // An unreadable file is kept aside rather than overwritten by the first save.
         devicesSeen = ProgressFile.devicesSignature(in: entry.folder)
         let loaded = ProgressFile.loadMerged(from: entry.folder)
+        ownSeen = BookSession.ownModified(entry.folder)
         self.progress = loaded.merged
         self.ownLog = loaded.own.log
         PlayRecorder.shared.attach(self)  // what plays from the menu bar or shelf now comes here
@@ -135,8 +139,26 @@ final class BookSession {
     /// Saves this device's file. Changes you made (a review, a step, a quiz answer) reach your other devices a few
     /// seconds later (`syncSoon`); the study clock's ticks just ride along with the next sync.
     func save(syncSoon: Bool = true) {
+        if Self.ownModified(entry.folder) != ownSeen { mergeOwnFileFromDisk() }
         ProgressFile.save(progress, ownLog: ownLog, to: entry.folder)
+        ownSeen = Self.ownModified(entry.folder)
         if syncSoon { DriveSync.shared.soon() }
+    }
+
+    /// This device's file changed under us: keep what was saved there (reviews, steps) along with what's here.
+    private func mergeOwnFileFromDisk() {
+        var mine = progress
+        mine.log = ownLog
+        let own = StudyProgress.mergedSameDevice(mine, ProgressFile.load(from: entry.folder))
+        ownLog = own.log
+        let others = ProgressFile.others(in: entry.folder)
+        let fresh = others.isEmpty ? own : StudyProgress.merged([own] + others)
+        if fresh != progress { progress = fresh }
+    }
+
+    private static func ownModified(_ folder: URL) -> Date? {
+        let file = folder.appendingPathComponent("progress.json")
+        return (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
     }
 
     /// Counts study time in 15-second ticks while the book is open and in front (`isActive`, kept current by the view).

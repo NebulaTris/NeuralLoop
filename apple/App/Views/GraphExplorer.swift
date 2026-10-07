@@ -229,15 +229,18 @@ struct GraphExplorer: View {
                 ForEach(visible) { node in
                     if let at = screen(node.id, in: geo.size) {
                         let growing = node.chapter.map { !sprouted.contains($0) } ?? false
-                        NodeMark(node: node, color: color(node), radius: nodeRadius(node) * min(max(scale, 0.7), 1.3),
-                                 label: memory && !revealed.contains(node.id) ? "?" : node.name,
-                                 dimmed: highlight.map { !$0.contains(node.id) } ?? false,
-                                 selected: selected == node.id)
-                            .scaleEffect(growing ? 0.1 : 1)
-                            .opacity(growing ? 0 : 1)
-                            .position(at)
-                            .onTapGesture { tap(node) }
-                            .accessibilityAddTraits(.isButton)
+                        // A real button: reachable with the keyboard (Tab, then Space), with a focus ring.
+                        Button { tap(node) } label: {
+                            NodeMark(node: node, color: color(node), radius: nodeRadius(node) * min(max(scale, 0.7), 1.3),
+                                     label: memory && !revealed.contains(node.id) ? "?" : node.name,
+                                     dimmed: highlight.map { !$0.contains(node.id) } ?? false,
+                                     selected: selected == node.id)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected == node.id ? .isSelected : [])
+                        .scaleEffect(growing ? 0.1 : 1)
+                        .opacity(growing ? 0 : 1)
+                        .position(at)
                     }
                 }
                 VStack {

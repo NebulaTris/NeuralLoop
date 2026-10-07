@@ -28,7 +28,18 @@ enum AppMover {
 
     /// Copies the app into /Applications (or ~/Applications if that isn't writable), replacing an older copy (which goes
     /// to the Trash, never deleted outright), then opens the new one and quits this one. Returns a reason if it couldn't.
-    static func moveIn() -> String? {
+    /// The copy (over a gigabyte, with the runtime) happens off the main thread, so Pip keeps carrying yarn meanwhile.
+    @MainActor static func moveIn() async -> String? {
+        switch await Task.detached(operation: { copyIn() }).value {
+        case .alreadyThere: return nil
+        case .copied(let destination): reopen(from: destination); return nil
+        case .failed(let problem): return problem
+        }
+    }
+
+    enum CopyOutcome: Sendable { case alreadyThere, copied(URL), failed(String) }
+
+    nonisolated private static func copyIn() -> CopyOutcome {
         let fm = FileManager.default
         let name = Bundle.main.bundleURL.lastPathComponent
         let personal = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
@@ -37,7 +48,7 @@ enum AppMover {
         for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), personal] {
             let destination = folder.appendingPathComponent(name)
             // Already there: nothing to move (and never trash the copy that's running).
-            if destination.standardizedFileURL.resolvingSymlinksInPath() == here { return nil }
+            if destination.standardizedFileURL.resolvingSymlinksInPath() == here { return .alreadyThere }
             do {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true)
                 if fm.fileExists(atPath: destination.path) {
@@ -49,13 +60,12 @@ enum AppMover {
                     try fm.trashItem(at: destination, resultingItemURL: nil)
                 }
                 try fm.copyItem(at: Bundle.main.bundleURL, to: destination)
-                reopen(from: destination)
-                return nil
+                return .copied(destination)
             } catch {
                 lastProblem = error.localizedDescription
             }
         }
-        return lastProblem
+        return .failed(lastProblem)
     }
 
     private static func reopen(from destination: URL) {
@@ -113,8 +123,11 @@ struct MoveInView: View {
                 .controlSize(.large)
                 Button {
                     moving = true
-                    problem = AppMover.moveIn()
-                    if problem != nil { moving = false }
+                    problem = nil
+                    Task {
+                        problem = await AppMover.moveIn()
+                        if problem != nil { moving = false }
+                    }
                 } label: {
                     Label(moving ? "Carrying my yarn…" : "Move me in", systemImage: moving ? "shippingbox.fill" : "house.fill")
                         .font(Theme.display(15, .medium)).padding(.horizontal, 6)
