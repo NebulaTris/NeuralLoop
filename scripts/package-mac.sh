@@ -53,6 +53,9 @@ if [[ -n "$EXAMPLE_ID" && "$CLIENT_ID" == "$EXAMPLE_ID" ]]; then
 fi
 if [[ -z "$CLIENT_ID" ]]; then
   echo "  Warning: no GoogleClientID (apple/Config/Google.xcconfig), so this build's Drive sync is off."
+elif [[ "$CLIENT_ID" != *.apps.googleusercontent.com ]]; then
+  echo "  Warning: GoogleClientID doesn't end in .apps.googleusercontent.com, so Google sign-in will likely fail;"
+  echo "  copy the whole client ID from Google Cloud into apple/Config/Google.xcconfig."
 fi
 
 # Licences travel with the app (apple/project.yml) and with its runtime (build-runtime.sh).
