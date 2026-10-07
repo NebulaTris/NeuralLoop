@@ -12,6 +12,14 @@ poc_out/
 neuralloop_media/
 *.m4a
 *.mp4
+*.mp3
+*.caf
+*.pdf
+*.epub
+# …except the sample books (the dry run and the tests use them) and Silly mode's own nudge sounds (NOTICE.md)
+!pipeline/sample/**
+!pipeline/tests/sample/**
+!apple/App/Resources/NeuralLoop-*.caf
 
 .DS_Store
 
