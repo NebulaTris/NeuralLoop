@@ -5,11 +5,17 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 """
 
 import asyncio
+from collections.abc import Callable
+from contextvars import ContextVar
 
 from .. import activity
 from ..config import MEDIA_TASKS
 from ..models import SetupError, safe_message
-from ..notebook import is_auth_error, is_quota_error
+from ..notebook import GenerationFailed, is_auth_error, is_quota_error
+
+# Set by the pipeline for each item: gives the item's place in the run's lane back (once). Without it (e.g.
+# called on its own), nothing is handed back.
+leave_lane: ContextVar[Callable[[], None] | None] = ContextVar("neuralloop_leave_lane", default=None)
 
 
 class AutoEngine:
@@ -64,11 +70,19 @@ class AutoEngine:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
             except Exception as error:  # this item is made locally instead; the book always finishes
-                if task in MEDIA_TASKS and (
-                    is_quota_error(error) or is_auth_error(error) or getattr(error, "try_later", False)
+                if getattr(error, "stays_with_notebooklm", False) or (
+                    task in MEDIA_TASKS
+                    and (
+                        is_quota_error(error)
+                        or is_auth_error(error)
+                        or getattr(error, "try_later", False)
+                        or isinstance(error, GenerationFailed)
+                    )
                 ):
                     # People want NotebookLM's own podcasts and videos: wait for its limit to reset, or for
-                    # it to answer (or take its session) again, rather than make them here.
+                    # it to answer (or take its session) again, rather than make them here; one NotebookLM
+                    # said it couldn't make fails as NotebookLM's. A chapter NotebookLM couldn't take yet
+                    # waits for it whatever the item.
                     raise _tagged(error, self.primary.name) from None
                 if task in self._fallback_limited:
                     # The fallback is at its limit for this kind of item: this one fails (or waits) as
@@ -91,6 +105,9 @@ class AutoEngine:
                 activity.report(step, by=fallback.name, restart=True)
             if self._fallback_text is None or task in MEDIA_TASKS:  # media have their own lane already
                 return {**await fallback.make(task, chapter), "_by": fallback.name}
+            if primary_error is not None and (leave := leave_lane.get()) is not None:
+                # Queue for the fallback without the run's lane, which NotebookLM's own items keep using.
+                leave()
             async with self._fallback_text:
                 return {**await fallback.make(task, chapter), "_by": fallback.name}
         except SetupError as error:

@@ -13,9 +13,9 @@ from . import bookdata
 from .activity import Activity
 from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
-from .engines.auto import made_by
+from .engines.auto import leave_lane, made_by
 from .models import SetupError, safe_message
-from .notebook import is_quota_error
+from .notebook import NOT_ANSWERING, is_quota_error
 from .selection import parse_selection
 from .state import DONE, FAILED, TODO, WAITING, WORKING, BookState, UnreadableState
 
@@ -58,9 +58,7 @@ def prepare_state(opts: Options) -> BookState:
     state = _load_state(opts)
     if state is None:
         opts.log(f"Splitting {safe_message(opts.book.name)} into chapters…")
-        chapters = split_book(opts.book, opts.out / "chapters")
-        if not chapters:
-            raise BookProblem("Couldn't find any chapters in this book.")
+        chapters = split_book(opts.book, opts.out / "chapters")  # never empty: UnreadableBookError instead
         title = clean_title(opts.title or opts.book.stem.replace("_", " ").replace("-", " ")) or "Book"
         state = BookState.create(
             opts.out / "state.json",
@@ -118,7 +116,6 @@ async def run(opts: Options, engine) -> BookState:
         return await _run(opts, engine)
 
 
-NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
 ALREADY_RUNNING = "This book is already being prepared. Pip will keep going with that run."
 
 
@@ -159,10 +156,21 @@ async def _run(opts: Options, engine) -> BookState:
     state = prepare_state(opts)
     await bookdata.write_async(opts.out, state, book_options(opts))
     async with engine:
-        await engine.prepare(state)
+        feed = Activity(opts.out, state.data.get("timings", {}))
+        first = next(iter(state.pending()), None)
+        if first is None:
+            await engine.prepare(state)
+        else:
+            # Getting ready can take a while the first time (downloading the Mac's AI): it shows on the item
+            # that's waiting for it.
+            try:
+                with feed.preparing(first[0]["n"], first[1], engine.name):
+                    await engine.prepare(state)
+            except BaseException:
+                feed.close()  # e.g. the download failed: nothing is being made any more
+                raise
         pending = state.pending()
         opts.log(f"Making {len(pending)} items with {engine.name}, chapter by chapter.")
-        feed = Activity(opts.out, state.data.get("timings", {}))
         feed.queue([(c["n"], t) for c, t in pending])
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
         # (engine, item kind) pairs that hit a limit (or that NotebookLM didn't answer after patient retries)
@@ -198,6 +206,31 @@ async def _run(opts: Options, engine) -> BookState:
     return state
 
 
+class _Lane:
+    """An item's place in its lane (text or media). It can hand the place back early: auto does, before an
+    item NotebookLM couldn't make queues for a fallback that makes one at a time, so that wait never holds a
+    lane NotebookLM's own items need."""
+
+    def __init__(self, limiter: asyncio.Semaphore):
+        self._limiter, self._held, self._token = limiter, False, None
+
+    async def __aenter__(self):
+        await self._limiter.acquire()
+        self._held = True
+        self._token = leave_lane.set(self.leave)
+        return self
+
+    def leave(self) -> None:
+        if self._held:
+            self._held = False
+            self._limiter.release()
+
+    async def __aexit__(self, *exc):
+        leave_lane.reset(self._token)
+        self.leave()
+        return False
+
+
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
 
@@ -212,7 +245,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
 
     if wait_behind_limit():
         return
-    async with limiter:
+    async with _Lane(limiter):
         if wait_behind_limit():  # another item of this kind hit the limit while we waited
             return
         entry["status"] = WORKING
@@ -227,6 +260,8 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             entry["by"] = result.pop("_by", engine.name)  # which engine made it (auto can mix)
             chapter.update(result)
             entry.update(status=DONE, error="")
+            for key in ("taskId", "requestedAt"):  # a NotebookLM request it was waiting for (auto may mix)
+                entry.pop(key, None)
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
         except SetupError as error:
             # e.g. a revoked key: stop the run and say what to fix; the item says so and is made next run.
@@ -234,12 +269,17 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             raise
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
-                # The rest of this kind wait too, instead of each spending minutes on the same retries.
-                quota_hit[made_by(error, engine.name), task] = NOT_ANSWERING
-                entry.update(status=WAITING, error=NOT_ANSWERING)
-                opts.log(
-                    f"  … chapter {chapter['n']} {task}: NotebookLM didn't answer; will try again next run"
+                why = getattr(error, "waiting_message", NOT_ANSWERING)
+                if not getattr(error, "only_this_item", False):
+                    # The rest of this kind wait too, instead of each spending minutes on the same retries.
+                    quota_hit[made_by(error, engine.name), task] = why
+                entry.update(status=WAITING, error=why)
+                what = (
+                    f"{made_by(error, engine.name)} limit reached; will continue next run"
+                    if getattr(error, "limit", False)
+                    else "NotebookLM didn't answer; will try again next run"
                 )
+                opts.log(f"  … chapter {chapter['n']} {task}: {what}")
             elif is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
                 quota_hit[who, task] = quota_message(who)

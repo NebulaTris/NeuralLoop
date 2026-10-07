@@ -20,6 +20,18 @@ class UnreadableState(ValueError):
     """state.json is there but isn't a book's state (cut short, or not JSON)."""
 
 
+def _usable_chapter(chapter) -> bool:
+    """A chapter every run can read: a number, its file, and a status for each item it has."""
+    if not isinstance(chapter, dict):
+        return False
+    n, tasks = chapter.get("n"), chapter.get("tasks")
+    if not isinstance(n, int) or isinstance(n, bool) or not isinstance(chapter.get("file"), str):
+        return False
+    if not isinstance(tasks, dict):
+        return False
+    return all(isinstance(entry, dict) and isinstance(entry.get("status"), str) for entry in tasks.values())
+
+
 class BookState:
     def __init__(self, path: Path, data: dict):
         self.path = path
@@ -36,6 +48,11 @@ class BookState:
             raise UnreadableState(f"state.json isn't valid JSON ({error})") from error
         if not isinstance(data, dict) or not isinstance(data.get("chapters"), list):
             raise UnreadableState("state.json doesn't hold a book's chapters")
+        if not isinstance(data.get("title"), str) or not isinstance(data.get("source"), str):
+            raise UnreadableState("state.json doesn't name the book")
+        for chapter in data["chapters"]:
+            if not _usable_chapter(chapter):
+                raise UnreadableState("state.json holds a chapter it can't describe")
         return cls(path, data)
 
     @classmethod

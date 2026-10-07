@@ -107,6 +107,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.provider is not None and args.check_ai:  # check the model named here, not ai.json's
         made = aiconfig.ModelChoice(args.provider, args.model, args.base_url)
         args.config = dataclasses.replace(args.config, make=made, tasks={})
+    elif args.check_ai and (args.model or args.base_url):  # another model of ai.json's own provider
+        made = dataclasses.replace(
+            args.config.make,
+            model=args.model or args.config.make.model,
+            base_url=args.base_url or args.config.make.base_url,
+        )
+        args.config = dataclasses.replace(args.config, make=made)
     if args.provider is None:
         args.provider, args.model = args.config.make.provider, args.model or args.config.make.model
         args.base_url = args.base_url or args.config.make.base_url
@@ -157,17 +164,52 @@ def _local_engine(opts: Options):
 
     env = {**os.environ, **({"NEURALLOOP_BASE_URL": opts.base_url} if opts.base_url else {})}
     choices = [opts.provider, *(c.provider for c in opts.task_choices.values())]
+    model = make_model(opts.provider, opts.model, env, allow_agent_tools=opts.hermes_tools)
+    task_models = {task: _model_for(choice, opts.hermes_tools) for task, choice in opts.task_choices.items()}
     before_start = None
     if any(resolve_provider(p, env) == "ollama" for p in choices):
         from . import setup
 
+        local = [m for m in (model, *task_models.values()) if getattr(m, "provider", "") == "ollama"]
+
         async def before_start() -> None:  # awaited by the engine, inside whatever loop is running
             await setup.ensure_ollama(setup.ollama_host(), opts.log)
+            for host, name, named in dict.fromkeys(_local_models(local)):
+                await _download(setup, host, name, opts.log, any_will_do=not named)
 
-    model = make_model(opts.provider, opts.model, env, allow_agent_tools=opts.hermes_tools)
-    task_models = {task: _model_for(choice, opts.hermes_tools) for task, choice in opts.task_choices.items()}
     speech = make_speech(opts.speech, opts.voices, opts.voice_quality)
     return LocalEngine.from_options(opts, model, speech, task_models, before_start=before_start)
+
+
+def _local_models(models: list) -> list[tuple[str, str, bool]]:
+    """(Ollama address, model name, named by the person) for each model on this Mac; without a name, the
+    one that fits its memory."""
+    from . import setup
+
+    return [
+        (getattr(m, "base_url", "") or setup.ollama_host(), m.model or _default_local_model(), bool(m.model))
+        for m in models
+    ]
+
+
+def _default_local_model() -> str:
+    from . import setup
+
+    return setup.local_model_for_memory(setup.total_memory())
+
+
+async def _download(setup, host: str, name: str, log, any_will_do: bool = False) -> None:
+    """The first run on a Mac downloads its AI (no one has to run a command); says what to do if it can't.
+    `any_will_do`: the person named no model, so one Ollama already has is used instead of downloading."""
+    try:
+        await setup.ensure_model(host, name, log, any_will_do=any_will_do)
+    except SetupError:
+        raise
+    except OSError as error:
+        raise SetupError(
+            f"Pip couldn't download your Mac's AI ({name}) yet: {safe_message(error, 200)}. "
+            "Check your internet connection, then try again; NeuralLoop picks up where it stopped."
+        ) from error
 
 
 def _model_for(choice: aiconfig.ModelChoice, hermes_tools: bool = False):
@@ -346,11 +388,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.setup:
         from . import setup
 
+        # Setup is for the Mac's own AI: a model name only counts when books are made with Ollama.
+        local_model = args.model if resolve_provider(args.provider, os.environ) == "ollama" else None
         try:
             asyncio.run(
                 setup.run_setup(
                     print,
-                    args.model,
+                    local_model,
                     recall_model=args.config.recall,
                     voice_quality=args.config.voice_quality,
                 )

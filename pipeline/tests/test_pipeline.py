@@ -511,13 +511,12 @@ def test_once_notebooklm_gave_up_on_a_kind_of_item_the_rest_of_that_kind_wait_wi
     options, no_retry_pause
 ):
     """Each item would otherwise spend minutes of patient retries before waiting too."""
-    from neuralloop_books import config
-
     options.media = "all"
     client = FakeDownClient()
     state = run_with(options, client)
-    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
-    assert client.asked == 2 * tries  # chapter 1's podcast and video; chapter 2's never asked
+    # Chapter 1's podcast and video, asked for once each: a request whose answer never came may still have
+    # reached NotebookLM, so it's never asked for again blind. Chapter 2's are never asked.
+    assert client.asked == 2
     second = state.chapters[1]["tasks"]
     assert (second["audio"]["status"], second["video"]["status"]) == (WAITING, WAITING)
     assert "try again" in second["audio"]["error"].lower() and "limit" not in second["audio"]["error"]
@@ -573,3 +572,68 @@ def test_a_run_reports_its_progress_and_remembers_how_long_items_took(options):
     assert feed["ended"] is True and feed["items"] == [] and feed["queue"] == []
     made = {key.split(":")[-1] for key, seconds in state.data["timings"].items() if seconds}
     assert {"study", "quiz", "cards", "audio", "video"} <= made  # "<maker>:<item>" → recent durations
+
+
+class DownloadsFirst(Failing):
+    """An engine that gets something ready (e.g. downloads the Mac's AI) before it can make anything."""
+
+    def __init__(self, out):
+        super().__init__("Ollama")
+        self.out, self.seen = out, None
+
+    async def prepare(self, state):
+        from neuralloop_books import activity
+
+        activity.report("Downloading your Mac's AI (first time only)")
+        self.seen = json.loads((self.out / "activity.json").read_text())
+
+
+def test_getting_the_engine_ready_shows_on_the_first_item_waiting_for_it(options):
+    engine = DownloadsFirst(options.out)
+    state = asyncio.run(run(options, engine))
+    (item,) = engine.seen["items"]
+    assert (item["n"], item["item"], item["step"]) == (
+        1,
+        "study",
+        "Downloading your Mac's AI (first time only)",
+    )
+    assert state.chapters[0]["tasks"]["study"]["status"] == DONE
+
+
+class Timed(Failing):
+    """Takes `seconds` per item and records when each one ends; `fails` lists items it can't make."""
+
+    def __init__(self, name, seconds, fails=(), log=None):
+        super().__init__(name)
+        self.seconds, self.fails, self.log = seconds, set(fails), log if log is not None else []
+        self.now = self.most = 0
+
+    async def make(self, task, chapter):
+        self.now += 1
+        self.most = max(self.most, self.now)
+        try:
+            await asyncio.sleep(self.seconds)
+        finally:
+            self.now -= 1
+        if task in self.fails:
+            raise RuntimeError("NotebookLM couldn't")
+        self.log.append((self.name, chapter["n"], task))
+        return {}
+
+
+def test_items_waiting_for_a_slow_local_fallback_never_hold_notebooklms_lanes(options):
+    """Quizzes NotebookLM couldn't make queue for the Mac's model one at a time; while they wait they must not
+    keep the run's two lanes, or NotebookLM's own items stand still behind them."""
+    from neuralloop_books.engines.auto import AutoEngine
+
+    options.media, options.parallel = "none", 2
+    finished: list = []
+    primary = Timed("NotebookLM", 0.01, fails={"quiz", "cards"}, log=finished)
+    fallback = Timed("Ollama", 0.3, log=finished)
+    engine = AutoEngine(lambda: primary, lambda: fallback, options.log, fallback_parallel=1)
+    state = asyncio.run(run(options, engine))
+    made = [e for c in state.chapters for e in c["tasks"].values() if e["status"] != SKIPPED]
+    assert all(e["status"] == DONE for e in made)
+    first_local = next(i for i, (who, _, _) in enumerate(finished) if who == "Ollama")
+    assert all(who == "Ollama" for who, _, _ in finished[first_local:])  # NotebookLM never waited behind it
+    assert primary.most == 2  # and kept both lanes

@@ -37,6 +37,51 @@ def test_an_unreadable_state_file_is_reported_not_returned(tmp_path):
             BookState.load(tmp_path / "state.json")
 
 
+def test_a_state_file_with_the_wrong_shape_inside_is_reported_not_returned(tmp_path):
+    """JSON that parses but isn't a book's state would crash every run (KeyError) and never be kept aside."""
+    import json
+
+    import pytest
+
+    from neuralloop_books.state import UnreadableState
+
+    good = {"n": 1, "title": "C1", "file": "01.md", "sourceId": None, "tasks": {"quiz": {"status": "todo"}}}
+    shapes = [
+        {"title": "T", "source": "t", "chapters": [{"n": 1}]},
+        {"title": "T", "source": "t", "chapters": ["chapter one"]},
+        {"title": "T", "source": "t", "chapters": [{**good, "n": "1"}]},
+        {"title": "T", "source": "t", "chapters": [{**good, "file": None}]},
+        {"title": "T", "source": "t", "chapters": [{**good, "tasks": []}]},
+        {"title": "T", "source": "t", "chapters": [{**good, "tasks": {"quiz": "done"}}]},
+        {"title": "T", "source": "t", "chapters": [{**good, "tasks": {"quiz": {}}}]},
+        {"source": "t", "chapters": [good]},
+        {"title": "T", "source": 3, "chapters": [good]},
+    ]
+    for shape in shapes:
+        (tmp_path / "state.json").write_text(json.dumps(shape))
+        with pytest.raises(UnreadableState):
+            BookState.load(tmp_path / "state.json")
+    (tmp_path / "state.json").write_text(json.dumps({"title": "T", "source": "t", "chapters": [good]}))
+    assert BookState.load(tmp_path / "state.json").chapters[0]["n"] == 1
+
+
+def test_a_run_keeps_a_wrongly_shaped_state_aside_and_starts_afresh(epub, tmp_path):
+    import asyncio
+    import json
+
+    from neuralloop_books.engines.local import LocalEngine
+    from neuralloop_books.models.fake import FakeModel
+    from neuralloop_books.pipeline import Options, run
+    from neuralloop_books.speech.fake import FakeSpeech
+
+    opts = Options(book=epub, out=tmp_path / "o", media="none", log=lambda _: None)
+    opts.out.mkdir()
+    (opts.out / "state.json").write_text(json.dumps({"title": "T", "source": "t", "chapters": [{"n": 1}]}))
+    state = asyncio.run(run(opts, LocalEngine.from_options(opts, FakeModel(), FakeSpeech())))
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE
+    assert list(opts.out.glob("state.json.unreadable-*"))
+
+
 def test_media_only_for_selected_chapters(tmp_path):
     state = make_state(tmp_path)
     state.apply_selection({1, 2, 3}, {1}, audio=True, video=True, retry=False)

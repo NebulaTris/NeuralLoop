@@ -4,6 +4,8 @@ The client and its enums are passed in, so the real notebooklm-py library and th
 fake (fake_client.py) run exactly the same code.
 """
 
+import asyncio
+import contextlib
 import json
 import re
 import time
@@ -11,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
-from . import activity, convert, prompts
+from . import activity, config, convert, prompts
 from .chapters import chapter_size
 from .config import (
     AUDIO_FORMATS,
@@ -41,10 +43,22 @@ class UnusableAnswer(ValueError):
     """NotebookLM answered, but not with something we can use."""
 
 
+class GenerationFailed(UnusableAnswer):
+    """NotebookLM finished the request but says it couldn't make the item (not a limit)."""
+
+
 class NotebookLMBusy(RuntimeError):
     """NotebookLM didn't answer after several patient tries: the item waits for the next run."""
 
     try_later = True
+
+
+NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
+# NotebookLM's clock and ours may differ a little: an item found in the notebook counts as the one we asked
+# for when it was made at most this long before we asked.
+CLOCK_SLACK = 120.0
+# How NotebookLM lists each kind of item it makes (notebooklm-py's artifacts.list_*).
+_LISTS = {"quiz": "list_quizzes", "cards": "list_flashcards", "audio": "list_audio", "video": "list_video"}
 
 
 _TRANSIENT = re.compile(
@@ -130,11 +144,22 @@ class MediaOptions:
 
 
 class ChapterMaker:
-    def __init__(self, client, enums: ModuleType, notebook_id: str, out_dir: Path, media: MediaOptions):
+    def __init__(
+        self,
+        client,
+        enums: ModuleType,
+        notebook_id: str | None,
+        out_dir: Path,
+        media: MediaOptions,
+        save=None,
+    ):
+        """`save` writes the book's state, so an item asked for (`tasks.<item>.taskId`) is on disk at once
+        and the next run waits for it instead of asking (and paying) again."""
         self.client, self.enums, self.notebook_id = client, enums, notebook_id
         self.pending: dict[tuple[int, str], str] = {}  # items asked for, until downloaded
         self.whole_waits: dict[tuple[int, str], int] = {}  # waits that ran their whole timeout, per item
         self.out_dir, self.media = out_dir, media
+        self._save = save or (lambda: None)
 
     async def make(self, task: str, chapter: dict) -> dict:
         """Return the fields to store on the chapter, e.g. {"quiz": [...]}. Raises on failure."""
@@ -194,12 +219,15 @@ class ChapterMaker:
 
         async def fetch(task_id):
             activity.report("NotebookLM is making it")
-            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=LIGHT_TIMEOUT)
+            await self._wait(task_id, LIGHT_TIMEOUT)
             raw = self._raw(chapter, task)
             await download(self.notebook_id, str(raw), task_id, output_format="json")
             return json.loads(raw.read_text(encoding="utf-8"))
 
         return await self._once(chapter, task, ask, fetch, LIGHT_TIMEOUT)
+
+    async def _wait(self, task_id: str, timeout: float) -> None:
+        _finished(await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=timeout))
 
     async def _mindmap(self, chapter, sources):
         mind_map = await self.client.mind_maps.generate(
@@ -228,7 +256,7 @@ class ChapterMaker:
 
         async def fetch(task_id):
             activity.report("NotebookLM is recording the podcast")
-            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=AUDIO_TIMEOUT)
+            await self._wait(task_id, AUDIO_TIMEOUT)
             activity.report("Downloading the podcast")
             target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
             saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), task_id)
@@ -251,7 +279,7 @@ class ChapterMaker:
 
         async def fetch(task_id):
             activity.report("NotebookLM is making the video")
-            await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=VIDEO_TIMEOUT)
+            await self._wait(task_id, VIDEO_TIMEOUT)
             activity.report("Downloading the video")
             target = self.out_dir / "media" / f"{chapter['n']:02d}-video.mp4"
             saved = await self.client.artifacts.download_video(self.notebook_id, str(target), task_id)
@@ -264,10 +292,12 @@ class ChapterMaker:
     async def _once(self, chapter, kind, ask, fetch, timeout: float):
         """Ask NotebookLM for an item once: if the session goes stale or a check times out while it's being
         made, the retry waits for the same one instead of asking (and spending NotebookLM's allowance) again.
-        A wait that runs its whole `timeout` gets one more; after that the item waits for the next run."""
+        A wait that runs its whole `timeout` gets one more; after that the item waits for the next run, which
+        waits for that same one (its id is kept in state.json) instead of asking again."""
         key = (chapter["n"], kind)
+        entry = _entry(chapter, kind)
         if key not in self.pending:
-            self.pending[key] = (await ask()).task_id
+            self.pending[key] = await self._resume_or_ask(chapter, kind, entry, ask)
         started = time.monotonic()
         try:
             result = await fetch(self.pending[key])
@@ -282,10 +312,150 @@ class ChapterMaker:
                     ) from error
             if not (is_auth_error(error) or is_transient_error(error)):
                 self.pending.pop(key, None)
+                _forget(entry)
             raise
         self.pending.pop(key, None)
         self.whole_waits.pop(key, None)
+        _forget(entry)
         return result
+
+    async def _resume_or_ask(self, chapter, kind, entry: dict, ask) -> str:
+        """The id of the item to wait for: one an earlier run asked for, else a new request."""
+        if entry.get("taskId"):
+            listed = await self._listed(kind)
+            if listed is None or any(getattr(a, "id", None) == entry["taskId"] for a in listed):
+                return entry["taskId"]  # still being made (or NotebookLM couldn't say): wait for it
+            _forget(entry)  # NotebookLM no longer has it (deleted): ask afresh
+        elif entry.get("requestedAt"):
+            # An earlier run asked but never heard back: NotebookLM may have taken it anyway.
+            asked_at = _number(entry["requestedAt"])
+            found = await self._find(kind, chapter, asked_at) if asked_at is not None else None
+            if found:
+                self._remember(entry, found, asked_at)
+                return found
+        requested = time.time()
+        self._remember(entry, None, requested)  # on disk before asking: a run killed mid-request looks first
+        try:
+            task_id = (await ask()).task_id
+        except Exception as error:
+            if not is_transient_error(error):
+                _forget(entry)
+                raise
+            # The request may have reached NotebookLM though its answer never reached us (notebooklm-py calls
+            # it "unconfirmed"): asking again could pay for the same podcast twice. Look for it instead.
+            task_id = await self._find(kind, chapter, requested, look_again=True)
+            if not task_id:
+                raise NotebookLMBusy(
+                    f"NotebookLM didn't confirm it got the request ({_short(error)}); "
+                    "Pip will look for it next run"
+                ) from error
+        self._remember(entry, task_id, requested)
+        return task_id
+
+    async def _listed(self, kind: str) -> list | None:
+        """NotebookLM's items of this kind in the notebook; None when it couldn't say."""
+        lister = getattr(self.client.artifacts, _LISTS.get(kind, ""), None)
+        if lister is None:
+            return None
+        try:
+            return list(await lister(self.notebook_id))
+        except Exception:  # listing is only a check: when it fails, nothing can be confirmed
+            return None
+
+    async def _find(self, kind: str, chapter: dict, since: float, look_again: bool = False) -> str | None:
+        """The newest item of this kind for this chapter made since `since` (our request), if it's listed."""
+        for attempt in range(2 if look_again else 1):
+            if attempt:  # a new item can take a moment to show up in the notebook
+                delays = config.NOTEBOOKLM_RETRY_DELAYS
+                await asyncio.sleep(delays[0] if delays else 0)
+            taken = set(self.pending.values())
+            candidates = [
+                (made, artifact.id)
+                for artifact in (await self._listed(kind)) or []
+                if (made := _created(artifact)) is not None
+                and made >= since - CLOCK_SLACK
+                and artifact.id not in taken
+                and (
+                    not (made_from := getattr(artifact, "source_ids", None))
+                    or chapter.get("sourceId") in made_from
+                )
+            ]
+            if candidates:
+                return max(candidates)[1]
+        return None
+
+    def _remember(self, entry: dict, task_id: str | None, requested: float) -> None:
+        if task_id:
+            entry["taskId"] = task_id
+        entry["requestedAt"] = round(requested)
+        with contextlib.suppress(OSError):  # saving early is a nicety; the pipeline saves again later
+            self._save()
+
+    def forget_chapter(self, n: int) -> None:
+        """The chapter's source (or the whole notebook) is gone: nothing asked for there can be collected."""
+        for key in [k for k in self.pending if k[0] == n]:
+            self.pending.pop(key, None)
+            self.whole_waits.pop(key, None)
+
+
+def _entry(chapter: dict, kind: str) -> dict:
+    """The item's saved state (where its NotebookLM request is remembered); a throwaway dict without one."""
+    tasks = chapter.get("tasks")
+    entry = tasks.get(kind) if isinstance(tasks, dict) else None
+    return entry if isinstance(entry, dict) else {}
+
+
+def _forget(entry: dict) -> None:
+    entry.pop("taskId", None)
+    entry.pop("requestedAt", None)
+
+
+def forget_requests(chapter: dict) -> None:
+    """Drop every NotebookLM request remembered for this chapter (its source or notebook is gone)."""
+    tasks = chapter.get("tasks")
+    for entry in tasks.values() if isinstance(tasks, dict) else ():
+        if isinstance(entry, dict):
+            _forget(entry)
+
+
+def _number(value) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _created(artifact) -> float | None:
+    made = getattr(artifact, "created_at", None)
+    if made is None:
+        return None
+    if isinstance(made, (int, float)):
+        return float(made)
+    try:
+        return made.timestamp()  # a datetime (notebooklm-py's are local time, without a zone)
+    except (AttributeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _finished(status) -> None:
+    """notebooklm-py's wait returns how the request ended instead of raising: a failed one hit NotebookLM's
+    limit (wait for it to reset) or NotebookLM couldn't make it (no download would work)."""
+    outcome = getattr(status, "status", None)
+    if outcome is None or outcome not in ("failed", "removed"):
+        return
+    reason = str(getattr(status, "error", None) or "").strip()
+    limited = getattr(status, "is_rate_limited", None)
+    if not isinstance(limited, bool):
+        limited = getattr(status, "error_code", None) == "USER_DISPLAYABLE_ERROR" or bool(
+            reason and _QUOTA.search(reason)
+        )
+    if limited:
+        from .models import QuotaError
+
+        raise QuotaError(f"NotebookLM's limit was reached ({reason or 'it said to try later'})")
+    raise GenerationFailed(f"NotebookLM couldn't make it ({reason or 'it gave no reason'})")
+
+
+def _short(error: BaseException) -> str:
+    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    return text[:100]
 
 
 def _whole_wait_ran_out(error: BaseException, seconds: float, timeout: float) -> bool:
