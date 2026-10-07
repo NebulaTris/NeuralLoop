@@ -128,7 +128,7 @@ def test_ollama_picks_an_installed_model_and_explains_when_off(monkeypatch):
         raise OSError("connection refused")
 
     monkeypatch.setattr(ollama, "_get_json", refuse)
-    with pytest.raises(SetupError, match="isn.t running"):
+    with pytest.raises(SetupError, match=r"isn.t running"):
         asyncio.run(ollama.OllamaModel(None).check())
 
 
