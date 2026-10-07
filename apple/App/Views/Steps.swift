@@ -788,9 +788,12 @@ struct NotReady: View {
                             Label(PrepProgress.placeText(place), systemImage: "list.number").font(Theme.body(13)).foregroundStyle(Theme.accent)
                         }
                     }
-                    Text(detail).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+                    // While it's being made, the saved status's words and button (a retry run) would only contradict the loader.
+                    if making == nil {
+                        Text(detail).font(Theme.body(13)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+                    }
                     #if os(macOS)
-                    if status == .waiting || status == .failed, let bookId {
+                    if making == nil, status == .waiting || status == .failed, let bookId {
                         Button { library.makeWithMyAI(bookId) } label: { Label("Make it with my AI now", systemImage: "bolt.fill") }
                             .buttonStyle(.borderedProminent).padding(.top, 4)
                     }
