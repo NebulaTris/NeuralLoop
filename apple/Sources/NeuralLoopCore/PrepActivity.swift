@@ -80,15 +80,16 @@ public enum PrepProgress {
             let fraction = min(0.99, max(0.02, overall))
             var parts: [String] = []
             if let total = item.total, total > 0 { parts.append("\(min(item.done ?? 0, total)) of \(total)") }
+            parts.append(soFar(elapsed))
             if overall < 1, elapsed > 0 { parts.append(left(elapsed / overall * (1 - overall)).lowercased()) }
-            let detail = parts.isEmpty ? "Almost there" : parts.joined(separator: " · ")
+            let detail = parts.joined(separator: " · ")
             return ItemProgress(fraction: fraction, step: item.step, by: item.by,
                                 detail: detail.prefix(1).uppercased() + detail.dropFirst(), slow: false)
         }
         if let total = item.total, total > 0 {
             let done = min(item.done ?? 0, total)
             let fraction = min(0.99, max(0.02, Double(done) / Double(total)))
-            var detail = "\(done) of \(total)"
+            var detail = "\(done) of \(total) · " + soFar(elapsed).lowercased()
             if done > 0, done < total {
                 let remaining = elapsed / Double(done) * Double(total - done)
                 detail += " · " + left(remaining).lowercased()
@@ -101,11 +102,11 @@ public enum PrepProgress {
             let fraction = ratio < 1 ? 0.9 * ratio : 0.9 + 0.09 * (1 - exp(-(ratio - 1)))
             let slow = ratio > 1.3
             let detail = slow
-                ? "Taking longer than usual. It's still going: NotebookLM can be slow when it's busy."
-                : left(expected - elapsed)
+                ? soFar(elapsed) + ", longer than usual. It's still going: NotebookLM can be slow when it's busy."
+                : soFar(elapsed) + " · " + left(expected - elapsed).lowercased()
             return ItemProgress(fraction: max(0.02, fraction), step: item.step, by: item.by, detail: detail, slow: slow, estimated: true)
         }
-        return ItemProgress(fraction: nil, step: item.step, by: item.by, detail: "Started \(minutes(elapsed)) ago", slow: false)
+        return ItemProgress(fraction: nil, step: item.step, by: item.by, detail: soFar(elapsed), slow: false)
     }
 
     public static func placeText(_ place: Int) -> String {
@@ -113,6 +114,11 @@ public enum PrepProgress {
         let n = place + 1
         let suffix = (11...13).contains(n % 100) ? "th" : [1: "st", 2: "nd", 3: "rd"][n % 10] ?? "th"
         return "\(n)\(suffix) in line"
+    }
+
+    /// How long it has really been going: "Just started", "4 min so far".
+    static func soFar(_ seconds: Double) -> String {
+        seconds < 45 ? "Just started" : "\(minutes(seconds)) so far"
     }
 
     static func left(_ seconds: Double) -> String {

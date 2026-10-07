@@ -31,25 +31,25 @@ private let sample = #"""
     let item = try #require(try feed(sample).item(1, "quiz"))
     let p = PrepProgress.of(item, now: 1_000_000 + 4 * minute)  // 12 lines in 4 minutes: 20 s a line
     #expect(abs((p.fraction ?? 0) - 0.3) < 0.001)
-    #expect(p.detail == "12 of 40 · about 9 min left" && !p.slow)  // 28 lines at 20 s
+    #expect(p.detail == "12 of 40 · 4 min so far · about 9 min left" && !p.slow)  // 28 lines at 20 s
 }
 
 @Test func notebookLMWorkIsTimedAgainstHowLongItUsuallyTakes() throws {
     let item = try #require(try feed(sample).item(1, "audio"))
     let early = PrepProgress.of(item, now: 1_000_000 + 2 * minute)
     #expect((early.fraction ?? 0) > 0.15 && (early.fraction ?? 1) < 0.35)  // a quarter of the usual time
-    #expect(early.detail == "About 6 min left")
+    #expect(early.detail == "2 min so far · about 6 min left")  // the time it has really taken, then the guess
     let nearly = PrepProgress.of(item, now: 1_000_000 + 7.6 * minute)
-    #expect(nearly.detail == "Almost there" && (nearly.fraction ?? 1) < 0.95)
+    #expect(nearly.detail == "8 min so far · almost there" && (nearly.fraction ?? 1) < 0.95)
     let slow = PrepProgress.of(item, now: 1_000_000 + 15 * minute)
     #expect(slow.slow && (slow.fraction ?? 1) < 0.99 && (slow.fraction ?? 0) > (nearly.fraction ?? 1))
-    #expect(slow.detail.contains("longer than usual"))
+    #expect(slow.detail.contains("longer than usual") && slow.detail.hasPrefix("15 min so far"))
 }
 
 @Test func withNoCountAndNoEstimateTheBarJustMovesAndSaysWhenItStarted() throws {
     let a = try feed(#"{"items": [{"n": 1, "item": "video", "by": "Ollama", "step": "Writing the explainer", "started": 0, "updated": 0}]}"#)
     let p = PrepProgress.of(try #require(a.item(1, "video")), now: 3 * minute)
-    #expect(p.fraction == nil && p.detail == "Started 3 min ago" && p.step == "Writing the explainer")
+    #expect(p.fraction == nil && p.detail == "3 min so far" && p.step == "Writing the explainer")
 }
 
 @Test func aFeedFromAFinishedRunIsntLive() throws {
@@ -69,7 +69,7 @@ private let sample = #"""
     // The pipeline's overall fraction (across voicing and drawing) wins over the stage's own count.
     let video = PrepProgress.of(try #require(a.item(1, "video")), now: 6.9 * minute)
     #expect(video.fraction == 0.69 && video.percent == 69 && !video.estimated)
-    #expect(video.percentText == "69%" && video.detail == "50 of 100 · about 3 min left")  // 69 % in 6.9 min: ~3.1 min to go
+    #expect(video.percentText == "69%" && video.detail == "50 of 100 · 7 min so far · about 3 min left")  // 69 % in 6.9 min: ~3.1 min to go
     let podcast = PrepProgress.of(try #require(a.item(1, "audio")), now: 3 * minute)
     #expect(podcast.estimated && podcast.percent == 34 && podcast.percentText == "About 34%")  // NotebookLM gives no progress
     let counted = PrepProgress.of(try #require(a.item(2, "audio")), now: minute)
@@ -88,3 +88,10 @@ private let sample = #"""
     let ended = try feed(sample.replacingOccurrences(of: #""ended": false"#, with: #""ended": true"#))
     #expect(a != ended)
 }
+
+@Test func aJustStartedItemSaysSoInsteadOfZeroMinutes() throws {
+    let a = try feed(#"{"items": [{"n": 1, "item": "video", "by": "NotebookLM", "step": "Asking NotebookLM for the video", "started": 0, "expected": 720}]}"#)
+    let p = PrepProgress.of(try #require(a.item(1, "video")), now: 20_000)
+    #expect(p.detail == "Just started · about 12 min left")
+}
+

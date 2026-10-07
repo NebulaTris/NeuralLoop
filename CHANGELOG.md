@@ -45,6 +45,12 @@
 - **NotebookLM stays NotebookLM:** a long run no longer loses its Google session when the app checks your usage, so
   podcasts, videos and mind maps stop falling back to your Mac; NotebookLM's newer flashcards are read; and at
   NotebookLM's limit a podcast or video waits for the reset instead of being made on your Mac.
+- **The loader shows what's really happening:** an item Pip is making shows its live progress and how long it has
+  really taken ("4 min so far · about 8 min left"), even before the book's saved status catches up; an item in line
+  says so.
+- **Every AI option works end to end** (Anthropic, OpenAI, OpenRouter, LM Studio and other local servers, Ollama,
+  opencode, Hermes), NotebookLM rides out slow answers without handing items to your Mac, and a full code review's
+  fixes: sync, splitting EPUBs, book maps in any script, accessibility, and licences shipped with the app.
 - **Fixes from a second review:** short parts holding sections stay whole while a "12 Projects" part opens into its
   projects; a chapter whose video couldn't be made is still announced; the big Pip checks every display and only
   counts the microphone as busy when an app is recording; the Try buttons always work; signing out keeps your device

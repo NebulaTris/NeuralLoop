@@ -772,16 +772,19 @@ struct NotReady: View {
         bookId.flatMap { library.entry($0)?.activity }.flatMap { $0.isLive ? $0 : nil }
     }
 
+    private var making: PrepActivity.Item? { feed?.item(n, item) }
+
     var body: some View {
         CardBox(fill: Theme.sunk) {
             HStack(alignment: .top, spacing: 16) {
-                PipView(pose: status == .working ? .study : .nap, size: 90)
+                PipView(pose: status == .working || making != nil ? .study : .nap, size: 90)
                 VStack(alignment: .leading, spacing: 6) {
-                    if status == .working, let now = feed?.item(n, item) {
+                    // What's really happening wins over the saved status, which can trail a live run.
+                    if let now = making {
                         Loader(what: what, item: now)
                     } else {
                         Text(title).font(Theme.display(18))
-                        if status == .todo || status == nil, let place = feed?.place(n, item) {
+                        if status != .done, status != .skipped, let place = feed?.place(n, item) {
                             Label(PrepProgress.placeText(place), systemImage: "list.number").font(Theme.body(13)).foregroundStyle(Theme.accent)
                         }
                     }
@@ -803,7 +806,7 @@ struct NotReady: View {
         case .skipped: PrepWindow.notYet(what)
         case .failed: "\(what) needs another try."
         case .waiting: "\(what) is waiting for NotebookLM."
-        default: "\(what) is on Pip's list."
+        default: feed?.place(n, item) != nil ? "\(what) is in line: Pip is making the items ahead of it." : "\(what) is on Pip's list. It starts when Pip's next run does."
         }
     }
 
