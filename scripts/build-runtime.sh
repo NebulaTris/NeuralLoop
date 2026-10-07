@@ -2,7 +2,7 @@
 # Build NeuralLoop's self-contained runtime: a relocatable Python with the pipeline and every provider,
 # Rumik's MLX libraries, the NotebookLM library, and Ollama. The Mac app ships this folder inside
 # NeuralLoop.app/Contents/Resources/runtime, so people install nothing else. Models (the local text model,
-# the recall model, Rumik's voices) are downloaded on first launch by `neuralloop --setup`.
+# the recall model, Rumik's voices) are downloaded the first time the Mac's own AI is used (`neuralloop --setup`).
 #
 # Usage: scripts/build-runtime.sh [OUT_DIR]      (default: build/runtime)
 #        scripts/build-runtime.sh --stamp         (print the stamp for the current sources and exit)
@@ -29,7 +29,9 @@
 #   Developer ID signature must belong to Ollama's team (OLLAMA_TEAM_ID). Update all three together.
 #
 # Licences: NeuralLoop's LICENSE, NOTICE.md, and every text in licenses/ are copied into OUT/licenses, so the
-# runtime carries the notices for what it bundles (FFmpeg/x264/x265 inside PyAV, Ollama, the fonts…).
+# runtime carries the notices for what it bundles (FFmpeg/x264/x265 and the codec libraries inside PyAV, the
+# libraries the relocatable Python links in, Ollama, the fonts…). After changing a pinned version, check NOTICE.md's
+# lists against what actually ships (otool -L on av/.dylibs, the Python's libpython).
 #
 # The runtime is built in a temporary folder next to OUT and moved into place only after every check
 # passes. OUT/.stamp records a hash of the inputs (pipeline sources, the lock file, this script), so
@@ -61,7 +63,8 @@ runtime_stamp() {
 }
 
 # One SHA-256 over an installed folder: each file's path, executable bit and content hash, and each symlink's target.
-# Playwright's own bookkeeping (marker files, and .links/, which records the temporary build path) is left out.
+# Playwright's own bookkeeping (marker files, and .links/, which records the temporary build path and is deleted
+# after the check) is left out.
 tree_sha256() {
   (
     cd "$1"
@@ -182,6 +185,10 @@ if [[ "$GOT" != "$BROWSERS_SHA256" ]]; then
   echo "If the Playwright version changed on purpose, record the new hash (see the top of this script)." >&2
   exit 1
 fi
+# .links/ is Playwright's install bookkeeping (left out of the hash above): it holds the build folder's absolute path,
+# which would ship the builder's home folder in the DMG. Playwright reads it only while installing or uninstalling
+# browsers (and an install writes its own link first), never to launch one.
+rm -rf "$WORK/browsers/.links"
 
 echo "• Licences"
 mkdir -p "$WORK/licenses"
@@ -227,7 +234,11 @@ echo "• Checks"
 "$PY" -c "import anthropic, openai, notebooklm, mlx_audio, av, playwright, pypdf"
 PYTHONPYCACHEPREFIX="$DL/pycache" "$WORK/bin/neuralloop" --dry-run --no-open --out "$DL/smoke" >/dev/null
 test -f "$DL/smoke/book.json"
-test -f "$WORK/licenses/NOTICE.md" && test -f "$WORK/licenses/GPL-2.0.txt" && test -f "$WORK/licenses/Ollama-MIT.txt"
+# One test per line: with set -e, a failure early in an && list would not stop the script.
+for f in NOTICE.md GPL-2.0.txt Ollama-MIT.txt Apache-2.0.txt; do
+  test -f "$WORK/licenses/$f"
+done
+test ! -e "$WORK/browsers/.links"
 find "$WORK" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "$STAMP" >"$WORK/.stamp"

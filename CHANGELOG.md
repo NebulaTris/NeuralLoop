@@ -69,8 +69,8 @@ NeuralLoop turns a book you own (PDF or EPUB) into five-step learning loops, one
 3. Open NeuralLoop. The app isn't notarized yet, so the first time macOS asks you to confirm:
    **System Settings → Privacy & Security → Open Anyway**. You only do this once.
 
-Everything is inside the download (Python, the book pipeline, local voices, a local model runner), so there's nothing
-else to install.
+The programs are inside the download (Python, the book pipeline, the voice engine, a local model runner), so there's
+nothing else to install; the local voices and model download the first time your Mac's own AI is used.
 
 **What's in it**
 

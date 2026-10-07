@@ -151,7 +151,7 @@ A visit resets the hours-away clock and the ignored count.
   - Each mood's sound is `NeuralLoop-<name>.caf`, looked up first in the app's Resources and then in
     `~/Library/Sounds`, falling back to the default chime.
   - `scripts/install-nudge-sounds.sh` makes them (tags stripped, even loudness, IMA4).
-  - NOTICE.md records that the bundled ones have no known licence.
+  - The bundled ones were made by NeuralLoop's author and are covered by the repository's licence (NOTICE.md).
 
 **Known limit:** macOS doesn't let an app read Focus without the Communication Notifications entitlement, which an
 ad-hoc signed app can't have. During a quiet Focus (no call, nothing full screen), the big Pip can still appear.

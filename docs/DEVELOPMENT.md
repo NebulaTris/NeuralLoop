@@ -10,7 +10,7 @@ makes everything by default; your own AI takes over whenever NotebookLM can't (o
 Download `NeuralLoop-<version>.dmg`, drag NeuralLoop to Applications, and open it. It isn't signed by Apple yet, so the first
 time macOS asks: open System Settings → Privacy & Security and choose **Open Anyway**. The programs it needs are inside the
 app (Python, every AI provider, Rumik's voice engine, NotebookLM, Chromium for videos, and Ollama); Rumik's voices and the
-local models download the first time they're needed.
+local model download the first time your Mac's own AI is used.
 
 After an update, macOS may ask once whether NeuralLoop may use what it saved in your keychain ("NeuralLoop wants to use
 your confidential information…"). Enter your Mac's login password and click **Always Allow**; that's NeuralLoop reading
@@ -18,8 +18,10 @@ its own API keys and Google sign-in again (each build is signed ad hoc, so macOS
 
 ## Using it
 
-- **Add a book**: drop it on the window or choose Add a book. Pip makes a podcast and video for chapters 1–2 and everything
-  else for every chapter; **Prepare more** adds media for every chapter and retries anything that needs another go.
+- **Add a book**: drop it on the window or choose Add a book. Pip prepares each chapter just before you reach it
+  (spec 08): chapter 1 whole and chapter 2's quick items first, then a chapter or two ahead of wherever you are.
+  Settings → Your AI → **Prepare whole books right away** makes every chapter at once instead; a book's **Prepare more**
+  does the same for that book and retries anything that needs another go.
 - **Settings** (⌘,): sign in with Google for NotebookLM, pick your AI and keys (kept in the Keychain), voices and podcast
   length, and nudges (at most one a day, never in quiet hours, backing off if you skip them).
 - **Menu bar**: pick up where you left off, play the chapter's podcast and video, review due cards, see NotebookLM's allowance.

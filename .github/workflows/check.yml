@@ -47,9 +47,24 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
       - run: cd apple && swift test
+      - name: Install XcodeGen (pinned release, checked by SHA-256)
+        # To update: take the new release's xcodegen.zip digest (gh release view <version> -R yonaskolb/XcodeGen --json assets).
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          got="$("$RUNNER_TEMP/xcodegen/bin/xcodegen" --version)"
+          if [ "$got" != "Version: $XCODEGEN_VERSION" ]; then
+            echo "::error::Expected XcodeGen $XCODEGEN_VERSION, got '$got'."
+            exit 1
+          fi
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Build the Mac app
         run: |
-          brew install xcodegen
           cd apple && xcodegen generate && xcodebuild -project NeuralLoop.xcodeproj -scheme NeuralLoop \
             -configuration Debug CODE_SIGN_IDENTITY=- build
       - name: Build the iPad app
