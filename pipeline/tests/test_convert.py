@@ -11,12 +11,57 @@ class TestLooseJson:
     def test_citation_markers_are_removed(self):
         assert convert.loose_json('{"a": "x" [1], "b": "y" [2, 3]}') == {"a": "x", "b": "y"}
 
+    def test_valid_json_with_number_lists_is_kept(self):
+        answer = '{"tour": [{"title": "Start", "nodeIds": [1, 2]}], "n": [3]}'
+        assert convert.loose_json(answer) == {"tour": [{"title": "Start", "nodeIds": [1, 2]}], "n": [3]}
+
+    def test_code_in_strings_keeps_its_brackets(self):
+        answer = (
+            '{"a": "Use array [0] indexing", "b": "Call sorted([3, 1, 2]) first.", '
+            '"c": "Read matrix[i][0] then x [1] times."}'
+        )
+        assert convert.loose_json(answer) == {
+            "a": "Use array [0] indexing",
+            "b": "Call sorted([3, 1, 2]) first.",
+            "c": "Read matrix[i][0] then x [1] times.",
+        }
+
+    def test_code_spans_keep_their_brackets(self):
+        answer = '{"a": "Write `xs [1]` here. Lists start at zero [1]."}'
+        assert convert.loose_json(answer) == {"a": "Write `xs [1]` here. Lists start at zero."}
+
+    def test_citations_after_sentences_are_removed_from_strings(self):
+        answer = (
+            '{"summary": "Caches trade memory for speed [1]. They expire [2, 3].", '
+            '"why": "Fast. [4] Cheap [5][6]"}'
+        )
+        assert convert.loose_json(answer) == {
+            "summary": "Caches trade memory for speed. They expire.",
+            "why": "Fast. Cheap",
+        }
+
+    def test_citations_that_break_json_are_removed_but_number_lists_stay(self):
+        answer = '```json\n{"tour": [{"nodeIds": [1, 2]}], "note": "Caches help." [3]}\n```'
+        assert convert.loose_json(answer) == {"tour": [{"nodeIds": [1, 2]}], "note": "Caches help."}
+
     def test_json_embedded_in_prose_without_fence(self):
         assert convert.loose_json('The graph: {"a": 3} as requested') == {"a": 3}
 
     def test_garbage_returns_none(self):
         assert convert.loose_json("no json here") is None
         assert convert.loose_json(None) is None
+
+
+def test_plain_words_keeps_language_names_apart():
+    assert len({convert.plain_words(n) for n in ("C++", "C#", "C", "F#")}) == 4
+    assert len({convert.slug(n) for n in ("C++", "C#", "C")}) == 3
+    assert convert.plain_words("a + b") == "a b"
+
+
+def test_graph_from_mind_map_keeps_c_and_c_sharp():
+    tree = {"name": "Languages", "children": [{"name": "C"}, {"name": "C#"}, {"name": "C++"}]}
+    graph = convert.graph_from_mind_map(tree)
+    assert [c["name"] for c in graph["concepts"]] == ["C", "C#", "C++"]
 
 
 def test_quiz_keeps_only_complete_questions():
