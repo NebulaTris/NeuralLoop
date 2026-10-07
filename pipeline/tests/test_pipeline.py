@@ -572,3 +572,42 @@ def test_a_run_reports_its_progress_and_remembers_how_long_items_took(options):
     assert feed["ended"] is True and feed["items"] == [] and feed["queue"] == []
     made = {key.split(":")[-1] for key, seconds in state.data["timings"].items() if seconds}
     assert {"study", "quiz", "cards", "audio", "video"} <= made  # "<maker>:<item>" → recent durations
+
+
+class Timed(Failing):
+    """Takes `seconds` per item and records when each one ends; `fails` lists items it can't make."""
+
+    def __init__(self, name, seconds, fails=(), log=None):
+        super().__init__(name)
+        self.seconds, self.fails, self.log = seconds, set(fails), log if log is not None else []
+        self.now = self.most = 0
+
+    async def make(self, task, chapter):
+        self.now += 1
+        self.most = max(self.most, self.now)
+        try:
+            await asyncio.sleep(self.seconds)
+        finally:
+            self.now -= 1
+        if task in self.fails:
+            raise RuntimeError("NotebookLM couldn't")
+        self.log.append((self.name, chapter["n"], task))
+        return {}
+
+
+def test_items_waiting_for_a_slow_local_fallback_never_hold_notebooklms_lanes(options):
+    """Quizzes NotebookLM couldn't make queue for the Mac's model one at a time; while they wait they must not
+    keep the run's two lanes, or NotebookLM's own items stand still behind them."""
+    from neuralloop_books.engines.auto import AutoEngine
+
+    options.media, options.parallel = "none", 2
+    finished: list = []
+    primary = Timed("NotebookLM", 0.01, fails={"quiz", "cards"}, log=finished)
+    fallback = Timed("Ollama", 0.3, log=finished)
+    engine = AutoEngine(lambda: primary, lambda: fallback, options.log, fallback_parallel=1)
+    state = asyncio.run(run(options, engine))
+    made = [e for c in state.chapters for e in c["tasks"].values() if e["status"] != SKIPPED]
+    assert all(e["status"] == DONE for e in made)
+    first_local = next(i for i, (who, _, _) in enumerate(finished) if who == "Ollama")
+    assert all(who == "Ollama" for who, _, _ in finished[first_local:])  # NotebookLM never waited behind it
+    assert primary.most == 2  # and kept both lanes

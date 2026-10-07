@@ -5,11 +5,17 @@ fails or hits its limit on one item, that item is made locally instead, so a boo
 """
 
 import asyncio
+from collections.abc import Callable
+from contextvars import ContextVar
 
 from .. import activity
 from ..config import MEDIA_TASKS
 from ..models import SetupError, safe_message
 from ..notebook import GenerationFailed, is_auth_error, is_quota_error
+
+# Set by the pipeline for each item: gives the item's place in the run's lane back (once). Without it (e.g.
+# called on its own), nothing is handed back.
+leave_lane: ContextVar[Callable[[], None] | None] = ContextVar("neuralloop_leave_lane", default=None)
 
 
 class AutoEngine:
@@ -99,6 +105,9 @@ class AutoEngine:
                 activity.report(step, by=fallback.name, restart=True)
             if self._fallback_text is None or task in MEDIA_TASKS:  # media have their own lane already
                 return {**await fallback.make(task, chapter), "_by": fallback.name}
+            if primary_error is not None and (leave := leave_lane.get()) is not None:
+                # Queue for the fallback without the run's lane, which NotebookLM's own items keep using.
+                leave()
             async with self._fallback_text:
                 return {**await fallback.make(task, chapter), "_by": fallback.name}
         except SetupError as error:

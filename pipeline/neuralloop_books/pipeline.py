@@ -13,7 +13,7 @@ from . import bookdata
 from .activity import Activity
 from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
-from .engines.auto import made_by
+from .engines.auto import leave_lane, made_by
 from .models import SetupError, safe_message
 from .notebook import NOT_ANSWERING, is_quota_error
 from .selection import parse_selection
@@ -197,6 +197,31 @@ async def _run(opts: Options, engine) -> BookState:
     return state
 
 
+class _Lane:
+    """An item's place in its lane (text or media). It can hand the place back early: auto does, before an
+    item NotebookLM couldn't make queues for a fallback that makes one at a time, so that wait never holds a
+    lane NotebookLM's own items need."""
+
+    def __init__(self, limiter: asyncio.Semaphore):
+        self._limiter, self._held, self._token = limiter, False, None
+
+    async def __aenter__(self):
+        await self._limiter.acquire()
+        self._held = True
+        self._token = leave_lane.set(self.leave)
+        return self
+
+    def leave(self) -> None:
+        if self._held:
+            self._held = False
+            self._limiter.release()
+
+    async def __aexit__(self, *exc):
+        leave_lane.reset(self._token)
+        self.leave()
+        return False
+
+
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
 
@@ -211,7 +236,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
 
     if wait_behind_limit():
         return
-    async with limiter:
+    async with _Lane(limiter):
         if wait_behind_limit():  # another item of this kind hit the limit while we waited
             return
         entry["status"] = WORKING
