@@ -27,15 +27,18 @@ enum AppMover {
     }
 
     /// Copies the app into /Applications (or ~/Applications if that isn't writable), replacing an older copy (which goes
-    /// to the Trash, never deleted outright), then opens the new one and quits this one. Returns a reason if it couldn't.
+    /// to the Trash, never deleted outright), then opens the new one and quits this one. Says how it went.
     /// The copy (over a gigabyte, with the runtime) happens off the main thread, so Pip keeps carrying yarn meanwhile.
-    @MainActor static func moveIn() async -> String? {
+    @MainActor static func moveIn() async -> MoveOutcome {
         switch await Task.detached(operation: { copyIn() }).value {
-        case .alreadyThere: return nil
-        case .copied(let destination): reopen(from: destination); return nil
-        case .failed(let problem): return problem
+        case .alreadyThere: return .alreadyHome
+        case .copied(let destination): reopen(from: destination); return .reopening
+        case .failed(let problem): return .problem(problem)
         }
     }
+
+    /// `reopening`: this copy is about to quit. `alreadyHome`: it's the one in Applications, so nothing to do.
+    enum MoveOutcome: Equatable { case reopening, alreadyHome, problem(String) }
 
     enum CopyOutcome: Sendable { case alreadyThere, copied(URL), failed(String) }
 
@@ -125,8 +128,11 @@ struct MoveInView: View {
                     moving = true
                     problem = nil
                     Task {
-                        problem = await AppMover.moveIn()
-                        if problem != nil { moving = false }
+                        switch await AppMover.moveIn() {
+                        case .reopening: break  // this copy quits in a moment
+                        case .alreadyHome: dismiss()
+                        case .problem(let reason): problem = reason; moving = false
+                        }
                     }
                 } label: {
                     Label(moving ? "Carrying my yarn…" : "Move me in", systemImage: moving ? "shippingbox.fill" : "house.fill")
