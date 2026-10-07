@@ -186,6 +186,12 @@ final class BookSession {
     func stopClock() {
         clock?.invalidate()
         flushTracking()
+        // A remake draft typed in the last second would be lost with the session: save it now.
+        if let pending = pendingSave {
+            pending.cancel()
+            pendingSave = nil
+            save()
+        }
     }
 
     // MARK: steps that complete themselves (spec 09)
