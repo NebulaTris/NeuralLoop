@@ -23,6 +23,13 @@ targets:
       - path: App/Resources/PipLayers   # Pip's layers, as one folder in the bundle (PipView loads PipLayers/<name>.png)
         type: folder
         buildPhase: resources
+      - path: ../LICENSE                 # licences travel with the app (NOTICE.md lists what each covers)
+        buildPhase: resources
+      - path: ../NOTICE.md
+        buildPhase: resources
+      - path: ../licenses                # licence texts, as one folder in the bundle (Resources/licenses)
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: NeuralLoopCore
     configFiles:                           # GOOGLE_CLIENT_ID for Drive sync (Config/Google.xcconfig, not committed)
@@ -81,6 +88,13 @@ targets:
           - "Resources/PipLayers"
           - "Resources/PipLayers/**"
       - path: App/Resources/PipLayers
+        type: folder
+        buildPhase: resources
+      - path: ../LICENSE                 # licences travel with the app (NOTICE.md lists what each covers)
+        buildPhase: resources
+      - path: ../NOTICE.md
+        buildPhase: resources
+      - path: ../licenses                # licence texts, as one folder in the bundle (Resources/licenses)
         type: folder
         buildPhase: resources
     dependencies:
