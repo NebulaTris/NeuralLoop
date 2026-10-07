@@ -460,3 +460,120 @@ def test_a_hermes_without_a_model_is_setup_needed(tmp_path):
     model = HermesModel(None, executable=str(script), allow_tools=True)
     with pytest.raises(SetupError, match="hermes model"):
         asyncio.run(model.complete("quiz", "S", "C", "P"))
+
+
+# ---- output limits a model can't take, and picking LM Studio's model ----
+
+
+def test_an_openai_model_with_a_smaller_output_limit_is_asked_again_within_it(clean_env):
+    """A model that allows fewer output tokens than we ask for answers 400 on every item; the limit it
+    names is used, once, and remembered for the rest of the run (JSON mode stays on)."""
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer("openai", models=("gpt-capped",), output_caps={"gpt-capped": 12_000}) as server:
+        clean_env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        model = make_model("openai", "gpt-capped", env={"OPENAI_API_KEY": OPENAI_KEY})
+        for _ in range(2):
+            reply = asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
+            assert json.loads(reply) == {"ok": True}
+        sent = [p["body"] for p in server.posts("/chat/completions")]
+        assert [b["max_completion_tokens"] for b in sent] == [32_768, 12_000, 12_000]
+        assert all(b["response_format"] == {"type": "json_object"} for b in sent)
+
+
+def test_gpt_4o_is_never_asked_for_more_than_it_allows(clean_env):
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer("openai", models=("gpt-4o-mini",), output_caps={"gpt-4o-mini": 16_384}) as server:
+        clean_env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        model = make_model("openai", "gpt-4o-mini", env={"OPENAI_API_KEY": OPENAI_KEY})
+        asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
+        assert [p["body"]["max_completion_tokens"] for p in server.posts("/chat/completions")] == [16_384]
+
+
+def test_a_compatible_server_with_a_smaller_output_limit_is_asked_again(clean_env):
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer("compatible", models=("small",), output_caps={"small": 2_048}) as server:
+        model = make_model("custom", "small", env={"NEURALLOOP_BASE_URL": f"{server.url}/v1"})
+        asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
+        assert [p["body"]["max_tokens"] for p in server.posts("/chat/completions")] == [8_192, 2_048]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "caps", "asked"),
+    [
+        ("claude-opus-4-1", {"claude-opus-4-1": 32_000}, [32_000]),
+        ("claude-custom-x", {"claude-custom-x": 20_000}, [64_000, 20_000, 20_000]),
+    ],
+)
+def test_claude_is_asked_within_its_output_limit(model_id, caps, asked, clean_env):
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer("anthropic", models=(model_id,), output_caps=caps) as server:
+        clean_env.setenv("ANTHROPIC_BASE_URL", server.url)
+        model = make_model("anthropic", model_id, env={"ANTHROPIC_API_KEY": ANTHROPIC_KEY})
+        for _ in range(len(asked) - 1 or 1):
+            reply = asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
+            assert json.loads(reply) == {"ok": True}
+        assert [p["body"]["max_tokens"] for p in server.posts("/messages")] == asked
+
+
+def test_legacy_claude_gets_no_adaptive_thinking(clean_env):
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer("anthropic", models=("claude-3-7-sonnet-latest",)) as server:
+        clean_env.setenv("ANTHROPIC_BASE_URL", server.url)
+        model = make_model("anthropic", "claude-3-7-sonnet-latest", env={"ANTHROPIC_API_KEY": ANTHROPIC_KEY})
+        asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
+        body = server.posts("/messages")[0]["body"]
+        assert "thinking" not in body and "fallbacks" not in body
+
+
+def _lm_studio_pick(**server_options) -> str:
+    import asyncio
+
+    from neuralloop_books.models import make_model
+
+    with MockServer(server_options.pop("flavor", "lmstudio"), **server_options) as server:
+        model = make_model("custom", None, env={"NEURALLOOP_BASE_URL": server.url})
+        asyncio.run(model.check())
+        return model.model
+
+
+def test_lm_studio_never_picks_an_embedding_model(clean_env):
+    models = ("text-embedding-nomic-embed-text-v1.5", "qwen/qwen3-8b")
+    assert _lm_studio_pick(models=models) == "qwen/qwen3-8b"
+
+
+def test_lm_studio_skips_what_its_own_api_says_is_not_a_chat_model(clean_env):
+    models = ("nomic-ai/nomic-v1", "google/gemma-3-4b")
+    assert _lm_studio_pick(models=models, types={"nomic-ai/nomic-v1": "embeddings"}) == "google/gemma-3-4b"
+
+
+def test_lm_studio_prefers_the_loaded_model(clean_env):
+    models = ("qwen/qwen3-8b", "text-embedding-x", "google/gemma-3-4b")
+    picked = _lm_studio_pick(models=models, loaded=("text-embedding-x", "google/gemma-3-4b"))
+    assert picked == "google/gemma-3-4b"
+
+
+def test_a_compatible_server_skips_speech_rerank_and_embedding_models(clean_env):
+    models = ("BAAI/bge-reranker-v2", "whisper-1", "tts-1", "my-embedding", "llama-3.1-8b")
+    assert _lm_studio_pick(flavor="compatible", models=models) == "llama-3.1-8b"
+
+
+def test_lm_studio_with_only_embedding_models_says_to_load_a_chat_model(clean_env):
+    from neuralloop_books.models import SetupError
+
+    with pytest.raises(SetupError, match="Load a chat model"):
+        _lm_studio_pick(models=("text-embedding-nomic-embed-text-v1.5",))

@@ -55,13 +55,22 @@ class MockServer:
         models: tuple[str, ...] = (),
         keys: dict[str, int] | None = None,
         post_keys: dict[str, int] | None = None,
+        output_caps: dict[str, int] | None = None,
+        loaded: tuple[str, ...] | None = None,
+        types: dict[str, str] | None = None,
     ):
         """`keys`: an API key -> the HTTP status every request with it gets (401, 402, 429…);
-        `post_keys`: the same for requests that ask the model something (lookups still work)."""
+        `post_keys`: the same for requests that ask the model something (lookups still work);
+        `output_caps`: a model -> the most output tokens it allows (asking for more is a 400, worded like
+        the real service); `loaded`, `types`: what LM Studio's own API (/api/v0/models) says about each
+        model (none loaded, all "llm" unless given)."""
         self.flavor = flavor
         self.models = models or (LMSTUDIO_MODELS if flavor == "lmstudio" else ("model-a", "vendor/model-b"))
         self.keys = keys or {}
         self.post_keys = post_keys or {}
+        self.output_caps = output_caps or {}
+        self.loaded = loaded or ()
+        self.types = types or {}
         self.requests: list[dict] = []
         server = self
 
@@ -131,6 +140,17 @@ class MockServer:
     # OpenAI and friends
 
     def _openai(self, handler, method, path, body) -> None:
+        if self.flavor == "lmstudio" and method == "GET" and path == "/api/v0/models":
+            data = [
+                {
+                    "id": m,
+                    "object": "model",
+                    "type": self.types.get(m, "llm"),
+                    "state": "loaded" if m in self.loaded else "not-loaded",
+                }
+                for m in self.models
+            ]
+            return self._send(handler, 200, {"object": "list", "data": data})
         if not path.startswith("/v1/"):
             return self._error(handler, 404, f"Unexpected endpoint {path}")
         if method == "GET" and path == "/v1/models":
@@ -181,6 +201,15 @@ class MockServer:
                 "Unsupported parameter: 'max_tokens' is not supported with this model. "
                 "Use 'max_completion_tokens' instead.",
             )
+        asked = body.get("max_completion_tokens") or body.get("max_tokens") or 0
+        cap = self.output_caps.get(body["model"])
+        if cap and asked > cap:
+            name = "max_completion_tokens" if "max_completion_tokens" in body else "max_tokens"
+            return (
+                400,
+                f"{name} is too large: {asked}. This model supports at most {cap} completion tokens, "
+                f"whereas you provided {asked}.",
+            )
         if self.flavor == "lmstudio" and response_format == "json_object":
             return 400, "'response_format.type' must be 'json_schema' or 'text'"
         if response_format == "json_schema" and "schema" not in body["response_format"].get(
@@ -204,6 +233,14 @@ class MockServer:
         if method == "POST" and path == "/v1/messages":
             if body.get("model") not in self.models:
                 return self._error(handler, 404, f"model: {body.get('model')}")
+            cap = self.output_caps.get(body["model"])
+            if cap and body.get("max_tokens", 0) > cap:
+                return self._error(
+                    handler,
+                    400,
+                    f"max_tokens: {body['max_tokens']} > {cap}, which is the maximum allowed number of "
+                    f"output tokens for {body['model']}",
+                )
             thinking = (body.get("thinking") or {}).get("type")
             if thinking == "adaptive" and body["model"].startswith("claude-haiku-4"):
                 return self._error(handler, 400, "adaptive thinking is not supported on this model")

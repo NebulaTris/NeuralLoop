@@ -5,18 +5,34 @@ import re
 import anthropic
 
 from ..prompts import wrap_chapter
-from . import QuotaError, SetupError
+from . import QuotaError, SetupError, output_cap_from_error
 
 MAX_TOKENS = 64_000  # streamed, so a long podcast script never hits an HTTP timeout
+# Older models allow less output; asking for more is a 400 on every item.
+_OLDER_CAPS = (
+    (re.compile(r"^claude-opus-4(?:-[01])?(?:-\d{8})?$"), 32_000),
+    (re.compile(r"^claude-3-5-"), 8_192),
+    (re.compile(r"^claude-3-(?:opus|sonnet|haiku)"), 4_096),
+    (re.compile(r"^claude-(?:2|instant)"), 4_096),
+)
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Server-side fallbacks (when a safety check declines, another Claude answers) exist for these models only.
 FALLBACK_MODELS = frozenset({"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"})
 _VERSION = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-|$)")
+# Claude 3 and older put the version first (claude-3-7-sonnet-latest, claude-2.1, claude-instant-1.2).
+_LEGACY = re.compile(r"^claude-(?:\d|instant)")
+
+
+def max_output_tokens(model: str) -> int:
+    """The most output to ask this model for."""
+    return next((cap for pattern, cap in _OLDER_CAPS if pattern.match(model)), MAX_TOKENS)
 
 
 def adaptive_thinking(model: str) -> bool:
     """Claude 4.6 and later think adaptively; Haiku 4.5 and older models refuse it (a 400 on every item).
     A name we can't read is assumed to be a current model."""
+    if _LEGACY.match(model):
+        return False
     match = _VERSION.match(model)
     if not match:
         return True
@@ -32,6 +48,7 @@ class AnthropicModel:
 
     def __init__(self, model: str, api_key: str):
         self.model = model
+        self.max_tokens = max_output_tokens(model)  # lowered for the run if the model says it allows less
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
 
     async def check(self) -> None:
@@ -61,15 +78,27 @@ class AnthropicModel:
             options["thinking"] = {"type": "adaptive"}
         if self.model in FALLBACK_MODELS:
             options.update(betas=[FALLBACK_BETA], fallbacks="default")
-        try:
+
+        async def ask() -> anthropic.types.beta.BetaMessage:
             async with self.client.beta.messages.stream(
                 model=self.model,
-                max_tokens=MAX_TOKENS,
+                max_tokens=self.max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": content}],
                 **options,
             ) as stream:
-                message = await stream.get_final_message()
+                return await stream.get_final_message()
+
+        try:
+            try:
+                message = await ask()
+            except anthropic.BadRequestError as error:
+                # A model that allows less output than we asked for: ask once more within its limit.
+                cap = output_cap_from_error(error.message, self.max_tokens)
+                if cap is None:
+                    raise
+                self.max_tokens = cap
+                message = await ask()
         except anthropic.RateLimitError as error:
             raise QuotaError(f"rate limit: {error}") from error
         except (
