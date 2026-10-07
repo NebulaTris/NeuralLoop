@@ -58,9 +58,7 @@ def prepare_state(opts: Options) -> BookState:
     state = _load_state(opts)
     if state is None:
         opts.log(f"Splitting {safe_message(opts.book.name)} into chapters…")
-        chapters = split_book(opts.book, opts.out / "chapters")
-        if not chapters:
-            raise BookProblem("Couldn't find any chapters in this book.")
+        chapters = split_book(opts.book, opts.out / "chapters")  # never empty: UnreadableBookError instead
         title = clean_title(opts.title or opts.book.stem.replace("_", " ").replace("-", " ")) or "Book"
         state = BookState.create(
             opts.out / "state.json",
@@ -158,10 +156,21 @@ async def _run(opts: Options, engine) -> BookState:
     state = prepare_state(opts)
     await bookdata.write_async(opts.out, state, book_options(opts))
     async with engine:
-        await engine.prepare(state)
+        feed = Activity(opts.out, state.data.get("timings", {}))
+        first = next(iter(state.pending()), None)
+        if first is None:
+            await engine.prepare(state)
+        else:
+            # Getting ready can take a while the first time (downloading the Mac's AI): it shows on the item
+            # that's waiting for it.
+            try:
+                with feed.preparing(first[0]["n"], first[1], engine.name):
+                    await engine.prepare(state)
+            except BaseException:
+                feed.close()  # e.g. the download failed: nothing is being made any more
+                raise
         pending = state.pending()
         opts.log(f"Making {len(pending)} items with {engine.name}, chapter by chapter.")
-        feed = Activity(opts.out, state.data.get("timings", {}))
         feed.queue([(c["n"], t) for c, t in pending])
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
         # (engine, item kind) pairs that hit a limit (or that NotebookLM didn't answer after patient retries)

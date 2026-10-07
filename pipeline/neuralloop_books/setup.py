@@ -11,6 +11,7 @@ import subprocess
 import urllib.request
 from collections.abc import Callable, Iterator
 
+from . import activity
 from .models import SetupError
 
 _GB = 1024**3
@@ -80,9 +81,14 @@ def _stream_pull(host: str, name: str) -> Iterator[dict]:
                 yield json.loads(line)
 
 
-async def ensure_model(host: str, name: str, log: Callable[[str], None]) -> None:
-    installed = _installed_models(host)
-    if name in installed or f"{name}:latest" in installed:
+DOWNLOADING = "Downloading your Mac's AI (first time only)"
+
+
+async def ensure_model(host: str, name: str, log: Callable[[str], None], any_will_do: bool = False) -> None:
+    """Download `name` into Ollama unless it's there (with `any_will_do`, unless Ollama has any model). Inside
+    a book run the item waiting for it shows the download as its step."""
+    installed = await asyncio.to_thread(_installed_models, host)
+    if name in installed or f"{name}:latest" in installed or (any_will_do and installed):
         return
 
     def pull() -> None:
@@ -91,12 +97,15 @@ async def ensure_model(host: str, name: str, log: Callable[[str], None]) -> None
             if event.get("error"):
                 raise SetupError(f"Couldn't download {name}: {event['error']}")
             if event.get("total"):
-                percent = int(100 * event.get("completed", 0) / event["total"])
+                fraction = event.get("completed", 0) / event["total"]
+                activity.report(DOWNLOADING, fraction=fraction)
+                percent = int(100 * fraction)
                 if percent >= last + 5:
                     log(f"  setup: downloading {name} {percent}%")
                     last = percent
 
-    log(f"  setup: downloading {name} (a few GB, once)…")
+    log(f"  setup: Downloading {name} (a few GB, first time only)…")
+    activity.report(DOWNLOADING, by="Ollama")
     await asyncio.to_thread(pull)
     log(f"  setup: {name} ready")
 

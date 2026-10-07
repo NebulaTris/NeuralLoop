@@ -65,3 +65,35 @@ def test_an_installed_model_is_not_downloaded_again(monkeypatch):
     monkeypatch.setattr(setup, "_installed_models", lambda host: ["qwen3:8b"])
     monkeypatch.setattr(setup, "_stream_pull", lambda host, name: pytest.fail("should not pull"))
     asyncio.run(setup.ensure_model("http://localhost:11434", "qwen3:8b", log=lambda _: None))
+
+
+def test_a_download_inside_a_book_run_shows_as_the_waiting_items_step(monkeypatch, tmp_path):
+    import json
+
+    from neuralloop_books.activity import Activity
+
+    seen = []
+    feed = Activity(tmp_path, {})
+
+    def pull(host, name):
+        yield {"status": "downloading", "total": 100, "completed": 40}
+        seen.append(json.loads((tmp_path / "activity.json").read_text())["items"][0])
+
+    monkeypatch.setattr(setup, "_installed_models", lambda host: [])
+    monkeypatch.setattr(setup, "_stream_pull", pull)
+
+    async def item():
+        token = feed.begin(1, "study", "Ollama")
+        await setup.ensure_model("http://localhost:11434", "qwen3:4b", log=lambda _: None)
+        feed.end(1, "study", token=token)
+
+    asyncio.run(item())
+    assert seen[0]["step"] == "Downloading your Mac's AI (first time only)"
+
+
+def test_with_no_model_named_any_model_ollama_has_will_do(monkeypatch):
+    monkeypatch.setattr(setup, "_installed_models", lambda host: ["llama3:8b"])
+    monkeypatch.setattr(setup, "_stream_pull", lambda host, name: pytest.fail("should not pull"))
+    asyncio.run(
+        setup.ensure_model("http://localhost:11434", "qwen3:8b", log=lambda _: None, any_will_do=True)
+    )

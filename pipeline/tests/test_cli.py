@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from neuralloop_books.cli import main, parse_args
@@ -208,6 +210,109 @@ def test_a_dry_run_never_uses_the_models_named_in_ai_json(epub, tmp_path, monkey
     monkeypatch.setattr(models, "make_model", lambda p, *a, **k: made.append(p) or real(p, *a, **k))
     code = main([str(epub), "--dry-run", "--ai-config", str(config), "--out", str(tmp_path / "o")])
     assert code == 0 and set(made) == {"fake"}
+
+
+class MacModel:
+    """Stands in for an Ollama model (the run checks it only after the download)."""
+
+    name, provider, base_url = "Ollama", "ollama", "http://127.0.0.1:11434"
+
+    def __init__(self, model=None):
+        self.model = model
+        self.checked = False
+
+    async def check(self):
+        self.checked = True
+
+
+@pytest.fixture
+def mac_ai(monkeypatch):
+    """A Mac with Ollama but none of its models yet; records what's downloaded and in which order."""
+    from neuralloop_books import cli, models, setup
+
+    events = []
+
+    async def no_ollama_start(host, log, **kwargs):
+        events.append("ollama")
+
+    async def download(host, name, log, **kwargs):
+        events.append(f"download {name}")
+        log(f"  setup: Downloading {name}…")
+
+    monkeypatch.setattr(setup, "ensure_ollama", no_ollama_start)
+    monkeypatch.setattr(setup, "ensure_model", download)
+    monkeypatch.setattr(setup, "total_memory", lambda: 8 * 1024**3)
+    monkeypatch.setattr(cli, "resolve_provider", lambda provider, env: "ollama")
+    monkeypatch.setattr(models, "make_model", lambda provider, model, *a, **k: MacModel(model))
+    return events
+
+
+def local_run_prepare(tmp_path, **options):
+    import asyncio
+
+    from neuralloop_books import cli
+    from neuralloop_books.pipeline import Options
+    from neuralloop_books.state import BookState
+
+    opts = Options(book=tmp_path / "b.epub", out=tmp_path, speech="fake", log=lambda _: None, **options)
+    state = BookState.create(tmp_path / "state.json", title="T", source="b", chapters=[], dry_run=False)
+    engine = cli._local_engine(opts)
+    asyncio.run(engine.prepare(state))
+    return engine
+
+
+def test_the_macs_ai_is_downloaded_before_the_first_item(tmp_path, mac_ai):
+    """Someone not signed in to NotebookLM gets the local model on their first run, without --setup."""
+    from neuralloop_books.aiconfig import ModelChoice
+
+    engine = local_run_prepare(
+        tmp_path, provider="ollama", task_choices={"quiz": ModelChoice("ollama", "qwen3:14b")}
+    )
+    assert mac_ai[0] == "ollama" and set(mac_ai[1:]) == {"download qwen3:4b", "download qwen3:14b"}
+    assert engine.model.checked  # checked only once it's there
+
+
+def test_a_download_that_fails_says_what_happened_without_a_command_to_run(tmp_path, mac_ai, monkeypatch):
+    from neuralloop_books import setup
+    from neuralloop_books.models import SetupError
+
+    async def offline(host, name, log, **kwargs):
+        raise OSError("nodename nor servname provided")
+
+    monkeypatch.setattr(setup, "ensure_model", offline)
+    with pytest.raises(SetupError) as caught:
+        local_run_prepare(tmp_path, provider="ollama")
+    message = str(caught.value)
+    assert "qwen3:4b" in message and "internet" in message
+    assert "ollama pull" not in message and "Run:" not in message
+
+
+def test_setup_downloads_the_local_model_even_when_books_are_made_with_another_ai(tmp_path, monkeypatch):
+    """--setup is for the Mac's own AI: Anthropic's model name is never handed to Ollama."""
+    from neuralloop_books import setup
+
+    asked = []
+
+    async def fake_setup(log, model=None, **kwargs):
+        asked.append(model)
+
+    monkeypatch.setattr(setup, "run_setup", fake_setup)
+    config = tmp_path / "ai.json"
+    config.write_text(json.dumps({"make": {"provider": "anthropic", "model": "claude-opus-5-5"}}))
+    assert main(["--setup", "--ai-config", str(config)]) == 0
+    config.write_text(json.dumps({"make": {"provider": "ollama", "model": "qwen3:14b"}}))
+    assert main(["--setup", "--ai-config", str(config)]) == 0
+    assert asked == [None, "qwen3:14b"]
+
+
+def test_check_ai_with_a_model_but_no_provider_checks_that_model_with_the_configured_provider(tmp_path):
+    config = tmp_path / "ai.json"
+    config.write_text(
+        json.dumps({"make": {"provider": "openrouter", "model": "a"}, "recall": {"provider": "fake"}})
+    )
+    args = parse_args(["--check-ai", "--model", "b", "--ai-config", str(config)])
+    assert (args.config.make.provider, args.config.make.model) == ("openrouter", "b")
+    assert args.config.recall.provider == "fake"
 
 
 def test_a_title_starting_with_a_dash_is_read_as_the_title(epub):

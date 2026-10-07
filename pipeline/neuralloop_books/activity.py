@@ -49,6 +49,7 @@ class Activity:
         self._items: dict[tuple[int, str], dict] = {}
         self._queue: list[tuple[int, str]] = []
         self._last_write = 0.0
+        self._preparing: tuple[int, str, str] | None = None  # (n, item, by) while the engine gets ready
 
     # ---- what the pipeline calls ----
 
@@ -67,20 +68,38 @@ class Activity:
         now = self._ms()
         with self._lock:
             self._queue = [q for q in self._queue if q != (n, item)]
-            self._items[(n, item)] = {
-                "n": n,
-                "item": item,
-                "by": by,
-                "step": "",
-                "started": now,
-                "updated": now,
-                "done": None,
-                "total": None,
-                "fraction": None,
-                "expected": self.expected(by, item),
-            }
+            self._items[(n, item)] = self._entry(n, item, by, now)
             self._write(now, force=True)
         return _current.set((self, n, item))
+
+    def _entry(self, n: int, item: str, by: str, now: int) -> dict:
+        return {
+            "n": n,
+            "item": item,
+            "by": by,
+            "step": "",
+            "started": now,
+            "updated": now,
+            "done": None,
+            "total": None,
+            "fraction": None,
+            "expected": self.expected(by, item),
+        }
+
+    @contextlib.contextmanager
+    def preparing(self, n: int, item: str, by: str):
+        """While the engine gets ready (e.g. downloads the Mac's AI), what it reports shows on the first item
+        waiting for it. Nothing shows unless it reports, and the time isn't counted as that item's."""
+        token = _current.set((self, n, item))
+        self._preparing = (n, item, by)
+        try:
+            yield
+        finally:
+            _current.reset(token)
+            self._preparing = None
+            with self._lock:
+                if self._items.pop((n, item), None) is not None:
+                    self._write(self._ms(), force=True)
 
     def end(
         self, n: int, item: str, seconds: float | None = None, ok: bool = True, token: Token | None = None
@@ -127,6 +146,8 @@ class Activity:
         now = self._ms()
         with self._lock:
             entry = self._items.get((n, item))
+            if entry is None and self._preparing is not None and self._preparing[:2] == (n, item):
+                entry = self._items[(n, item)] = self._entry(n, item, self._preparing[2], now)
             if entry is None:
                 return
             new_step = step is not None and step != entry["step"]

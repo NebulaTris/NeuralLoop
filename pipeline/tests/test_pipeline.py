@@ -574,6 +574,32 @@ def test_a_run_reports_its_progress_and_remembers_how_long_items_took(options):
     assert {"study", "quiz", "cards", "audio", "video"} <= made  # "<maker>:<item>" → recent durations
 
 
+class DownloadsFirst(Failing):
+    """An engine that gets something ready (e.g. downloads the Mac's AI) before it can make anything."""
+
+    def __init__(self, out):
+        super().__init__("Ollama")
+        self.out, self.seen = out, None
+
+    async def prepare(self, state):
+        from neuralloop_books import activity
+
+        activity.report("Downloading your Mac's AI (first time only)")
+        self.seen = json.loads((self.out / "activity.json").read_text())
+
+
+def test_getting_the_engine_ready_shows_on_the_first_item_waiting_for_it(options):
+    engine = DownloadsFirst(options.out)
+    state = asyncio.run(run(options, engine))
+    (item,) = engine.seen["items"]
+    assert (item["n"], item["item"], item["step"]) == (
+        1,
+        "study",
+        "Downloading your Mac's AI (first time only)",
+    )
+    assert state.chapters[0]["tasks"]["study"]["status"] == DONE
+
+
 class Timed(Failing):
     """Takes `seconds` per item and records when each one ends; `fails` lists items it can't make."""
 
