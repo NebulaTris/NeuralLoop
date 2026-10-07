@@ -17,7 +17,7 @@ from .engines.auto import made_by
 from .models import SetupError, safe_message
 from .notebook import is_quota_error
 from .selection import parse_selection
-from .state import DONE, FAILED, WAITING, WORKING, BookState, UnreadableState
+from .state import DONE, FAILED, TODO, WAITING, WORKING, BookState, UnreadableState
 
 
 @dataclass
@@ -184,6 +184,11 @@ async def _run(opts: Options, engine) -> BookState:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # Items stopped half-way go back to the queue, so the app never shows them as being made.
+            state.reset_interrupted()
+            state.data["timings"] = feed.timings
+            state.save()
+            bookdata.write(opts.out, state, book_options(opts))
             raise
         finally:
             feed.close()
@@ -217,8 +222,10 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             chapter.update(result)
             entry.update(status=DONE, error="")
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
-        except SetupError:
-            raise  # e.g. a revoked key: stop the run and say what to fix
+        except SetupError as error:
+            # e.g. a revoked key: stop the run and say what to fix; the item says so and is made next run.
+            entry.update(status=TODO, error=safe_message(error))
+            raise
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
                 # The rest of this kind wait too, instead of each spending minutes on the same retries.

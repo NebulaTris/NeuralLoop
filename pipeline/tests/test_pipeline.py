@@ -297,6 +297,30 @@ def test_a_setup_error_cancels_the_other_items_before_the_engine_closes(options)
     assert engine.running_at_exit == 0
 
 
+def test_a_run_stopped_for_setup_leaves_nothing_working_and_says_what_needs_fixing(options):
+    with pytest.raises(SetupError):
+        asyncio.run(run(options, SetupFailsWhileMediaRuns()))
+    saved = json.loads((options.out / "state.json").read_text())
+    assert not [t for c in saved["chapters"] for t in c["tasks"].values() if t["status"] == "working"]
+    assert all(s != "working" for c in book_data(options.out)["chapters"] for s in c["status"].values())
+    assert "revoked" in saved["chapters"][0]["tasks"]["study"]["error"]
+
+
+def test_a_run_interrupted_with_ctrl_c_leaves_nothing_working(options):
+    class Interrupted(SetupFailsWhileMediaRuns):
+        async def make(self, task, chapter):
+            if task == "study":
+                raise KeyboardInterrupt
+            await asyncio.sleep(5 if task in ("audio", "video") else 0)
+            return {}
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(run(options, Interrupted()))
+    saved = json.loads((options.out / "state.json").read_text())
+    assert not [t for c in saved["chapters"] for t in c["tasks"].values() if t["status"] == "working"]
+    assert all(s != "working" for c in book_data(options.out)["chapters"] for s in c["status"].values())
+
+
 class Failing:
     def __init__(self, name, error=None):
         self.name, self.error = name, error
