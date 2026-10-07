@@ -84,3 +84,57 @@ def test_the_temporary_narration_is_removed_even_when_rendering_fails(tmp_path, 
     with pytest.raises(RuntimeError):
         video.render(tmp_path / "e.mp4", "Caching", SLIDES[:1], clips, fps=6, size=(320, 180))
     assert not (tmp_path / "e.narration.wav").exists()
+
+
+def test_the_macs_own_h264_encoder_comes_before_gpl_x264():
+    names = [name for name, _ in video.ENCODERS]
+    assert names[0] == "h264_videotoolbox"
+    assert names.index("libx264") > names.index("h264_videotoolbox")
+
+
+class FakeAV:
+    """Just enough of PyAV for `_encoder`: encoders in `broken` exist but fail to open."""
+
+    class error:
+        class FFmpegError(Exception):
+            pass
+
+    def __init__(self, broken=()):
+        av = self
+        self.broken = set(broken)
+
+        class Probe:
+            def __init__(self, name):
+                self.name = name
+
+            def open(self):
+                if self.name in av.broken:
+                    raise av.error.FFmpegError("can't start")
+
+        class CodecContext:
+            @staticmethod
+            def create(name, mode):
+                return Probe(name)
+
+        self.CodecContext = CodecContext
+
+
+class FakeContainer:
+    def __init__(self):
+        self.added = []
+
+    def add_stream(self, name, rate, options):
+        self.added.append(name)
+        return type("Stream", (), {})()
+
+
+def test_videotoolbox_is_used_when_it_starts():
+    container = FakeContainer()
+    video._encoder(FakeAV(), container, 24, (320, 180))
+    assert container.added == ["h264_videotoolbox"]
+
+
+def test_x264_is_only_a_fallback_when_videotoolbox_cannot_start():
+    container = FakeContainer()
+    stream = video._encoder(FakeAV(broken={"h264_videotoolbox"}), container, 24, (320, 180))
+    assert container.added == ["libx264"] and stream.pix_fmt == "yuv420p"
