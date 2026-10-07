@@ -21,6 +21,14 @@ def test_a_giant_paragraph_is_cut_to_fit():
     assert all(len(p) <= 300 for p in pieces) and "".join(pieces) == "y" * 1000
 
 
+def test_no_piece_is_empty_even_with_blank_paragraphs_or_a_budget_too_small():
+    text = "a" * 50 + "\n\n\n\n\n\n" + "b" * 50 + "\n\n" + "c" * 120
+    pieces = context.chunks(text, budget=50)
+    assert pieces and all(pieces) and all(len(p) <= 50 for p in pieces)
+    assert "".join(pieces).replace("\n", "") == "a" * 50 + "b" * 50 + "c" * 120
+    assert all(context.chunks("xyz", budget=b) for b in (0, -5))  # never a crash or an endless loop
+
+
 def test_source_fits_as_is(tmp_path):
     model = FakeModel()
     text = asyncio.run(

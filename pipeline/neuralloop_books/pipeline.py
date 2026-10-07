@@ -200,14 +200,20 @@ async def _run(opts: Options, engine) -> BookState:
 
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
-    if (engine.name, task) in quota_hit:
+
+    def wait_behind_limit() -> bool:
+        if (engine.name, task) not in quota_hit:
+            return False
         entry.update(status=WAITING, error=quota_hit[engine.name, task])
         state.save()
+        if feed:
+            feed.skip(chapter["n"], task)
+        return True
+
+    if wait_behind_limit():
         return
     async with limiter:
-        if (engine.name, task) in quota_hit:  # another item of this kind hit the limit while we waited
-            entry.update(status=WAITING, error=quota_hit[engine.name, task])
-            state.save()
+        if wait_behind_limit():  # another item of this kind hit the limit while we waited
             return
         entry["status"] = WORKING
         state.save()

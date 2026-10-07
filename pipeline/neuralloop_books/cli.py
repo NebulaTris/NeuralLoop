@@ -247,11 +247,11 @@ def _engine(opts: Options):
     if opts.engine == "notebooklm":
         try:
             import notebooklm  # noqa: F401
-        except ImportError:
-            sys.exit(
+        except ImportError as error:
+            raise SetupError(
                 'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
                 "Then sign in once: python nl_book.py --signin"
-            )
+            ) from error
         return _notebooklm_engine(opts)
     if opts.engine == "local":
         return _local_engine(opts)
@@ -289,6 +289,14 @@ def _signin() -> int:
     from . import account
 
     return account.sign_in(print)
+
+
+MIN_CONTEXT = 1_000
+
+
+def _context(args: argparse.Namespace) -> int | None:
+    """--context in characters; anything smaller than a paragraph or two is raised to a workable size."""
+    return None if args.context is None else max(MIN_CONTEXT, args.context)
 
 
 def _default_parallel(args: argparse.Namespace) -> int:
@@ -355,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         engine=args.engine,
         provider=args.provider,
         model=args.model,
-        context=args.context,
+        context=_context(args),
         speech=args.speech,
         voices=args.voices,
         base_url=args.base_url,

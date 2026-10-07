@@ -91,6 +91,22 @@ class LimitedModel(FakeModel):
         return await super().complete(kind, system, source, prompt)
 
 
+def test_items_that_wait_behind_a_limit_leave_the_progress_queue(options, monkeypatch):
+    from neuralloop_books.activity import Activity
+
+    skipped = []
+    real = Activity.skip
+
+    def recording(self, n, item):
+        skipped.append((n, item))
+        real(self, n, item)
+
+    monkeypatch.setattr(Activity, "skip", recording)
+    options.parallel = 1
+    run_local(options, LimitedModel())
+    assert (2, "quiz") in skipped  # never made: chapter 1's quiz hit the limit first
+
+
 def test_local_rate_limits_wait_for_the_next_run(options):
     lines = []
     options.log = lines.append

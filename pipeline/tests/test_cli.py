@@ -115,6 +115,30 @@ def test_notebooklm_work_uses_two_lanes_even_when_the_fallback_would_be_ollama(e
     assert cli._default_parallel(parse_args([str(epub), "--engine", "local", "--provider", "ollama"])) == 1
 
 
+@pytest.mark.parametrize("given", ["0", "-100", "12"])
+def test_a_tiny_or_negative_context_is_raised_to_a_workable_size(epub, given):
+    from neuralloop_books import cli
+
+    assert cli._context(parse_args([str(epub), "--context", given])) == 1_000
+    assert cli._context(parse_args([str(epub), "--context", "50000"])) == 50_000
+    assert cli._context(parse_args([str(epub)])) is None
+
+
+def test_notebooklm_engine_without_its_library_is_a_setup_problem(epub, tmp_path, capsys, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_notebooklm(name, *args, **kwargs):
+        if name == "notebooklm":
+            raise ImportError("No module named 'notebooklm'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_notebooklm)
+    code = main([str(epub), "--engine", "notebooklm", "--no-open", "--out", str(tmp_path / "o")])
+    assert code == 3 and "notebooklm-py" in capsys.readouterr().out
+
+
 def test_a_corrupt_state_file_does_not_say_the_book_is_unreadable(epub, tmp_path, capsys):
     """Exit 2 makes the app wait for a settings change: only a book that can't be read earns it."""
     out = tmp_path / "o"

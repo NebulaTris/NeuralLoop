@@ -57,6 +57,12 @@ class Activity:
         with self._lock:
             self._queue = list(pending)
 
+    def skip(self, n: int, item: str) -> None:
+        """The item won't be made this run (it waits behind a limit): it leaves the queue."""
+        with self._lock:
+            self._queue = [q for q in self._queue if q != (n, item)]
+            self._write(self._ms(), force=True)
+
     def begin(self, n: int, item: str, by: str) -> Token:
         now = self._ms()
         with self._lock:
