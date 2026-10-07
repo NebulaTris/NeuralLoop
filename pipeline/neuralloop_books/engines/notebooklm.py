@@ -5,9 +5,36 @@ import contextlib
 from types import ModuleType
 
 from .. import activity, config
-from ..config import SOURCE_TIMEOUT
-from ..notebook import ChapterMaker, MediaOptions, NotebookLMBusy, is_auth_error, is_transient_error
-from ..state import SKIPPED, BookState
+from ..config import SOURCE_TIMEOUT, quota_message
+from ..notebook import (
+    NOT_ANSWERING,
+    ChapterMaker,
+    MediaOptions,
+    NotebookLMBusy,
+    forget_requests,
+    is_auth_error,
+    is_quota_error,
+    is_transient_error,
+)
+from ..state import TODO, WORKING, BookState
+
+# A session that never recovers is opened afresh at most this many times per run (each reload keeps the old
+# client open until the run ends, since an item may still be using it).
+MAX_RELOADS_PER_RUN = 6
+
+
+class NoSourceYet(RuntimeError):
+    """NotebookLM wouldn't take this chapter this run (a limit, or it didn't answer): its items wait for the
+    next run, which adds it again. Other chapters' items of the same kind carry on, and auto never makes them
+    another way, since NotebookLM is still there."""
+
+    try_later = True
+    only_this_item = True
+    stays_with_notebooklm = True
+
+    def __init__(self, message: str, waiting_message: str, limit: bool):
+        super().__init__(message)
+        self.waiting_message, self.limit = waiting_message, limit
 
 
 class NotebookLMEngine:
@@ -19,7 +46,14 @@ class NotebookLMEngine:
         self.maker: ChapterMaker | None = None
         self._reload = asyncio.Lock()
         self._session = 0  # bumped each time the session is reloaded
+        self._reloads = 0  # reloads this run, all items together
         self._retired: list = []  # earlier sessions, closed when the run ends (an item may still use one)
+        self._state: BookState | None = None
+        self._notebook_lock = asyncio.Lock()
+        self._source_locks: dict[int, asyncio.Lock] = {}
+        self._notebook_renewed = False  # a vanished notebook is made again once per run
+        self._sources_renewed: set[int] = set()  # a vanished source is added again once per chapter per run
+        self._no_source: dict[int, BaseException] = {}  # chapters NotebookLM wouldn't take this run, and why
 
     async def __aenter__(self):
         # notebooklm-py hands back a context manager: the client is what entering it returns.
@@ -34,56 +68,63 @@ class NotebookLMEngine:
         return await self._context.__aexit__(*exc)
 
     async def prepare(self, state: BookState) -> None:
+        """Make the book's notebook and add every chapter with work to do. A limit or NotebookLM not
+        answering never stops the run: chapters already added carry on, the others wait for the next run.
+        Only a sign-in problem goes up (auto then uses the local engine)."""
+        self._state = state
         state.data.update(engine="notebooklm", provider="notebooklm", model="")
-        opts, client = self.opts, self.client
-        if not state.data["notebookId"]:
-            notebook = await client.notebooks.create(f"NeuralLoop: {state.data['title']}"[:90])
-            state.data["notebookId"] = notebook.id
-            state.save()
-        notebook_id = state.data["notebookId"]
-        for chapter in state.chapters:
-            if chapter["sourceId"] or not any(
-                chapter["tasks"][t]["status"] != SKIPPED for t in chapter["tasks"]
-            ):
-                continue
-            file, title = (
-                opts.out / "chapters" / chapter["file"],
-                f"{chapter['n']:02d} {chapter['title']}"[:90],
-            )
-            if file.suffix == ".pdf":
-                source = await client.sources.add_file(
-                    notebook_id, str(file), wait=True, wait_timeout=SOURCE_TIMEOUT, title=title
-                )
-            else:
-                source = await client.sources.add_text(
-                    notebook_id,
-                    title,
-                    file.read_text(encoding="utf-8"),
-                    wait=True,
-                    wait_timeout=SOURCE_TIMEOUT,
-                )
-            chapter["sourceId"] = source.id
-            state.save()
-            opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
+        opts = self.opts
         media = MediaOptions(
             opts.audio, opts.video, opts.style, opts.language, opts.instructions, opts.audio_length
         )
-        self.maker = ChapterMaker(client, self.enums, notebook_id, opts.out, media)
+        self.maker = ChapterMaker(
+            self.client, self.enums, state.data.get("notebookId"), opts.out, media, save=state.save
+        )
+        stuck: BaseException | None = None  # once NotebookLM won't take one chapter, don't ask for more
+        for chapter in state.chapters:
+            if chapter.get("sourceId") or not _has_work(chapter):
+                continue
+            if stuck is not None:
+                self._no_source[chapter["n"]] = stuck
+                continue
+            try:
+                await self._add_source(chapter)
+            except Exception as error:  # sign-in problems go up; anything else stays with this chapter
+                if is_auth_error(error) or _is_setup_error(error):
+                    raise
+                reason = _waiting(error)
+                self._no_source[chapter["n"]] = reason or error
+                if reason is not None:
+                    stuck = reason
+                    opts.log(f"  chapter {chapter['n']} waits: {reason.waiting_message}")
 
     async def make(self, task: str, chapter: dict) -> dict:
+        if chapter["n"] in self._no_source:
+            raise _again(self._no_source[chapter["n"]])
         delays = list(config.NOTEBOOKLM_RETRY_DELAYS)
         reloads = 0
         while True:
             session = self._session
+            notebook = self._state.data.get("notebookId") if self._state is not None else None
+            source = chapter.get("sourceId")
             try:
+                if not source and self._state is not None:
+                    await self._add_again(chapter)
                 return await self.maker.make(task, chapter)
             except Exception as error:  # a stale session or a hiccup is handled here; anything else goes up
+                if _not_found(error, "Notebook") and self._state is not None:
+                    if await self._renew_notebook(notebook):
+                        continue
+                    raise
+                if _not_found(error, "Source") and self._state is not None and source:
+                    if await self._renew_source(chapter, source):
+                        continue
+                    raise
                 if is_auth_error(error):
                     # A long video can see the cookie rotate more than once: reload whenever it went stale
-                    # during this attempt, a few times per item.
-                    if reloads < config.NOTEBOOKLM_SESSION_RELOADS:
+                    # during this attempt, a few times per item (and a few more per run).
+                    if reloads < config.NOTEBOOKLM_SESSION_RELOADS and await self._fresh_session(session):
                         reloads += 1
-                        await self._fresh_session(session)
                         continue
                     if task in config.MEDIA_TASKS:
                         # A podcast or video waits for NotebookLM (next run), never made on the Mac instead.
@@ -102,14 +143,121 @@ class NotebookLMEngine:
                 activity.report(f"NotebookLM is slow right now, trying again in {pause} s")
                 await asyncio.sleep(pause)
 
-    async def _fresh_session(self, failed: int) -> None:
+    # ---- the notebook and its sources ----
+
+    async def _ensure_notebook(self) -> str:
+        """The book's notebook, made now if it has none. Call with `_notebook_lock` held."""
+        state = self._state
+        if not state.data.get("notebookId"):
+            title = f"NeuralLoop: {state.data['title']}"[:90]
+            notebook = await self._patiently(lambda: self.client.notebooks.create(title))
+            state.data["notebookId"] = notebook.id
+            state.save()
+        self.maker.notebook_id = state.data["notebookId"]
+        return state.data["notebookId"]
+
+    async def _add_source(self, chapter: dict) -> None:
+        """Add the chapter to the notebook (once, however many of its items ask at the same time)."""
+        lock = self._source_locks.setdefault(chapter["n"], asyncio.Lock())
+        async with lock:
+            while not chapter.get("sourceId"):
+                async with self._notebook_lock:
+                    notebook = await self._ensure_notebook()
+                try:
+                    source = await self._patiently(lambda at=notebook: self._upload(at, chapter))
+                except Exception as error:  # a vanished notebook is made again once; anything else goes up
+                    if _not_found(error, "Notebook") and await self._renew_notebook(notebook):
+                        continue
+                    raise
+                chapter["sourceId"] = source.id
+                self._state.save()
+                self.opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
+
+    async def _add_again(self, chapter: dict) -> None:
+        """A chapter whose source went away mid-run: a limit or a hiccup leaves just this item waiting."""
+        try:
+            await self._add_source(chapter)
+        except Exception as error:  # only a limit or a hiccup is turned into waiting; the rest goes up as is
+            reason = _waiting(error)
+            if reason is not None:
+                raise reason from error
+            raise
+
+    async def _upload(self, notebook: str, chapter: dict):
+        file = self.opts.out / "chapters" / chapter["file"]
+        title = f"{chapter['n']:02d} {chapter['title']}"[:90]
+        if file.suffix == ".pdf":
+            return await self.client.sources.add_file(
+                notebook, str(file), wait=True, wait_timeout=SOURCE_TIMEOUT, title=title
+            )
+        return await self.client.sources.add_text(
+            notebook, title, file.read_text(encoding="utf-8"), wait=True, wait_timeout=SOURCE_TIMEOUT
+        )
+
+    async def _renew_notebook(self, failed: str | None) -> bool:
+        """The notebook is gone (deleted, or another Google account signed in): make a new one, once per
+        run. Every chapter is added again when one of its items next needs it. False: don't try again."""
+        async with self._notebook_lock:
+            state = self._state
+            if state.data.get("notebookId") != failed:
+                return True  # another item already made a new one
+            if self._notebook_renewed:
+                return False
+            self._notebook_renewed = True
+            self.opts.log("  NotebookLM's notebook for this book is gone; making a new one")
+            state.data["notebookId"] = None
+            for chapter in state.chapters:
+                chapter["sourceId"] = None
+                forget_requests(chapter)
+                self.maker.forget_chapter(chapter["n"])
+            state.save()
+            await self._ensure_notebook()
+            return True
+
+    async def _renew_source(self, chapter: dict, failed: str) -> bool:
+        """The chapter's source is gone from the notebook: add it again, once per chapter per run."""
+        lock = self._source_locks.setdefault(chapter["n"], asyncio.Lock())
+        async with lock:
+            if chapter.get("sourceId") != failed:
+                return True  # another item already dealt with it
+            if chapter["n"] in self._sources_renewed:
+                return False
+            self._sources_renewed.add(chapter["n"])
+            chapter["sourceId"] = None
+            forget_requests(chapter)
+            self.maker.forget_chapter(chapter["n"])
+            self._state.save()
+        return True  # the next attempt adds it again
+
+    async def _patiently(self, call):
+        """Run `call`, riding out hiccups the way items do; NotebookLMBusy when NotebookLM never answers."""
+        delays = list(config.NOTEBOOKLM_RETRY_DELAYS)
+        while True:
+            try:
+                return await call()
+            except Exception as error:  # only hiccups are retried; everything else goes up as it is
+                if not is_transient_error(error):
+                    raise
+                if not delays:
+                    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
+                    raise NotebookLMBusy(
+                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                    ) from error
+                await asyncio.sleep(delays.pop(0))
+
+    # ---- the session ----
+
+    async def _fresh_session(self, failed: int) -> bool:
         """Google's session cookie rotates whenever another NotebookLM process (the app's usage check, a
         second run) opens the saved session, and the rotated cookie is saved to disk; this run's copy is then
         refused, and refreshing that copy can't help. So open the saved session again, once for every item
-        that saw it go."""
+        that saw it go, and at most MAX_RELOADS_PER_RUN times a run. False when that's used up."""
         async with self._reload:
             if self._session != failed:  # another item already reloaded it while this one was failing
-                return
+                return True
+            if self._reloads >= MAX_RELOADS_PER_RUN:
+                return False
+            self._reloads += 1
             if self._open_client is None:
                 if hasattr(self.client, "refresh_auth"):
                     await self.client.refresh_auth()
@@ -121,6 +269,38 @@ class NotebookLMEngine:
                 if self.maker is not None:
                     self.maker.client = client
             self._session += 1
+            return True
+
+
+def _has_work(chapter: dict) -> bool:
+    return any(entry.get("status") in (TODO, WORKING) for entry in chapter["tasks"].values())
+
+
+def _not_found(error: BaseException, what: str) -> bool:
+    """notebooklm-py's NotebookNotFoundError / SourceNotFoundError (by name, as for its other errors)."""
+    return any(cls.__name__ == f"{what}NotFoundError" for cls in type(error).__mro__)
+
+
+def _is_setup_error(error: BaseException) -> bool:
+    from ..models import SetupError
+
+    return isinstance(error, SetupError)
+
+
+def _waiting(error: BaseException) -> NoSourceYet | None:
+    """A chapter NotebookLM wouldn't take because of a limit or a hiccup waits; None for anything else."""
+    if is_quota_error(error):
+        return NoSourceYet(_short(error), quota_message("NotebookLM"), limit=True)
+    if getattr(error, "try_later", False) or is_transient_error(error):
+        return NoSourceYet(_short(error), NOT_ANSWERING, limit=False)
+    return None
+
+
+def _again(error: BaseException) -> BaseException:
+    """A fresh copy of the reason a chapter has no source, for each of its items."""
+    if isinstance(error, NoSourceYet):
+        return NoSourceYet(str(error), error.waiting_message, error.limit)
+    return RuntimeError(f"NotebookLM wouldn't take this chapter ({_short(error)})")
 
 
 def _short(error: BaseException) -> str:

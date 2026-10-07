@@ -5,6 +5,7 @@ import json
 import math
 import struct
 import wave
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,15 +30,22 @@ class FakeClient:
     def __init__(self, delay: float = 0.01):
         self.delay = delay
         self.source_titles: dict[str, str] = {}
+        self.notebooks_created = 0
+        # Every quiz, deck, podcast and video asked for, as NotebookLM lists them (artifacts.list_*).
+        self.made: list[SimpleNamespace] = []
         self.notebooks = SimpleNamespace(create=self._create_notebook)
         self.sources = SimpleNamespace(add_file=self._add_file, add_text=self._add_text)
         self.chat = SimpleNamespace(ask=self._ask)
         self.mind_maps = SimpleNamespace(generate=self._generate_mind_map)
         self.artifacts = SimpleNamespace(
-            generate_quiz=self._generate,
-            generate_flashcards=self._generate,
+            generate_quiz=self._generate_quiz,
+            generate_flashcards=self._generate_flashcards,
             generate_audio=self._generate,
             generate_video=self._generate,
+            list_quizzes=self._lister("quiz"),
+            list_flashcards=self._lister("flashcards"),
+            list_audio=self._lister("audio"),
+            list_video=self._lister("video"),
             wait_for_completion=self._wait,
             download_quiz=self._download_quiz,
             download_flashcards=self._download_cards,
@@ -60,7 +68,9 @@ class FakeClient:
 
     async def _create_notebook(self, title):
         await self._pause()
-        return SimpleNamespace(id="dry-notebook")
+        self.notebooks_created += 1
+        suffix = "" if self.notebooks_created == 1 else f"-{self.notebooks_created}"
+        return SimpleNamespace(id=f"dry-notebook{suffix}")
 
     async def _add_file(self, notebook_id, path, **kwargs):
         await self._pause()
@@ -74,9 +84,31 @@ class FakeClient:
     def _title_of(self, task_id) -> str:
         return self.source_titles.get(str(task_id).split("|")[0], "this chapter")
 
+    async def _generate_quiz(self, notebook_id, source_ids=None, **kwargs):
+        return await self._generate(notebook_id, source_ids, _kind="quiz", **kwargs)
+
+    async def _generate_flashcards(self, notebook_id, source_ids=None, **kwargs):
+        return await self._generate(notebook_id, source_ids, _kind="flashcards", **kwargs)
+
     async def _generate(self, notebook_id, source_ids=None, **kwargs):
         await self._pause()
-        return SimpleNamespace(task_id=f"{source_ids[0]}|task")
+        return SimpleNamespace(task_id=self._record(source_ids, **kwargs))
+
+    def _record(self, source_ids, **kwargs) -> str:
+        """Remember a request the way NotebookLM lists it afterwards; returns its id."""
+        kind = kwargs.get("_kind") or ("audio" if "audio_format" in kwargs else "video")
+        task_id = f"{source_ids[0]}|{kind}-{len(self.made) + 1}"
+        self.made.append(
+            SimpleNamespace(id=task_id, kind=kind, source_ids=tuple(source_ids), created_at=datetime.now())
+        )
+        return task_id
+
+    def _lister(self, kind):
+        async def list_kind(notebook_id):
+            await self._pause()
+            return [artifact for artifact in self.made if artifact.kind == kind]
+
+        return list_kind
 
     async def _wait(self, notebook_id, task_id, **kwargs):
         await self._pause()
@@ -260,6 +292,25 @@ class FakeDownClient(FakeClient):
             self.asked = getattr(self, "asked", 0) + 1
             raise TimeoutError("Request timed out calling CREATE_ARTIFACT")
         return await super()._generate(notebook_id, source_ids, **kwargs)
+
+
+class RPCTimeoutError(TimeoutError):
+    """notebooklm-py's name for a request whose answer never came (it may still have been received)."""
+
+
+class FakeLostReplyClient(FakeClient):
+    """NotebookLM takes every request, but the answer to each quiz, deck, podcast and video request is lost
+    on the way back (notebooklm-py re-raises it as an unconfirmed RPCTimeoutError)."""
+
+    def __init__(self, delay: float = 0.0):
+        super().__init__(delay)
+        self.asked: list[str] = []
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        await self._pause()
+        self._record(source_ids, **kwargs)
+        self.asked.append(self.made[-1].kind)
+        raise RPCTimeoutError("Request timed out calling CREATE_ARTIFACT")
 
 
 class FakeQuotaClient(FakeClient):

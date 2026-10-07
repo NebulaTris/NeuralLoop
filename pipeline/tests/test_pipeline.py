@@ -511,13 +511,12 @@ def test_once_notebooklm_gave_up_on_a_kind_of_item_the_rest_of_that_kind_wait_wi
     options, no_retry_pause
 ):
     """Each item would otherwise spend minutes of patient retries before waiting too."""
-    from neuralloop_books import config
-
     options.media = "all"
     client = FakeDownClient()
     state = run_with(options, client)
-    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
-    assert client.asked == 2 * tries  # chapter 1's podcast and video; chapter 2's never asked
+    # Chapter 1's podcast and video, asked for once each: a request whose answer never came may still have
+    # reached NotebookLM, so it's never asked for again blind. Chapter 2's are never asked.
+    assert client.asked == 2
     second = state.chapters[1]["tasks"]
     assert (second["audio"]["status"], second["video"]["status"]) == (WAITING, WAITING)
     assert "try again" in second["audio"]["error"].lower() and "limit" not in second["audio"]["error"]

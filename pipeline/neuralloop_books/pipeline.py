@@ -15,7 +15,7 @@ from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
 from .engines.auto import made_by
 from .models import SetupError, safe_message
-from .notebook import is_quota_error
+from .notebook import NOT_ANSWERING, is_quota_error
 from .selection import parse_selection
 from .state import DONE, FAILED, TODO, WAITING, WORKING, BookState, UnreadableState
 
@@ -118,7 +118,6 @@ async def run(opts: Options, engine) -> BookState:
         return await _run(opts, engine)
 
 
-NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
 ALREADY_RUNNING = "This book is already being prepared. Pip will keep going with that run."
 
 
@@ -227,6 +226,8 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             entry["by"] = result.pop("_by", engine.name)  # which engine made it (auto can mix)
             chapter.update(result)
             entry.update(status=DONE, error="")
+            for key in ("taskId", "requestedAt"):  # a NotebookLM request it was waiting for (auto may mix)
+                entry.pop(key, None)
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
         except SetupError as error:
             # e.g. a revoked key: stop the run and say what to fix; the item says so and is made next run.
@@ -234,12 +235,17 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             raise
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
-                # The rest of this kind wait too, instead of each spending minutes on the same retries.
-                quota_hit[made_by(error, engine.name), task] = NOT_ANSWERING
-                entry.update(status=WAITING, error=NOT_ANSWERING)
-                opts.log(
-                    f"  … chapter {chapter['n']} {task}: NotebookLM didn't answer; will try again next run"
+                why = getattr(error, "waiting_message", NOT_ANSWERING)
+                if not getattr(error, "only_this_item", False):
+                    # The rest of this kind wait too, instead of each spending minutes on the same retries.
+                    quota_hit[made_by(error, engine.name), task] = why
+                entry.update(status=WAITING, error=why)
+                what = (
+                    f"{made_by(error, engine.name)} limit reached; will continue next run"
+                    if getattr(error, "limit", False)
+                    else "NotebookLM didn't answer; will try again next run"
                 )
+                opts.log(f"  … chapter {chapter['n']} {task}: {what}")
             elif is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
                 quota_hit[who, task] = quota_message(who)
