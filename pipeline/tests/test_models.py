@@ -128,7 +128,7 @@ def test_ollama_picks_an_installed_model_and_explains_when_off(monkeypatch):
         raise OSError("connection refused")
 
     monkeypatch.setattr(ollama, "_get_json", refuse)
-    with pytest.raises(SetupError, match="Ollama isn't running"):
+    with pytest.raises(SetupError, match="isn.t running"):
         asyncio.run(ollama.OllamaModel(None).check())
 
 
@@ -698,3 +698,21 @@ def test_a_too_large_output_limit_is_read_from_the_error(message, cap):
     from neuralloop_books.models import output_cap_from_error
 
     assert output_cap_from_error(message, asked=64_000) == cap
+
+
+def test_ollama_setup_messages_never_ask_for_a_terminal_command():
+    """The app bundles Ollama: people can't run `ollama pull` or `ollama serve`; the words say what to do."""
+    import inspect
+
+    from neuralloop_books.models import ollama
+
+    source = inspect.getsource(ollama.OllamaModel.check)
+    assert "Run: ollama" not in source and "ollama pull" not in source and "ollama serve" not in source
+
+
+def test_the_local_engine_never_strips_citations_its_models_do_not_write():
+    import inspect
+
+    from neuralloop_books.engines import local
+
+    assert "citations=False" in inspect.getsource(local)

@@ -52,18 +52,25 @@ class OllamaModel:
         try:
             tags = await asyncio.to_thread(_get_json, f"{self.base_url}/api/tags", 5.0)
         except OSError as error:
-            raise SetupError("Ollama isn't running. Open the Ollama app, or run: ollama serve") from error
+            raise SetupError(
+                "Your Mac's AI (Ollama) isn't running. Quit and reopen NeuralLoop to start it, "
+                "or open the Ollama app if you installed it yourself."
+            ) from error
         installed = [m["name"] for m in tags.get("models", [])]
         if not installed:
             raise SetupError(
-                "Ollama has no models yet. Download one first, for example: "
-                f"ollama pull {default_local_model()}"
+                "Your Mac's AI has no model yet. NeuralLoop downloads one the next time it prepares a "
+                "book; check your internet connection, or pick a model in Settings → Your AI."
             )
         if not self.model:
             preferred = default_local_model()
             self.model = preferred if preferred in installed else installed[0]
         elif self.model not in installed and f"{self.model}:latest" not in installed:
-            raise SetupError(f"Ollama doesn't have {self.model} yet. Run: ollama pull {self.model}")
+            raise SetupError(
+                f"Your Mac's AI doesn't have {self.model} yet. NeuralLoop downloads it the next time "
+                "it prepares a book; check your internet connection, or pick another model in "
+                "Settings → Your AI."
+            )
 
     async def complete(
         self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None

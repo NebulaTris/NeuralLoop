@@ -165,7 +165,7 @@ class LocalEngine:
     @staticmethod
     def _judge(kind: str, answer: str, check):
         """(result or None, problem or "")."""
-        result = check(convert.loose_json(answer))
+        result = check(convert.loose_json(answer, citations=False))  # models here never cite
         if not result:
             return None, "it wasn't valid JSON in the shape asked for"
         if any(_LEAKED_STRUCTURE.search(text) for text in _strings(result)):
