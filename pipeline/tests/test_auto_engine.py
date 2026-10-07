@@ -255,6 +255,34 @@ def test_a_podcast_whose_notebooklm_session_keeps_failing_waits_for_notebooklm(t
     assert caught.value.engine_name == "NotebookLM" and not fallback.prepared
 
 
+class Slow(Recorder):
+    def __init__(self, name, **kwargs):
+        super().__init__(name, **kwargs)
+        self.now = self.most = 0
+
+    async def make(self, task, chapter):
+        self.now += 1
+        self.most = max(self.most, self.now)
+        await asyncio.sleep(0.01)
+        self.now -= 1
+        return await super().make(task, chapter)
+
+
+def test_a_local_fallback_makes_one_text_item_at_a_time_while_notebooklm_keeps_two():
+    primary = Slow("NotebookLM", fail_make={"quiz": RuntimeError("boom")})
+    fallback = Slow("Ollama")
+    engine = AutoEngine(lambda: primary, lambda: fallback, lambda _: None, fallback_parallel=1)
+
+    async def go():
+        async with engine:
+            await engine.prepare(State())
+            await asyncio.gather(*(engine.make(t, {"n": n}) for n in (1, 2, 3) for t in ("quiz", "cards")))
+
+    asyncio.run(go())
+    assert fallback.made == ["quiz"] * 3 and fallback.most == 1
+    assert primary.most > 1  # NotebookLM's own work isn't held back
+
+
 def test_a_fallback_that_stops_working_mid_run_fails_only_that_item():
     """Ollama dying (or a key being refused) after the fallback started must not cancel NotebookLM's items:
     the item fails on its own as NotebookLM's, and the fallback isn't asked again this run."""

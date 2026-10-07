@@ -105,6 +105,16 @@ def test_a_broken_book_exits_2_with_a_friendly_message(tmp_path, capsys):
     assert "This book couldn't be read" in capsys.readouterr().out
 
 
+def test_notebooklm_work_uses_two_lanes_even_when_the_fallback_would_be_ollama(epub, monkeypatch):
+    from neuralloop_books import cli
+
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cli, "resolve_provider", lambda provider, env: "ollama")
+    assert cli._default_parallel(parse_args([str(epub), "--engine", "auto", "--provider", "auto"])) == 2
+    assert cli._default_parallel(parse_args([str(epub), "--engine", "local", "--provider", "ollama"])) == 1
+
+
 def test_a_corrupt_state_file_does_not_say_the_book_is_unreadable(epub, tmp_path, capsys):
     """Exit 2 makes the app wait for a settings change: only a book that can't be read earns it."""
     out = tmp_path / "o"

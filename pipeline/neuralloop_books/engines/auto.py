@@ -13,8 +13,11 @@ from ..notebook import is_auth_error, is_quota_error
 
 
 class AutoEngine:
-    def __init__(self, primary_factory, fallback_factory, log):
+    def __init__(self, primary_factory, fallback_factory, log, fallback_parallel: int | None = None):
+        """`fallback_parallel`: how many text items the fallback makes at once (1 for a model on this Mac),
+        while NotebookLM keeps the run's own lanes; None leaves it to the lanes."""
         self._primary_factory, self._fallback_factory, self._log = primary_factory, fallback_factory, log
+        self._fallback_text = asyncio.Semaphore(fallback_parallel) if fallback_parallel else None
         self.primary = self.fallback = None
         self._fallback_lock = asyncio.Lock()
         self._state = None
@@ -86,7 +89,10 @@ class AutoEngine:
             if primary_error is not None:  # NotebookLM tried this item and couldn't: the clock restarts
                 step = f"NotebookLM couldn't, so {fallback.name} is making it"
                 activity.report(step, by=fallback.name, restart=True)
-            return {**await fallback.make(task, chapter), "_by": fallback.name}
+            if self._fallback_text is None or task in MEDIA_TASKS:  # media have their own lane already
+                return {**await fallback.make(task, chapter), "_by": fallback.name}
+            async with self._fallback_text:
+                return {**await fallback.make(task, chapter), "_by": fallback.name}
         except SetupError as error:
             if primary_error is None:
                 raise  # the fallback is the whole run's engine: stop and say what to fix

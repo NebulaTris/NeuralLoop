@@ -257,7 +257,14 @@ def _engine(opts: Options):
         return _local_engine(opts)
     from .engines.auto import AutoEngine
 
-    return AutoEngine(lambda: _notebooklm_engine(opts), lambda: _local_engine(opts), opts.log)
+    # NotebookLM keeps the run's lanes; a model on this Mac gets one text item at a time.
+    local = resolve_provider(opts.provider, os.environ) in LOCAL_PROVIDERS
+    return AutoEngine(
+        lambda: _notebooklm_engine(opts),
+        lambda: _local_engine(opts),
+        opts.log,
+        fallback_parallel=1 if local else None,
+    )
 
 
 # NotebookLM's own words for a missing or expired sign-in (not just any error that mentions "author").
@@ -287,9 +294,8 @@ def _signin() -> int:
 def _default_parallel(args: argparse.Namespace) -> int:
     if args.parallel:
         return max(1, args.parallel)
-    local = args.engine in ("auto", "local") and (
-        resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS
-    )
+    # With auto, NotebookLM's work keeps two lanes; AutoEngine holds a local fallback to one at a time.
+    local = args.engine == "local" and resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS
     return 1 if local else 2
 
 
