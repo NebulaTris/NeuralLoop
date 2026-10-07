@@ -4,6 +4,7 @@ import zipfile
 import pytest
 
 from neuralloop_books.chapters import (
+    UnreadableBookError,
     UnsafeBookError,
     is_appendix,
     is_front_matter,
@@ -642,3 +643,41 @@ class TestEpubContentsWithLevels:
         ]
         book = write_epub(tmp_path / "b.epub", chapters, toc=toc)
         assert _titles(book, tmp_path / "out") == ["Caching", "Queues", "Logs"]
+
+
+# ---------------------------------------------------------------- EPUBs of short pieces
+
+ESSAY = ("Short thoughts on habits and the days they shape. " * 30)[:1250]
+
+
+def test_a_book_of_short_essays_is_grouped_rather_than_refused(tmp_path):
+    from neuralloop_books.chapters import MIN_EPUB_CHARS
+
+    essays = [(f"Essay {i}", f"Mark{i}. {ESSAY}") for i in range(1, 31)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", essays), out)
+    assert len(made) >= 2 and made[0]["title"] == "Essay 1 and more"
+    texts = [(out / c["file"]).read_text() for c in made]
+    assert all(len(text) >= MIN_EPUB_CHARS for text in texts)
+    joined = "".join(texts)
+    positions = [joined.index(f"Mark{i}. ") for i in range(1, 31)]  # every essay, once, in order
+    assert positions == sorted(positions) and all(joined.count(f"Mark{i}. ") == 1 for i in range(1, 31))
+
+
+def test_a_long_chapter_does_not_hide_the_short_pieces_around_it(tmp_path):
+    essays = [("Introduction", LONG)] + [(f"Essay {i}", f"Mark{i}. {ESSAY}") for i in range(1, 21)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", essays), out)
+    assert made[0]["title"] == "Introduction" and len(made) > 2
+    joined = "".join((out / c["file"]).read_text() for c in made)
+    assert all(f"Mark{i}. " in joined for i in range(1, 21))
+
+
+def test_a_very_short_book_is_one_chapter(tmp_path):
+    made = split_book(write_epub(tmp_path / "b.epub", [("A poem", "Roses are red.")]), tmp_path / "out")
+    assert [c["title"] for c in made] == ["A poem"]
+
+
+def test_a_book_with_no_text_at_all_says_it_could_not_be_read(tmp_path):
+    with pytest.raises(UnreadableBookError, match="This book couldn't be read"):
+        split_book(write_epub(tmp_path / "b.epub", [("Cover", "")]), tmp_path / "out")

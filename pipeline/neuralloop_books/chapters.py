@@ -59,13 +59,16 @@ def split_book(path: Path, out_dir: Path) -> list[dict]:
     if suffix not in (".pdf", ".epub"):
         raise ValueError("The book must be a PDF or an EPUB.")
     try:
-        return split_pdf(path, out_dir) if suffix == ".pdf" else split_epub(path, out_dir)
+        chapters = split_pdf(path, out_dir) if suffix == ".pdf" else split_epub(path, out_dir)
     except (UnsafeBookError, UnreadableBookError):
         raise
     except OSError:
         raise  # the disk, not the book: let the real problem show
     except Exception as error:  # any parse failure in a damaged or unusual book file
         raise UnreadableBookError(_unreadable(error)) from error
+    if not chapters:  # a readable book always gives at least one chapter; this one has no pages or text
+        raise UnreadableBookError(_unreadable("there's no text in it to learn from"))
+    return chapters
 
 
 class UnreadableBookError(ValueError):
@@ -291,12 +294,15 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
         spine, toc = _epub_spine_and_toc(book)
         documents = _Documents(book)
         starts = _toc_starts(spine, toc, documents) or [(f"Part {i + 1}", i, 0) for i in range(len(spine))]
-        found = []
+        body = []
         for i, (title, _, _) in enumerate(starts):
             title = clean_title(title) or f"Part {i + 1}"
             text = _html_to_markdown(documents, _pieces(spine, starts, i))
-            if not is_front_matter(title) and len(text) >= MIN_EPUB_CHARS:
-                found.append((title, text))
+            if not is_front_matter(title) and text:
+                body.append((title, text))
+        found = [(title, text) for title, text in body if len(text) >= MIN_EPUB_CHARS]
+        if sum(len(text) for _, text in found) * 2 < sum(len(text) for _, text in body):
+            found = _grouped(body)  # mostly short pieces (essays, poems): read a few at a time
         typical = _median([len(text) for title, text in found if not is_appendix(title)])
         chapters = []
         for title, text in found:
@@ -308,6 +314,29 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
             chapters.append({"n": number, "title": title, "file": file.name})
         return chapters
+
+
+def _grouped(body: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Short neighbours joined until each group is chapter-sized ("Essay 1 and more"); a piece long enough
+    on its own stays alone, and a short group left between long ones joins the group before it."""
+    groups: list[list[tuple[str, str]]] = []
+
+    def short(group: list[tuple[str, str]]) -> bool:
+        return sum(len(text) for _, text in group) < MIN_EPUB_CHARS
+
+    for title, text in body:
+        if len(text) >= MIN_EPUB_CHARS and groups and short(groups[-1]) and len(groups) > 1:
+            groups[-2].extend(groups.pop())  # leave no short group behind before a long piece
+        if groups and short(groups[-1]):
+            groups[-1].append((title, text))
+        else:
+            groups.append([(title, text)])
+    if len(groups) > 1 and short(groups[-1]):
+        groups[-2].extend(groups.pop())
+    return [
+        (group[0][0] if len(group) == 1 else f"{group[0][0]} and more", "\n\n".join(t for _, t in group))
+        for group in groups
+    ]
 
 
 def _pieces(
