@@ -2,7 +2,7 @@
 
 The scene is deterministic: `renderAt(t)` in the page draws exactly the frame for time t (slide text, bullet reveals,
 captions, and Pip, whose CSS animations are pinned to t). Headless Chromium screenshots each frame and PyAV encodes
-H.264 (the Mac's hardware encoder when available) with the narration as AAC. No ffmpeg install needed.
+H.264 (the Mac's own VideoToolbox encoder; libx264 only where that can't start) with the narration as AAC. No ffmpeg install needed.
 """
 
 import base64
@@ -159,20 +159,35 @@ def _decode_png(png: bytes, av):
         return next(image.decode(video=0))
 
 
-# Flat colours and slow motion compress very well with x264's animation tuning; hardware H.264 is the fallback.
+# The Mac's own H.264 encoder (VideoToolbox, part of macOS) comes first. libx264, which PyAV's FFmpeg also carries
+# (GPL-2.0-or-later; see NOTICE.md), is only a last resort for a machine where VideoToolbox can't start (Linux CI, a
+# virtual Mac without a hardware encoder); MPEG-4 Part 2 is the final fallback.
 ENCODERS = (
-    ("libx264", {"crf": "26", "preset": "veryfast", "tune": "animation"}),
     ("h264_videotoolbox", {"b": "2000k"}),
+    ("libx264", {"crf": "26", "preset": "veryfast", "tune": "animation"}),
     ("mpeg4", {"b": "2000k"}),
 )
 
 
+def _opens(av, name: str, options: dict, fps: int, size: tuple[int, int]) -> bool:
+    """Whether this encoder exists and really starts here (VideoToolbox can be built in yet unavailable, as in a VM)."""
+    try:
+        probe = av.CodecContext.create(name, "w")
+        probe.width, probe.height, probe.pix_fmt = size[0], size[1], "yuv420p"
+        probe.time_base = Fraction(1, fps)
+        probe.framerate = Fraction(fps, 1)
+        probe.options = dict(options)
+        probe.open()
+    except (ValueError, av.error.FFmpegError):
+        return False
+    return True
+
+
 def _encoder(av, container, fps: int, size: tuple[int, int]):
     for name, options in ENCODERS:
-        try:
-            stream = container.add_stream(name, rate=fps, options=options)
-        except (ValueError, av.error.FFmpegError):
+        if not _opens(av, name, options, fps, size):
             continue
+        stream = container.add_stream(name, rate=fps, options=options)
         stream.width, stream.height, stream.pix_fmt = size[0], size[1], "yuv420p"
         return stream
     raise RuntimeError("no H.264 encoder available")

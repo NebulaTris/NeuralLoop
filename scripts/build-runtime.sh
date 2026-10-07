@@ -18,11 +18,18 @@
 #   Keep --python-version equal to PYTHON_VERSION. MACOSX_DEPLOYMENT_TARGET matches the app's (14.0): without
 #   it uv assumes an older macOS, can't use current MLX wheels, and falls back to an old mlx-audio with torch.
 #   Every package must have a wheel (--only-binary below), so sdist build tools are never fetched unpinned.
-# - Chromium (explainer videos): the build the locked Playwright version names, downloaded by Playwright itself.
-#   Its version follows the lock, but this script has no checksum of its own for it.
+# - Chromium (explainer videos): the chrome-headless-shell build the locked Playwright version names (plus
+#   Playwright's small ffmpeg), downloaded by Playwright itself over HTTPS. Playwright checks no hash, so this script
+#   does: every installed file must match BROWSERS_SHA256, a SHA-256 over the whole installed tree (paths, contents,
+#   executable bits, symlinks). After changing the Playwright version, install it once and record the new hash:
+#     PLAYWRIGHT_BROWSERS_PATH=/tmp/nl-browsers <runtime python> -m playwright install chromium --only-shell
+#     scripts/build-runtime.sh --browsers-hash /tmp/nl-browsers      (paste the result into BROWSERS_SHA256)
 # - Ollama: OLLAMA_VERSION with the SHA-256 of ollama-darwin.tgz from that release's sha256sum.txt
 #   (https://github.com/ollama/ollama/releases/download/v<version>/sha256sum.txt), and the binary's
 #   Developer ID signature must belong to Ollama's team (OLLAMA_TEAM_ID). Update all three together.
+#
+# Licences: NeuralLoop's LICENSE, NOTICE.md, and every text in licenses/ are copied into OUT/licenses, so the
+# runtime carries the notices for what it bundles (FFmpeg/x264/x265 inside PyAV, Ollama, the fonts…).
 #
 # The runtime is built in a temporary folder next to OUT and moved into place only after every check
 # passes. OUT/.stamp records a hash of the inputs (pipeline sources, the lock file, this script), so
@@ -34,6 +41,8 @@ PYTHON_VERSION="3.12.14"
 OLLAMA_VERSION="0.32.14"
 OLLAMA_SHA256="c7e8b91485943785bc6d295d96551e971ec94c6829d0d6b3500366942dc50cd1"
 OLLAMA_TEAM_ID="3MU9H2V9Y9" # Developer ID Application: Infra Technologies, Inc (Ollama)
+# Playwright 1.63.0's chromium_headless_shell-1243 (Chrome 153.0.8010.12) and ffmpeg-1011, as installed (--browsers-hash).
+BROWSERS_SHA256="c150dbd584908ae7e21bbe641934776f8ddfd041ed9df5f6965d471b5253bb6a"
 UV_MIN_VERSION="0.12.0"     # the oldest uv this script has been tested with
 LOCK="$ROOT/scripts/runtime-requirements.txt"
 MARKER=".neuralloop-runtime" # written into every runtime; OUT is only ever replaced when it has one
@@ -45,13 +54,41 @@ runtime_stamp() {
     {
       find pipeline/nl_book.py pipeline/neuralloop_books pipeline/sample -type f \
         -not -path '*/__pycache__/*' -not -name '*.pyc'
-      printf '%s\n' scripts/runtime-requirements.txt scripts/build-runtime.sh
+      find licenses -type f
+      printf '%s\n' scripts/runtime-requirements.txt scripts/build-runtime.sh LICENSE NOTICE.md
     } | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done | shasum -a 256 | cut -d' ' -f1
+  )
+}
+
+# One SHA-256 over an installed folder: each file's path, executable bit and content hash, and each symlink's target.
+# Playwright's own bookkeeping (marker files, and .links/, which records the temporary build path) is left out.
+tree_sha256() {
+  (
+    cd "$1"
+    find . \( -type f -o -type l \) -not -path './.links/*' \
+      -not -name INSTALLATION_COMPLETE -not -name DEPENDENCIES_VALIDATED -print0 |
+      LC_ALL=C sort -z | while IFS= read -r -d '' f; do
+      if [[ -L "$f" ]]; then
+        printf 'link %s %s\n' "$f" "$(readlink "$f")"
+      else
+        mode="-"
+        [[ -x "$f" ]] && mode="x"
+        printf 'file %s %s %s\n' "$f" "$mode" "$(shasum -a 256 <"$f" | cut -d' ' -f1)"
+      fi
+    done | shasum -a 256 | cut -d' ' -f1
   )
 }
 
 if [[ "${1:-}" == "--stamp" ]]; then
   runtime_stamp
+  exit 0
+fi
+if [[ "${1:-}" == "--browsers-hash" ]]; then
+  if [[ ! -d "${2:-}" ]]; then
+    echo "Usage: scripts/build-runtime.sh --browsers-hash PLAYWRIGHT_BROWSERS_PATH" >&2
+    exit 1
+  fi
+  tree_sha256 "$2"
   exit 0
 fi
 
@@ -137,8 +174,18 @@ cp "$ROOT/pipeline/nl_book.py" "$WORK/pipeline/"
 rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/pipeline/neuralloop_books" "$ROOT/pipeline/sample" \
   "$WORK/pipeline/"
 
-echo "• Chromium for rendering explainer videos"
+echo "• Chromium for rendering explainer videos (checksum verified)"
 PLAYWRIGHT_BROWSERS_PATH="$WORK/browsers" "$PY" -m playwright install chromium --only-shell >/dev/null
+GOT="$(tree_sha256 "$WORK/browsers")"
+if [[ "$GOT" != "$BROWSERS_SHA256" ]]; then
+  echo "Chromium as installed by Playwright doesn't match its pinned checksum (expected $BROWSERS_SHA256, got $GOT)." >&2
+  echo "If the Playwright version changed on purpose, record the new hash (see the top of this script)." >&2
+  exit 1
+fi
+
+echo "• Licences"
+mkdir -p "$WORK/licenses"
+cp "$ROOT/LICENSE" "$ROOT/NOTICE.md" "$ROOT"/licenses/* "$WORK/licenses/"
 
 echo "• Ollama $OLLAMA_VERSION (checksum and signature verified)"
 curl -fsSL --retry 3 -o "$DL/ollama-darwin.tgz" \
@@ -180,6 +227,7 @@ echo "• Checks"
 "$PY" -c "import anthropic, openai, notebooklm, mlx_audio, av, playwright, pypdf"
 PYTHONPYCACHEPREFIX="$DL/pycache" "$WORK/bin/neuralloop" --dry-run --no-open --out "$DL/smoke" >/dev/null
 test -f "$DL/smoke/book.json"
+test -f "$WORK/licenses/NOTICE.md" && test -f "$WORK/licenses/GPL-2.0.txt" && test -f "$WORK/licenses/Ollama-MIT.txt"
 find "$WORK" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "$STAMP" >"$WORK/.stamp"

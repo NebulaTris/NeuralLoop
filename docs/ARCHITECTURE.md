@@ -177,7 +177,7 @@ iPad app shares every view and service above; Mac-only parts (the pipeline, the 
 
 | Script | What it's for |
 |---|---|
-| `build-runtime.sh` | Builds the private runtime the Mac app ships with: Python 3.12.14, packages installed only from hash-locked wheels (`runtime-requirements.txt`), Ollama checked by SHA-256 and Apple Team ID, Chromium for videos. Built in a temp folder and swapped in only after every check passes |
+| `build-runtime.sh` | Builds the private runtime the Mac app ships with: Python 3.12.14, packages installed only from hash-locked wheels (`runtime-requirements.txt`), Ollama checked by SHA-256 and Apple Team ID, Chromium for videos (downloaded by Playwright over HTTPS, then checked against a recorded SHA-256 of its installed files), and the licence texts in `runtime/licenses`. Built in a temp folder and swapped in only after every check passes |
 | `package-mac.sh` | Release build → runtime inside the app → signs nested code inside out → the DMG with Pip's "move in" window → re-checks the DMG as if downloaded |
 | `dev-signing-identity.sh` | One stable local signing identity so macOS remembers the app's permissions across rebuilds |
 | `fake_drive.py` | A local stand-in for the Google Drive calls, for testing Mac ↔ iPad sync without a Google account (development builds only) |
@@ -248,9 +248,11 @@ notebooklm-py in `~/.notebooklm`.
   `books/<id>/…` and strict inbox names; no `..`, backslashes, or private files), local paths must stay inside the
   library, downloads are atomic and capped at 2 GB, and the sign-in token is only ever sent to Google.
 - **What ships is verified.** The runtime installs only hash-locked packages; Ollama is checked by checksum and
-  signature; the app runs only the runtime sealed inside its own signature.
-- **Honest limits.** The Mac app isn't sandboxed (it has to run the pipeline) and is ad-hoc signed (hence
-  "Open Anyway" once). A paid Apple developer account would add notarization.
+  signature; Chromium (fetched by Playwright, which checks no hash itself) must match a SHA-256 recorded over its
+  installed files; the app runs only the runtime sealed inside its own signature.
+- **Honest limits.** The Mac app isn't sandboxed (it has to run the pipeline), is ad-hoc signed (hence "Open Anyway"
+  once), and runs without the hardened runtime. A Developer ID and notarization would change that
+  (`docs/DEVELOPMENT.md` → "Signing").
 
 ## Building, testing, shipping
 

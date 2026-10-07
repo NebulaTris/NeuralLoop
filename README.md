@@ -68,7 +68,7 @@ fills in a little square for every day you study.
   <tr>
     <td valign="top"><h3>🐾 Pip in your menu bar</h3>Pick up where you left off, play the podcast, see what's ready, and get at most one gentle nudge a day (never in quiet hours, never guilt).</td>
     <td valign="top"><h3>🎧 Voices on your Mac</h3>Podcasts and explainers are voiced on-device with Rumik, with a "fast" mode, and podcast length that fits the chapter.</td>
-    <td valign="top"><h3>📦 Install once</h3>One download with everything inside: no Python, no Docker, no terminal. Drag it into Applications and go.</td>
+    <td valign="top"><h3>📦 Install once</h3>One download with the programs inside: no Python, no Docker, no terminal. Rumik's voices and local models download on first use.</td>
   </tr>
 </table>
 
@@ -87,6 +87,8 @@ fills in a little square for every day you study.
 1. Download the `.dmg` from the [latest release](../../releases/latest).
 2. Drag Pip into your Applications folder (the window shows you where 🐾).
 3. Open NeuralLoop. The first time, macOS double-checks with you: **System Settings → Privacy & Security → Open Anyway**.
+   After an update it may ask once to let NeuralLoop use its saved keys in your keychain: enter your password and
+   click **Always Allow** ([why](SECURITY.md#how-the-mac-app-is-signed)).
 
 <details>
 <summary><b>iPad</b> (iPadOS 17 or later)</summary>
