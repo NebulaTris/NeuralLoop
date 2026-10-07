@@ -5,16 +5,16 @@ prefixed by chapter (``c3:caching``) and ``similar_to`` edges joining ideas that
 across chapters.
 """
 
-import re
 import time
 
-_ARTICLES = re.compile(r"\b(the|a|an)\b")
+from .convert import plain_words
+
+_ARTICLES = frozenset({"the", "a", "an"})
 
 
 def normalise_name(name: str) -> str:
-    """Lowercase, drop punctuation and articles, collapse spaces."""
-    text = re.sub(r"[^a-z0-9]+", " ", str(name).lower())
-    return re.sub(r"\s+", " ", _ARTICLES.sub(" ", text)).strip()
+    """Casefold, drop punctuation and English articles, collapse spaces; words in any script are kept."""
+    return " ".join(word for word in plain_words(name).split() if word not in _ARTICLES)
 
 
 def build(chapters: list[dict]) -> dict:
@@ -46,7 +46,8 @@ def build(chapters: list[dict]) -> dict:
                     "layerName": layer_names.get(concept["layer"], ""),
                 }
             )
-            ids_by_name.setdefault(normalise_name(concept["name"]), []).append(node_id)
+            if key := normalise_name(concept["name"]):  # a name with no words matches nothing
+                ids_by_name.setdefault(key, []).append(node_id)
         edges.extend(
             {
                 "source": prefix + e["source"],

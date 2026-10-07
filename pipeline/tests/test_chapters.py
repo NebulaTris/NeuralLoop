@@ -3,7 +3,14 @@ import zipfile
 
 import pytest
 
-from neuralloop_books.chapters import UnsafeBookError, is_appendix, is_front_matter, split_book
+from neuralloop_books.chapters import (
+    MAX_IMAGES_PER_CHAPTER,
+    UnreadableBookError,
+    UnsafeBookError,
+    is_appendix,
+    is_front_matter,
+    split_book,
+)
 from neuralloop_books.testing import LONG, write_epub, write_pdf
 
 
@@ -515,3 +522,214 @@ def test_bookmarks_pointing_nowhere_are_skipped(tmp_path, monkeypatch):
         ("Caching", [5, 8]),
         ("Queues", [9, 12]),
     ]
+
+
+# ---------------------------------------------------------------- EPUB tables of contents with levels
+
+
+def _sectioned(word: str) -> str:
+    """A chapter body with two sections that the table of contents links to by anchor."""
+    return f'{word} {LONG}</p><h2 id="a">First</h2><p>{LONG}</p><h2 id="b">Second</h2><p>{LONG}'
+
+
+def _titles(book, out):
+    return [c["title"] for c in split_book(book, out)]
+
+
+class TestEpubContentsWithLevels:
+    """A nav document and an NCX with the same levels split the same way, the way PDF bookmarks do:
+    parts open into their chapters, chapters keep their sections inside."""
+
+    @pytest.mark.parametrize("nav", [True, False])
+    @pytest.mark.parametrize("part_page", [True, False])
+    @pytest.mark.parametrize("name", ["Chapter {k}: Topic {p}.{k}", "Topic {p}.{k}"])
+    def test_parts_open_into_their_chapters(self, tmp_path, nav, part_page, name):
+        """Three parts of four chapters, each chapter its own file (a part's own title page, or none)."""
+        chapters, toc = [], []
+        for p in range(1, 4):
+            if part_page:
+                chapters.append((f"Part {p}", "A short opener."))
+            first = len(chapters)
+            kids = []
+            for k in range(1, 5):
+                kids.append((name.format(p=p, k=k), len(chapters), []))
+                chapters.append((name.format(p=p, k=k), f"Body {p}.{k} {LONG}"))
+            toc.append((f"Part {p}", first - 1 if part_page else first, kids))
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        expected = [name.format(p=p, k=k) for p in range(1, 4) for k in range(1, 5)]
+        assert _titles(book, tmp_path / "out") == expected
+        assert f"Body 2.3 {LONG[:20]}" in (tmp_path / "out" / "07.md").read_text()
+
+    @pytest.mark.parametrize("nav", [True, False])
+    @pytest.mark.parametrize("section", ["{n}.{k} Basics", "Basics {k}"])
+    def test_chapters_keep_their_sections_inside(self, tmp_path, nav, section):
+        names = ["Intro", "Caching", "Queues", "Logs"]
+        chapters = [("Intro", LONG)] + [(t, _sectioned(t)) for t in names[1:]]
+        toc = [("Intro", 0, [])] + [
+            (
+                t,
+                n,
+                [
+                    (section.format(n=n, k=1), f"doc{n}.xhtml#a", []),
+                    (section.format(n=n, k=2), f"doc{n}.xhtml#b", []),
+                ],
+            )
+            for n, t in enumerate(names)
+            if n
+        ]
+        out = tmp_path / "out"
+        assert _titles(write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc), out) == names
+        text = (out / "02.md").read_text()
+        assert "## First" in text and "## Second" in text
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_one_chapter_with_sections_among_plain_ones_stays_whole(self, tmp_path, nav):
+        chapters = [("Intro", LONG), ("Caching", _sectioned("Caching")), ("Queues", LONG)]
+        toc = [
+            ("Intro", 0, []),
+            ("Caching", 1, [("Why caches", "doc1.xhtml#a", []), ("Eviction", "doc1.xhtml#b", [])]),
+            ("Queues", 2, []),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Intro", "Caching", "Queues"]
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_parts_chapters_and_sections_mixed_with_front_and_back_matter(self, tmp_path, nav):
+        chapters = [
+            ("Contents", "toc"),
+            ("Preface", LONG),
+            ("Part I", "Opener."),
+            ("Chapter 1", _sectioned("One")),
+            ("Chapter 2", LONG),
+            ("Part II", "Opener."),
+            ("Chapter 3", LONG),
+            ("Chapter 4", _sectioned("Four")),
+            ("Appendix A: Full tutorial", LONG * 10),
+            ("Index", LONG),
+        ]
+
+        def sections(n):
+            return [(f"{n}.1 First", f"doc{n}.xhtml#a", []), (f"{n}.2 Second", f"doc{n}.xhtml#b", [])]
+
+        toc = [
+            ("Contents", 0, []),
+            ("Preface", 1, []),
+            ("Part I", 2, [("Chapter 1", 3, sections(3)), ("Chapter 2", 4, [])]),
+            ("Part II", 5, [("Chapter 3", 6, []), ("Chapter 4", 7, sections(7))]),
+            ("Appendix A: Full tutorial", 8, []),
+            ("Index", 9, []),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == [
+            "Preface",
+            "Chapter 1",
+            "Chapter 2",
+            "Chapter 3",
+            "Chapter 4",
+            "Appendix A: Full tutorial",
+        ]
+
+    @pytest.mark.parametrize("nav", [True, False])
+    def test_a_single_entry_for_the_whole_book_opens_into_its_chapters(self, tmp_path, nav):
+        chapters = [("My Book", "Title page."), ("Caching", LONG), ("Queues", LONG), ("Logs", LONG)]
+        toc = [("My Book", 0, [("Caching", 1, []), ("Queues", 2, []), ("Logs", 3, [])])]
+        book = write_epub(tmp_path / "b.epub", chapters, nav=nav, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Caching", "Queues", "Logs"]
+
+    def test_part_headings_without_links_still_give_their_chapters(self, tmp_path):
+        chapters = [("Caching", LONG), ("Queues", LONG), ("Logs", LONG)]
+        toc = [
+            ("Part I", None, [("Caching", 0, []), ("Queues", 1, [])]),
+            ("Part II", None, [("Logs", 2, [])]),
+        ]
+        book = write_epub(tmp_path / "b.epub", chapters, toc=toc)
+        assert _titles(book, tmp_path / "out") == ["Caching", "Queues", "Logs"]
+
+
+# ---------------------------------------------------------------- EPUBs of short pieces
+
+ESSAY = ("Short thoughts on habits and the days they shape. " * 30)[:1250]
+
+
+def test_a_book_of_short_essays_is_grouped_rather_than_refused(tmp_path):
+    from neuralloop_books.chapters import MIN_EPUB_CHARS
+
+    essays = [(f"Essay {i}", f"Mark{i}. {ESSAY}") for i in range(1, 31)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", essays), out)
+    assert len(made) >= 2 and made[0]["title"] == "Essay 1 and more"
+    texts = [(out / c["file"]).read_text() for c in made]
+    assert all(len(text) >= MIN_EPUB_CHARS for text in texts)
+    joined = "".join(texts)
+    positions = [joined.index(f"Mark{i}. ") for i in range(1, 31)]  # every essay, once, in order
+    assert positions == sorted(positions) and all(joined.count(f"Mark{i}. ") == 1 for i in range(1, 31))
+
+
+def test_a_long_chapter_does_not_hide_the_short_pieces_around_it(tmp_path):
+    essays = [("Introduction", LONG)] + [(f"Essay {i}", f"Mark{i}. {ESSAY}") for i in range(1, 21)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", essays), out)
+    assert made[0]["title"] == "Introduction" and len(made) > 2
+    joined = "".join((out / c["file"]).read_text() for c in made)
+    assert all(f"Mark{i}. " in joined for i in range(1, 21))
+
+
+def test_a_very_short_book_is_one_chapter(tmp_path):
+    made = split_book(write_epub(tmp_path / "b.epub", [("A poem", "Roses are red.")]), tmp_path / "out")
+    assert [c["title"] for c in made] == ["A poem"]
+
+
+def test_a_book_with_no_text_at_all_says_it_could_not_be_read(tmp_path):
+    with pytest.raises(UnreadableBookError, match="This book couldn't be read"):
+        split_book(write_epub(tmp_path / "b.epub", [("Cover", "")]), tmp_path / "out")
+
+
+# ---------------------------------------------------------------- cheap work on hostile books
+
+
+def test_figures_are_sized_up_before_they_are_read_and_read_at_most_once(tmp_path, monkeypatch):
+    big = PNG + b"\x00" * 10_000
+    files = {"images/dot.png": b"\x89PNG tiny", "images/big.png": big}
+    files |= {f"images/f{k}.png": PNG for k in range(100)}
+    body = LONG + "</p>"
+    body += '<img src="images/dot.png"/><img src="images/big.png"/>' * 200
+    body += "".join(f'<img src="images/f{k}.png"/>' for k in range(100)) + "<p>"
+    book = write_epub(tmp_path / "b.epub", [("Figures", body)], files=files)
+    reads: dict[str, int] = {}
+    real_read = zipfile.ZipFile.read
+
+    def counting_read(self, name, pwd=None):
+        key = name if isinstance(name, str) else name.filename
+        reads[key] = reads.get(key, 0) + 1
+        return real_read(self, name, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", counting_read)
+    out = tmp_path / "out"
+    split_book(book, out)
+    assert "OEBPS/images/dot.png" not in reads  # too small to be a figure: never read
+    assert reads["OEBPS/images/big.png"] == 1
+    figures = sum(n for name, n in reads.items() if "/f" in name)
+    assert figures == MAX_IMAGES_PER_CHAPTER - 1 and all(n == 1 for name, n in reads.items() if "/f" in name)
+    assert len(list((out / "img").iterdir())) == MAX_IMAGES_PER_CHAPTER
+
+
+def test_many_chapters_anchored_in_one_file_are_all_found(tmp_path):
+    chapters = [(f"Topic {i}", f"Mark{i}. " + LONG) for i in range(300)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", chapters, one_file=True), out)
+    assert [c["title"] for c in made] == [f"Topic {i}" for i in range(300)]
+    assert "Mark150. " in (out / "151.md").read_text()
+
+
+def test_anchor_offsets_finds_every_id_and_name_in_one_pass():
+    from neuralloop_books.chapters import _anchor_offsets
+
+    text = '<p id="a">x</p><a name=\'b\' id="c"/><p id="a">again</p><p class="x" id="d">'
+    assert _anchor_offsets(text) == {"a": 0, "b": 15, "c": 15, "d": text.index('<p class="x"')}
+
+
+def test_where_each_bookmark_ends_is_the_next_later_start():
+    from neuralloop_books.chapters import _next_starts
+
+    assert _next_starts([0, 0, 3, 3, 7], 10) == [3, 3, 7, 7, 10]
+    assert _next_starts([], 10) == []

@@ -268,3 +268,39 @@ def test_notebooklms_newer_flashcards_with_content_blocks_are_read():
     assert convert.flashcards(data) == [
         {"front": "What defines each layer?", "back": "How it's built on the layer below."}
     ]
+
+
+def test_a_concept_graph_grown_from_a_mind_map_in_any_script_keeps_its_links_and_tour():
+    tree = {
+        "name": "根",
+        "children": [
+            {"name": "缓存策略", "children": [{"name": "写回"}, {"name": "写穿"}]},
+            {"name": "हिन्दी कहानी", "children": [{"name": "पात्र"}]},
+            {"name": "Очереди", "children": [{"name": "Брокер"}]},
+        ],
+    }
+    graph = convert.graph_from_mind_map(tree)
+    assert convert.concept_graph(graph) == graph
+    ids = {c["name"]: c["id"] for c in graph["concepts"]}
+    assert len(set(ids.values())) == 7 and all(ids.values())
+    edges = {(e["source"], e["target"]) for e in graph["edges"]}
+    assert edges == {
+        (ids["写回"], ids["缓存策略"]),
+        (ids["写穿"], ids["缓存策略"]),
+        (ids["पात्र"], ids["हिन्दी कहानी"]),
+        (ids["Брокер"], ids["Очереди"]),
+    }
+    assert [step["nodeIds"] for step in graph["tour"]] == [
+        [ids["缓存策略"]],
+        [ids["हिन्दी कहानी"]],
+        [ids["Очереди"]],
+    ]
+
+
+def test_mind_map_branches_without_words_still_point_at_real_concepts():
+    tree = {"name": "r", "children": [{"name": "!!!", "children": [{"name": "a"}]}, {"name": "???"}]}
+    graph = convert.graph_from_mind_map(tree)
+    ids = {c["id"] for c in graph["concepts"]}
+    assert len(ids) == 3
+    assert [(e["source"], e["target"]) for e in graph["edges"]] == [("a", graph["concepts"][0]["id"])]
+    assert [len(step["nodeIds"]) for step in graph["tour"]] == [1, 1]

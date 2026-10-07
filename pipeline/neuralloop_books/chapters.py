@@ -59,13 +59,16 @@ def split_book(path: Path, out_dir: Path) -> list[dict]:
     if suffix not in (".pdf", ".epub"):
         raise ValueError("The book must be a PDF or an EPUB.")
     try:
-        return split_pdf(path, out_dir) if suffix == ".pdf" else split_epub(path, out_dir)
+        chapters = split_pdf(path, out_dir) if suffix == ".pdf" else split_epub(path, out_dir)
     except (UnsafeBookError, UnreadableBookError):
         raise
     except OSError:
         raise  # the disk, not the book: let the real problem show
     except Exception as error:  # any parse failure in a damaged or unusual book file
         raise UnreadableBookError(_unreadable(error)) from error
+    if not chapters:  # a readable book always gives at least one chapter; this one has no pages or text
+        raise UnreadableBookError(_unreadable("there's no text in it to learn from"))
+    return chapters
 
 
 class UnreadableBookError(ValueError):
@@ -195,7 +198,7 @@ def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
     ordered = sorted(entries, key=lambda e: e[1])
     starts = [page for _, page, _ in ordered]
     page_count = len(reader.pages)
-    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
+    ends = _next_starts(starts, page_count)
     opened: list[Entry] = []
     for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted(_outline_level(reader, kids), key=lambda c: c[1]) if _PART.match(title) else []
@@ -206,6 +209,17 @@ def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
             opened.append((title, page, []))
         opened.extend(inside)
     return opened
+
+
+def _next_starts(starts: list[int], page_count: int) -> list[int]:
+    """For each of the sorted start pages, the first later start past it (or the book's end), in one pass."""
+    ends = [page_count] * len(starts)
+    following = page_count
+    for i in range(len(starts) - 1, -1, -1):
+        if i + 1 < len(starts) and starts[i + 1] > starts[i]:
+            following = starts[i + 1]
+        ends[i] = following
+    return ends
 
 
 def _holds_chapters(inside: list[Entry], page: int, end: int) -> bool:
@@ -229,7 +243,7 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
     ("6.1", "6.2")."""
     ordered = sorted(entries, key=lambda e: e[1])
     starts = [page for _, page, _ in ordered]
-    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
+    ends = _next_starts(starts, page_count)
     lengths = sorted(
         end - page
         for (title, page, _), end in zip(ordered, ends, strict=True)
@@ -291,12 +305,15 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
         spine, toc = _epub_spine_and_toc(book)
         documents = _Documents(book)
         starts = _toc_starts(spine, toc, documents) or [(f"Part {i + 1}", i, 0) for i in range(len(spine))]
-        found = []
+        body = []
         for i, (title, _, _) in enumerate(starts):
             title = clean_title(title) or f"Part {i + 1}"
             text = _html_to_markdown(documents, _pieces(spine, starts, i))
-            if not is_front_matter(title) and len(text) >= MIN_EPUB_CHARS:
-                found.append((title, text))
+            if not is_front_matter(title) and text:
+                body.append((title, text))
+        found = [(title, text) for title, text in body if len(text) >= MIN_EPUB_CHARS]
+        if sum(len(text) for _, text in found) * 2 < sum(len(text) for _, text in body):
+            found = _grouped(body)  # mostly short pieces (essays, poems): read a few at a time
         typical = _median([len(text) for title, text in found if not is_appendix(title)])
         chapters = []
         for title, text in found:
@@ -308,6 +325,29 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
             chapters.append({"n": number, "title": title, "file": file.name})
         return chapters
+
+
+def _grouped(body: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Short neighbours joined until each group is chapter-sized ("Essay 1 and more"); a piece long enough
+    on its own stays alone, and a short group left between long ones joins the group before it."""
+    groups: list[list[tuple[str, str]]] = []
+
+    def short(group: list[tuple[str, str]]) -> bool:
+        return sum(len(text) for _, text in group) < MIN_EPUB_CHARS
+
+    for title, text in body:
+        if len(text) >= MIN_EPUB_CHARS and groups and short(groups[-1]) and len(groups) > 1:
+            groups[-2].extend(groups.pop())  # leave no short group behind before a long piece
+        if groups and short(groups[-1]):
+            groups[-1].append((title, text))
+        else:
+            groups.append([(title, text)])
+    if len(groups) > 1 and short(groups[-1]):
+        groups[-2].extend(groups.pop())
+    return [
+        (group[0][0] if len(group) == 1 else f"{group[0][0]} and more", "\n\n".join(t for _, t in group))
+        for group in groups
+    ]
 
 
 def _pieces(
@@ -392,36 +432,153 @@ def _epub_spine_and_toc(book: zipfile.ZipFile) -> tuple[list[str], list[tuple[st
     return spine, toc
 
 
+class _TocEntry:
+    """One table-of-contents entry: its title, where it points (file in the archive, or None for a heading
+    without a link), the #fragment, and the entries nested under it."""
+
+    __slots__ = ("file", "fragment", "kids", "title")
+
+    def __init__(self, title: str = "", file: str | None = None, fragment: str = ""):
+        self.title, self.file, self.fragment, self.kids = title, file, fragment, []
+
+
+# Every pattern here stops at the next tag it can't belong to, and each part of the file is looked at once, so
+# a hostile file can't make reading the contents take quadratic time.
+_NAV_TAG = re.compile(r"<(/?)(ol|ul|li|a)\b([^<>]*)>", re.IGNORECASE)
+_NCX_TAG = re.compile(r"<(/?)(navPoint|text|content)\b([^<>]*)>")
+_HREF = re.compile(r"""\bhref\s*=\s*["']([^"']+)["']""")
+_SRC = re.compile(r"""\bsrc\s*=\s*["']([^"']+)["']""")
+
+
+def _label(markup: str) -> str:
+    return " ".join(html.unescape(re.sub(r"<[^<>]*>", "", markup)).split())
+
+
 def _nav_toc(book: zipfile.ZipFile, nav: str) -> list[tuple[str, str, str]]:
-    # Every pattern here stops at the next tag it can't belong to, so a hostile file can't make matching take
-    # quadratic time (a "<nav" or "<a" that never closes would otherwise be rescanned to the end each time).
     text = _read(book, nav)
     start = next((tag for tag in re.finditer(r"<nav\b[^<>]*>", text) if "toc" in tag.group()), None)
     end = text.find("</nav>", start.end()) if start else -1
     if end < 0:
         return []
-    block = text[start.end() : end]
-    top_level = (
-        re.sub(r"<ol\b[^<>]*>(?:(?!<ol\b).)*?</ol>", "", block, flags=re.DOTALL)
-        if block.count("<ol") > 2
-        else block
-    )
-    links = []
-    for attributes, label in re.findall(r"<a\b([^<>]*)>((?:(?!<a\b).)*?)</a>", top_level, re.DOTALL):
-        href = re.search(r'\bhref="([^"]+)"', attributes)
-        if href:
-            links.append((re.sub(r"<[^>]+>", "", html.unescape(label)).strip(), *_target(nav, href.group(1))))
-    return links
+    return _toc_chapters(_nav_tree(text[start.end() : end], nav))
+
+
+def _nav_tree(block: str, nav: str) -> list[_TocEntry]:
+    """The nav's nested lists as entries. A list item's title is its link's text, or (a heading with no
+    link, like "<span>Part I</span>") the text before its own nested list."""
+    root: list[_TocEntry] = []
+    lists = [root]  # the open lists; new items go into the innermost
+    items: list[
+        tuple[_TocEntry, int, int]
+    ] = []  # open items: (entry, depth of its list, where its text starts)
+    link: tuple[_TocEntry, int] | None = None  # a link waiting for its </a>: (entry, where its text starts)
+
+    def close_items(depth: int, at: int) -> None:
+        while items and items[-1][1] >= depth:
+            entry, _, since = items.pop()
+            if not entry.title and entry.file is None:
+                entry.title = _label(block[since:at])
+
+    for tag in _NAV_TAG.finditer(block):
+        closing, name, attributes = tag.group(1), tag.group(2).lower(), tag.group(3)
+        if name == "a":
+            if link and closing:
+                link[0].title = _label(block[link[1] : tag.start()])
+            link = None
+            href = None if closing else _HREF.search(attributes)
+            if href:
+                file, fragment = _target(nav, href.group(1))
+                owner = items[-1][0] if items and items[-1][1] == len(lists) else None
+                if owner is None or owner.file is not None or owner.title:
+                    owner = _TocEntry()  # a link outside a list item, or a second link in one
+                    lists[-1].append(owner)
+                owner.file, owner.fragment = file, fragment
+                link = (owner, tag.end())
+        elif name == "li" and not closing:
+            close_items(len(lists), tag.start())  # an item left open ends where the next one starts
+            entry = _TocEntry()
+            lists[-1].append(entry)
+            items.append((entry, len(lists), tag.end()))
+        elif name == "li":
+            close_items(len(lists), tag.start())
+        elif not closing:  # a nested list belongs to the item it's in; its heading text ends here
+            owner = items[-1][0] if items and items[-1][1] == len(lists) else None
+            if owner is not None and not owner.title and owner.file is None:
+                owner.title = _label(block[items[-1][2] : tag.start()])
+            lists.append(owner.kids if owner is not None else lists[-1])
+        elif len(lists) > 1:
+            close_items(len(lists), tag.start())
+            lists.pop()
+    return root
 
 
 def _ncx_toc(book: zipfile.ZipFile, ncx: str) -> list[tuple[str, str, str]]:
-    points = re.findall(
-        r"<navPoint\b[^<>]*>\s*<navLabel>\s*<text>([^<]*)</text>"
-        r"(?:(?!<navPoint\b).)*?<content\b[^<>]*?src=\"([^\"]+)\"",
-        _read(book, ncx),
-        re.DOTALL,
-    )
-    return [(html.unescape(label).strip(), *_target(ncx, src)) for label, src in points]
+    text = _read(book, ncx)
+    root: list[_TocEntry] = []
+    open_points: list[_TocEntry] = []
+    for tag in _NCX_TAG.finditer(text):
+        closing, name, attributes = tag.group(1), tag.group(2), tag.group(3)
+        point = open_points[-1] if open_points else None
+        if name == "navPoint" and not closing:
+            entry = _TocEntry()
+            (point.kids if point else root).append(entry)
+            open_points.append(entry)
+        elif name == "navPoint":
+            if open_points:
+                open_points.pop()
+        elif name == "text" and not closing and point and not point.title:
+            after = text.find("<", tag.end())
+            point.title = _label(text[tag.end() : after if after >= 0 else len(text)])
+        elif name == "content" and point and point.file is None:
+            src = _SRC.search(attributes)
+            if src:
+                point.file, point.fragment = _target(ncx, src.group(1))
+    return _toc_chapters(root)
+
+
+def _toc_chapters(entries: list[_TocEntry]) -> list[tuple[str, str, str]]:
+    """The entries that start chapters, (title, file, fragment) in table-of-contents order, by the same rules
+    as PDF bookmarks: a single entry for the whole book, or a few groupings ("Foundations", "Practice") and
+    "Part II" entries with chapters inside open into those chapters; a chapter keeps its sections inside."""
+    real = [e for e in entries if not is_front_matter(e.title)]
+    inner = sum(len(e.kids) for e in real)
+    grouped = len(real) <= 1 or (len(real) < 4 and inner >= 4)
+    top = {id(e) for e in entries}
+    opened: list[_TocEntry] = []
+    for entry in entries:
+        opened.extend(_opened(entry, grouped) if not is_front_matter(entry.title) else [entry])
+    flat: list[_TocEntry] = []
+    for entry in opened:  # parts inside the book's own entry open too
+        flat.extend(_opened(entry, False) if id(entry) not in top else [entry])
+    return [(e.title, e.file, e.fragment) for e in flat if e.file is not None]
+
+
+def _opened(entry: _TocEntry, grouped: bool) -> list[_TocEntry]:
+    """The entry, or (when it holds chapters) its own opening pages followed by its chapters."""
+    kids = entry.kids
+    if not kids:
+        return [entry]
+    if entry.file is not None:
+        if _CHAPTER.match(entry.title) or _sections(entry):
+            return [entry]
+        holds = _PART.match(entry.title) and (any(_CHAPTER.match(k.title) for k in kids) or len(kids) >= 2)
+        if not holds and not (grouped and len(kids) >= 2):
+            return [entry]
+    first = kids[0]
+    if entry.file is None or (entry.file, entry.fragment) == (first.file, first.fragment):
+        return list(kids)  # nothing of its own before its first chapter: the chapter names it
+    if entry.file == first.file and not entry.fragment and not first.fragment:
+        return list(kids)
+    return [entry, *kids]
+
+
+def _sections(entry: _TocEntry) -> bool:
+    """Whether the entries inside are sections of it rather than chapters: mostly numbered sections ("6.1"),
+    or mostly anchors inside its own file."""
+    kids = entry.kids
+    numbered = sum(bool(_SECTION.match(k.title)) for k in kids)
+    own_file = sum(k.file == entry.file and bool(k.fragment) for k in kids)
+    return numbered * 2 > len(kids) or own_file * 2 > len(kids)
 
 
 def _target(toc_file: str, href: str) -> tuple[str, str]:
@@ -448,19 +605,28 @@ def _toc_starts(
         (title, _), rest = entries[0], entries[1:]
         starts.append((title, index, 0))  # the file's first entry takes everything before the next anchor
         text = documents.get(href) if rest else None
+        offsets = _anchor_offsets(text) if text else {}
         seen = {0}
         for title, fragment in rest:
-            offset = _anchor_offset(text, fragment) if text and fragment else None
+            offset = offsets.get(fragment) if fragment else None
             if offset and offset not in seen:
                 seen.add(offset)
                 starts.append((title, index, offset))
     return sorted(starts, key=lambda s: (s[1], s[2]))
 
 
-def _anchor_offset(text: str, fragment: str) -> int | None:
-    """Where the element with id (or name) `fragment` begins in the file's text."""
-    found = re.search(rf"""<[A-Za-z][^<>]*?\s(?:id|name)\s*=\s*["']{re.escape(fragment)}["']""", text)
-    return found.start() if found else None
+_TAG = re.compile(r"<[A-Za-z][^<>]*>")
+_ID = re.compile(r"""\s(?:id|name)\s*=\s*["']([^"']*)["']""")
+
+
+def _anchor_offsets(text: str) -> dict[str, int]:
+    """Where each element with an id (or name) begins in the file's text: the first one with it wins.
+    One pass over the file, however many chapters link into it."""
+    offsets: dict[str, int] = {}
+    for tag in _TAG.finditer(text):
+        for found in _ID.finditer(tag.group()):
+            offsets.setdefault(found.group(1), tag.start())
+    return offsets
 
 
 class _MarkdownText(HTMLParser):
@@ -550,15 +716,22 @@ def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) ->
     """Copy the chapter's real figures to img/NN-KK.ext and point the Markdown at them; drop the rest."""
     names = set(book.namelist())
     saved: dict[str, str] = {}
+    rejected: set[str] = set()  # never read twice, however often the chapter points at it
 
     def replace(match: re.Match) -> str:
         alt, path = match.group(1), match.group(2)
         suffix = Path(path).suffix.lower()
-        if path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
+        if path in rejected or path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
             return ""
         if path not in saved:
+            # Sized up and counted before reading: a book pointing at one huge picture again and again
+            # costs one look at the archive's index, not one read each time.
+            if len(saved) >= MAX_IMAGES_PER_CHAPTER or book.getinfo(path).file_size < MIN_IMAGE_BYTES:
+                rejected.add(path)
+                return ""
             data = book.read(path)
-            if len(data) < MIN_IMAGE_BYTES or len(saved) >= MAX_IMAGES_PER_CHAPTER:
+            if len(data) < MIN_IMAGE_BYTES:
+                rejected.add(path)
                 return ""
             folder.mkdir(parents=True, exist_ok=True)
             name = f"{number:02d}-{len(saved) + 1:02d}{suffix}"

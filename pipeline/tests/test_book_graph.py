@@ -72,3 +72,22 @@ def test_the_book_map_never_repeats_a_node_id():
     built = book_graph.build([{"n": 1, "title": "One", "graph": graph}])
     ids = [node["id"] for node in built["nodes"]]
     assert ids == ["c1:cache"]
+
+
+def test_names_in_any_script_normalise_to_their_words():
+    assert book_graph.normalise_name("缓存 策略") == "缓存 策略"
+    assert book_graph.normalise_name("हिन्दी कहानी!") == "हिन्दी कहानी"  # vowel signs and viramas stay
+    assert book_graph.normalise_name("Кэш—Стратегия") == "кэш стратегия"
+    assert book_graph.normalise_name("Straße") == book_graph.normalise_name("STRASSE")
+
+
+def test_only_the_same_idea_is_linked_across_chapters_whatever_the_script():
+    g = book_graph.build(
+        [
+            chapter(1, [("a", "缓存"), ("b", "Очередь")]),
+            chapter(2, [("x", "缓存"), ("y", "हिन्दी"), ("z", "Журнал")]),
+            chapter(3, [("q", "!!!"), ("r", "?")]),
+        ]
+    )
+    similar = [(e["source"], e["target"]) for e in g["edges"] if e["type"] == "similar_to"]
+    assert similar == [("c2:x", "c1:a")]  # names with no words at all link to nothing

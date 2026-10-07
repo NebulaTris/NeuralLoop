@@ -6,6 +6,7 @@ returns ``None`` (or an empty list) when nothing usable remains.
 
 import json
 import re
+import unicodedata
 from typing import Any
 
 _CITATION = re.compile(r"\s*\[\d+(?:\s*[,\-–]\s*\d+)*\]")
@@ -208,6 +209,18 @@ def mind_map(data: Any) -> dict | None:
     return node(data, 0)
 
 
+def plain_words(text: str) -> str:
+    """Letters, digits, and marks of any script (Devanagari vowel signs too), casefolded; anything else
+    becomes a single space. "Кэш—Стратегия" -> "кэш стратегия", "Straße" -> "strasse"."""
+    folded = unicodedata.normalize("NFKC", str(text)).casefold()
+    return " ".join("".join(c if unicodedata.category(c)[0] in "LNM" else " " for c in folded).split())
+
+
+def slug(name: str) -> str:
+    """An id from a name in any script: its words joined by dashes, at most 40 characters."""
+    return "-".join(plain_words(name).split())[:40].strip("-")
+
+
 def graph_from_mind_map(tree: dict) -> dict | None:
     """A concept graph grown from a mind map, so a chapter's map exists even when a model can't draw one.
 
@@ -218,10 +231,11 @@ def graph_from_mind_map(tree: dict) -> dict | None:
         return None
     concepts, edges, used = [], [], set()
 
-    def add(name: str, layer: str, parent: str | None, depth: int) -> None:
-        cid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or f"idea-{len(concepts)}"
+    def add(name: str, layer: str, parent: str | None, depth: int) -> str | None:
+        """The concept's id, or None when it's a repeat or there's no room."""
+        cid = slug(name) or f"idea-{len(concepts)}"
         if cid in used or len(concepts) >= _MAX_CONCEPTS:
-            return
+            return None
         used.add(cid)
         complexity = ("complex", "moderate", "simple")[min(depth, 2)]
         concepts.append(
@@ -239,21 +253,22 @@ def graph_from_mind_map(tree: dict) -> dict | None:
             edges.append(
                 {"source": cid, "target": parent, "type": "categorized_under", "description": "part of"}
             )
+        return cid
 
-    for branch in branches:
-        add(branch["name"], "main", None, 0)
-    for branch in branches:
-        parent = re.sub(r"[^a-z0-9]+", "-", branch["name"].lower()).strip("-")[:40]
+    # Each branch's own id (the one `add` gave it), so links and the tour point at a concept that exists.
+    placed = [(branch, add(branch["name"], "main", None, 0)) for branch in branches]
+    placed = [(branch, cid) for branch, cid in placed if cid]
+    for branch, cid in placed:
         for child in (branch.get("children") or [])[:4]:
             if child.get("name"):
-                add(child["name"], "details", parent, 1)
+                add(child["name"], "details", cid, 1)
     tour = [
         {
             "title": b["name"][:40],
             "description": f"What the chapter says about {b['name'].lower()}.",
-            "nodeIds": [re.sub(r"[^a-z0-9]+", "-", b["name"].lower()).strip("-")[:40]],
+            "nodeIds": [cid],
         }
-        for b in branches[:5]
+        for b, cid in placed[:5]
     ]
     layers = [{"id": "main", "name": "Main ideas"}, {"id": "details", "name": "Details"}]
     return concept_graph({"concepts": concepts, "layers": layers, "edges": edges, "tour": tour})
