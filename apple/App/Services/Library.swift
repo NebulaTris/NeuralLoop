@@ -32,9 +32,7 @@ struct RunProblem: Equatable {
     let code: Int32
     let detail: String
 
-    var card: String {
-        code == 3 ? "Pip needs a little setup first: Settings → Your AI" : "Pip hit a snag. Open the book and choose Prepare more."
-    }
+    var card: String { RunProblemText.card(code: code) }
 }
 
 /// What one look at a book folder found (read off the main thread).
