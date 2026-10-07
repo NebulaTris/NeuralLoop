@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import wave
 
 import pytest
@@ -66,10 +67,32 @@ def test_frames_are_compressed_against_each_other_not_all_keyframes(tmp_path):
     assert sum(keys) < len(keys) / 4
 
 
+@needs_tools
+def test_narration_with_a_comment_opener_still_renders(tmp_path):
+    slides = [{**SLIDES[0], "narration": "Comments start with <!--<script> & end with -->.   Done."}]
+    clips = [write_tone(tmp_path / "a.wav", 1.0)]
+    out = video.render(tmp_path / "e.mp4", "Caching", slides, clips, fps=6, size=(320, 180))
+    assert out.exists() and out.stat().st_size > 0
+
+
 def test_narration_cannot_close_the_scene_script_early():
     slides = [{**SLIDES[0], "narration": "Never write </script><script>alert(1)</script> in a page."}]
     html = video.scene_html("Caching", slides, video.timeline([2.0]))
-    assert html.count("</script>") == 1 and "<\\/script>" in html
+    assert html.count("</script>") == 1 and "\\u003c/script\\u003e" in html
+
+
+def test_script_data_escapes_every_character_that_can_break_a_script_element():
+    text = "a <!--<script> b & c > d \u2028 e \u2029 f"
+    encoded = video._script_json({"narration": text})
+    for unsafe in ("<", ">", "&", "\u2028", "\u2029"):
+        assert unsafe not in encoded
+    assert json.loads(encoded) == {"narration": text}
+
+
+def test_narration_with_a_comment_opener_keeps_the_scene_script_whole():
+    slides = [{**SLIDES[0], "narration": "HTML comments start with <!--<script> and end with -->."}]
+    html = video.scene_html("Caching", slides, video.timeline([2.0]))
+    assert "<!--" not in html.split("<script>", 1)[1]
 
 
 def test_the_temporary_narration_is_removed_even_when_rendering_fails(tmp_path, monkeypatch):
