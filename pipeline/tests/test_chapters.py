@@ -4,6 +4,7 @@ import zipfile
 import pytest
 
 from neuralloop_books.chapters import (
+    MAX_IMAGES_PER_CHAPTER,
     UnreadableBookError,
     UnsafeBookError,
     is_appendix,
@@ -681,3 +682,54 @@ def test_a_very_short_book_is_one_chapter(tmp_path):
 def test_a_book_with_no_text_at_all_says_it_could_not_be_read(tmp_path):
     with pytest.raises(UnreadableBookError, match="This book couldn't be read"):
         split_book(write_epub(tmp_path / "b.epub", [("Cover", "")]), tmp_path / "out")
+
+
+# ---------------------------------------------------------------- cheap work on hostile books
+
+
+def test_figures_are_sized_up_before_they_are_read_and_read_at_most_once(tmp_path, monkeypatch):
+    big = PNG + b"\x00" * 10_000
+    files = {"images/dot.png": b"\x89PNG tiny", "images/big.png": big}
+    files |= {f"images/f{k}.png": PNG for k in range(100)}
+    body = LONG + "</p>"
+    body += '<img src="images/dot.png"/><img src="images/big.png"/>' * 200
+    body += "".join(f'<img src="images/f{k}.png"/>' for k in range(100)) + "<p>"
+    book = write_epub(tmp_path / "b.epub", [("Figures", body)], files=files)
+    reads: dict[str, int] = {}
+    real_read = zipfile.ZipFile.read
+
+    def counting_read(self, name, pwd=None):
+        key = name if isinstance(name, str) else name.filename
+        reads[key] = reads.get(key, 0) + 1
+        return real_read(self, name, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", counting_read)
+    out = tmp_path / "out"
+    split_book(book, out)
+    assert "OEBPS/images/dot.png" not in reads  # too small to be a figure: never read
+    assert reads["OEBPS/images/big.png"] == 1
+    figures = sum(n for name, n in reads.items() if "/f" in name)
+    assert figures == MAX_IMAGES_PER_CHAPTER - 1 and all(n == 1 for name, n in reads.items() if "/f" in name)
+    assert len(list((out / "img").iterdir())) == MAX_IMAGES_PER_CHAPTER
+
+
+def test_many_chapters_anchored_in_one_file_are_all_found(tmp_path):
+    chapters = [(f"Topic {i}", f"Mark{i}. " + LONG) for i in range(300)]
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", chapters, one_file=True), out)
+    assert [c["title"] for c in made] == [f"Topic {i}" for i in range(300)]
+    assert "Mark150. " in (out / "151.md").read_text()
+
+
+def test_anchor_offsets_finds_every_id_and_name_in_one_pass():
+    from neuralloop_books.chapters import _anchor_offsets
+
+    text = '<p id="a">x</p><a name=\'b\' id="c"/><p id="a">again</p><p class="x" id="d">'
+    assert _anchor_offsets(text) == {"a": 0, "b": 15, "c": 15, "d": text.index('<p class="x"')}
+
+
+def test_where_each_bookmark_ends_is_the_next_later_start():
+    from neuralloop_books.chapters import _next_starts
+
+    assert _next_starts([0, 0, 3, 3, 7], 10) == [3, 3, 7, 7, 10]
+    assert _next_starts([], 10) == []

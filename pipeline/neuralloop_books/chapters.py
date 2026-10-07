@@ -198,7 +198,7 @@ def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
     ordered = sorted(entries, key=lambda e: e[1])
     starts = [page for _, page, _ in ordered]
     page_count = len(reader.pages)
-    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
+    ends = _next_starts(starts, page_count)
     opened: list[Entry] = []
     for (title, page, kids), end in zip(ordered, ends, strict=True):
         inside = sorted(_outline_level(reader, kids), key=lambda c: c[1]) if _PART.match(title) else []
@@ -209,6 +209,17 @@ def _open_parts(reader, entries: list[Entry]) -> list[Entry]:
             opened.append((title, page, []))
         opened.extend(inside)
     return opened
+
+
+def _next_starts(starts: list[int], page_count: int) -> list[int]:
+    """For each of the sorted start pages, the first later start past it (or the book's end), in one pass."""
+    ends = [page_count] * len(starts)
+    following = page_count
+    for i in range(len(starts) - 1, -1, -1):
+        if i + 1 < len(starts) and starts[i + 1] > starts[i]:
+            following = starts[i + 1]
+        ends[i] = following
+    return ends
 
 
 def _holds_chapters(inside: list[Entry], page: int, end: int) -> bool:
@@ -232,7 +243,7 @@ def _open_long_parts(reader, entries: list[Entry], page_count: int) -> list[Entr
     ("6.1", "6.2")."""
     ordered = sorted(entries, key=lambda e: e[1])
     starts = [page for _, page, _ in ordered]
-    ends = [next((p for p in starts[i + 1 :] if p > page), page_count) for i, page in enumerate(starts)]
+    ends = _next_starts(starts, page_count)
     lengths = sorted(
         end - page
         for (title, page, _), end in zip(ordered, ends, strict=True)
@@ -594,19 +605,28 @@ def _toc_starts(
         (title, _), rest = entries[0], entries[1:]
         starts.append((title, index, 0))  # the file's first entry takes everything before the next anchor
         text = documents.get(href) if rest else None
+        offsets = _anchor_offsets(text) if text else {}
         seen = {0}
         for title, fragment in rest:
-            offset = _anchor_offset(text, fragment) if text and fragment else None
+            offset = offsets.get(fragment) if fragment else None
             if offset and offset not in seen:
                 seen.add(offset)
                 starts.append((title, index, offset))
     return sorted(starts, key=lambda s: (s[1], s[2]))
 
 
-def _anchor_offset(text: str, fragment: str) -> int | None:
-    """Where the element with id (or name) `fragment` begins in the file's text."""
-    found = re.search(rf"""<[A-Za-z][^<>]*?\s(?:id|name)\s*=\s*["']{re.escape(fragment)}["']""", text)
-    return found.start() if found else None
+_TAG = re.compile(r"<[A-Za-z][^<>]*>")
+_ID = re.compile(r"""\s(?:id|name)\s*=\s*["']([^"']*)["']""")
+
+
+def _anchor_offsets(text: str) -> dict[str, int]:
+    """Where each element with an id (or name) begins in the file's text: the first one with it wins.
+    One pass over the file, however many chapters link into it."""
+    offsets: dict[str, int] = {}
+    for tag in _TAG.finditer(text):
+        for found in _ID.finditer(tag.group()):
+            offsets.setdefault(found.group(1), tag.start())
+    return offsets
 
 
 class _MarkdownText(HTMLParser):
@@ -696,15 +716,22 @@ def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) ->
     """Copy the chapter's real figures to img/NN-KK.ext and point the Markdown at them; drop the rest."""
     names = set(book.namelist())
     saved: dict[str, str] = {}
+    rejected: set[str] = set()  # never read twice, however often the chapter points at it
 
     def replace(match: re.Match) -> str:
         alt, path = match.group(1), match.group(2)
         suffix = Path(path).suffix.lower()
-        if path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
+        if path in rejected or path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
             return ""
         if path not in saved:
+            # Sized up and counted before reading: a book pointing at one huge picture again and again
+            # costs one look at the archive's index, not one read each time.
+            if len(saved) >= MAX_IMAGES_PER_CHAPTER or book.getinfo(path).file_size < MIN_IMAGE_BYTES:
+                rejected.add(path)
+                return ""
             data = book.read(path)
-            if len(data) < MIN_IMAGE_BYTES or len(saved) >= MAX_IMAGES_PER_CHAPTER:
+            if len(data) < MIN_IMAGE_BYTES:
+                rejected.add(path)
                 return ""
             folder.mkdir(parents=True, exist_ok=True)
             name = f"{number:02d}-{len(saved) + 1:02d}{suffix}"
