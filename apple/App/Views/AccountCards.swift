@@ -82,9 +82,10 @@ struct Initials: View {
 /// one after the other, the second suggesting the first's account.
 @MainActor
 enum GoogleSignIn {
-    static func everything(_ settings: AISettings) async {
+    /// `refreshed`: the caller has just asked who's signed in, so it isn't asked again (each ask runs Python).
+    static func everything(_ settings: AISettings, refreshed: Bool = false) async {
         // A NotebookLM session that's already there (from before, or the command line) is kept, never signed in again.
-        if !settings.account.signedIn { await settings.refreshAccount() }
+        if !settings.account.signedIn, !refreshed { await settings.refreshAccount() }
         if !settings.account.signedIn { await settings.signIn() }
         let drive = DriveAccount.shared
         guard settings.account.signedIn, drive.isConfigured, !drive.isSignedIn else { return }

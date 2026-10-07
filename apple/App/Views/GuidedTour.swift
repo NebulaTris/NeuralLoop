@@ -331,6 +331,15 @@ private struct SignInFirst: View {
     #endif
     @State private var drive = DriveAccount.shared
     @State private var started = false
+    /// Checking whether someone's already signed in (a few seconds): the button waits, so it can't start a second sign-in.
+    /// On the Mac it starts out checking, so there's no moment before the check when a click could slip through.
+    #if os(macOS)
+    @State private var checking = true
+    #else
+    @State private var checking = false
+    #endif
+    /// "Not now": nothing opens afterwards, even if the check was still going.
+    @State private var declined = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -344,11 +353,14 @@ private struct SignInFirst: View {
                     .font(Theme.body(14)).foregroundStyle(Theme.accent)
             } else {
                 Button { Task { await signIn() } } label: { Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus") }
-                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(checking)
+                if checking {
+                    Text("Checking whether you're already signed in…").font(Theme.body(12)).foregroundStyle(Theme.ink2)
+                }
             }
             if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 480) }
             Spacer(minLength: 10)
-            Button("Not now") { next() }.buttonStyle(.borderless).foregroundStyle(Theme.ink2).keyboardShortcut(.cancelAction)
+            Button("Not now") { declined = true; next() }.buttonStyle(.borderless).foregroundStyle(Theme.ink2).keyboardShortcut(.cancelAction)
         }
         .padding(30)
         .frame(width: 680, height: 600)
@@ -358,11 +370,17 @@ private struct SignInFirst: View {
             guard !started else { return }
             started = true
             #if os(macOS)
+            checking = true
             await settings.refreshAccount()  // already signed in to NotebookLM: no browser window for nothing
+            checking = false
             #endif
-            if signedIn { next(); return }
-            guard canSignIn else { next(); return }  // nothing to sign in to here: straight on to the tour
-            await signIn()
+            // The refresh ignores cancellation, so "Not now" during it is only seen here.
+            switch FirstSignIn.next(signedIn: signedIn, canSignIn: canSignIn, declined: declined,
+                                    cancelled: Task.isCancelled, signingIn: busy) {
+            case .moveOn: next()
+            case .signIn: await signIn()
+            case .stay: break
+            }
         }
     }
 
@@ -376,11 +394,11 @@ private struct SignInFirst: View {
 
     private func signIn() async {
         #if os(macOS)
-        await GoogleSignIn.everything(settings)
+        await GoogleSignIn.everything(settings, refreshed: true)  // the check on arrival just asked who's signed in
         #else
         await drive.signIn()
         #endif
-        if signedIn { next() }
+        if signedIn, !declined { next() }
     }
 
     private var signedIn: Bool {
