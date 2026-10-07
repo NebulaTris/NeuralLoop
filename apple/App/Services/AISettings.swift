@@ -28,10 +28,11 @@ final class AISettings {
         if let data = try? Data(contentsOf: PipelineRunner.aiConfigURL), let saved = try? JSONDecoder().decode(AIConfig.self, from: data) {
             config = saved
         }
-        for name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"] {
+        for name in PipelineRunner.keyNames {
             keys[name] = Keychain.read(name) ?? ""
         }
         savedKeys = keys
+        PipelineRunner.remember(keys: savedKeys)
     }
 
     /// When the person last changed their AI settings or keys; automatic runs that needed setup wait for this.
@@ -49,6 +50,7 @@ final class AISettings {
         for (name, value) in keys where value != savedKeys[name] {
             if let problem = Keychain.save(name, value) { problems.append(problem) } else { savedKeys[name] = value }
         }
+        PipelineRunner.remember(keys: savedKeys)  // only what the Keychain really holds
         keyNote = problems.joined(separator: " ")
         Self.changedAt = Date().timeIntervalSince1970 * 1000
     }

@@ -67,13 +67,23 @@ final class PipelineRunner: @unchecked Sendable {
     static let aiConfigURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("app.neuralloop.books/ai.json")
 
+    static let keyNames = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"]
+
+    /// The person's keys as AISettings last read or saved them, so starting a run never waits on the Keychain (which
+    /// can be slow, or ask) on the main thread.
+    private static let keyCache = KeyCache()
+
+    /// AISettings hands over the keys it read at launch and every time it saves new ones.
+    static func remember(keys: [String: String]) { keyCache.set(keys) }
+
     /// The pipeline's environment: the person's ai.json and their keys from the Keychain (never on the command line).
     static func environment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
         if FileManager.default.fileExists(atPath: aiConfigURL.path) { env["NEURALLOOP_AI_CONFIG"] = aiConfigURL.path }
-        for name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"] {
-            if let key = Keychain.read(name), !key.isEmpty { env[name] = key }
+        let keys = keyCache.get() ?? Dictionary(uniqueKeysWithValues: keyNames.map { ($0, Keychain.read($0) ?? "") })
+        for name in keyNames {
+            if let key = keys[name], !key.isEmpty { env[name] = key }
         }
         return env
     }
@@ -121,6 +131,14 @@ final class PipelineRunner: @unchecked Sendable {
 private struct UncheckedProcess: @unchecked Sendable {
     let process: Process
     init(_ process: Process) { self.process = process }
+}
+
+/// The keys, shared between the main thread (AISettings) and whichever thread starts a run.
+private final class KeyCache: @unchecked Sendable {
+    private var keys: [String: String]?
+    private let lock = NSLock()
+    func set(_ new: [String: String]) { lock.lock(); keys = new; lock.unlock() }
+    func get() -> [String: String]? { lock.lock(); defer { lock.unlock() }; return keys }
 }
 
 /// Bytes collected from a pipe on a background thread.
