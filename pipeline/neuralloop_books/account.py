@@ -8,6 +8,7 @@ real browser window (Chrome when installed, which Google always accepts), saved 
 import contextlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 CHROME = Path("/Applications/Google Chrome.app")
+# Without Chrome, sign-in uses Chromium. The runtime's own Playwright folder is inside the signed app
+# (read-only; writing there breaks its seal), so a first sign-in downloads Chromium into the person's
+# NeuralLoop folder.
+BROWSERS = Path.home() / "Library" / "Application Support" / "app.neuralloop.books" / "browsers"
 SIGN_IN_TIMEOUT = 600  # seconds for a person to finish signing in
 
 
@@ -55,6 +60,11 @@ def sign_in(log: Callable[[str], None]) -> int:
         log("Google sign-in needs the NotebookLM library. Reinstall NeuralLoop to add it.")
         return 3
     browser = "chrome" if _chrome_installed() else "chromium"
+    env = None
+    if browser == "chromium":
+        BROWSERS.mkdir(parents=True, exist_ok=True)
+        env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS)}
+        log("  setup: Getting a browser for Google sign-in (the first time only, about 150 MB)…")
     log("  setup: A browser window is opening. Sign in to Google there, then come back.")
     with contextlib.suppress(subprocess.TimeoutExpired):  # the status check below says it didn't finish
         subprocess.run(
@@ -62,6 +72,7 @@ def sign_in(log: Callable[[str], None]) -> int:
             capture_output=True,
             text=True,
             timeout=SIGN_IN_TIMEOUT + 60,  # never wait forever on a browser that hangs
+            env=env,
         )
 
     now = status()

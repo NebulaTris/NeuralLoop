@@ -1,4 +1,5 @@
 import json
+import subprocess
 from types import SimpleNamespace
 
 from neuralloop_books import account
@@ -144,3 +145,27 @@ def test_a_sign_in_browser_that_hangs_is_given_up_on(monkeypatch):
     monkeypatch.setattr(account, "_chrome_installed", lambda: False)
     assert account.sign_in(lines.append) == 3
     assert seen["timeout"] and seen["timeout"] > account.SIGN_IN_TIMEOUT
+
+
+def test_sign_in_without_chrome_gets_its_browser_outside_the_signed_app(monkeypatch, tmp_path):
+    """The runtime's Playwright folder is inside the signed app (read-only, and writing it breaks the seal);
+    a first sign-in on a Mac without Chrome downloads Chromium into the person's own NeuralLoop folder."""
+    seen = {}
+
+    def run(cmd, **kwargs):
+        if "login" in cmd:
+            seen["cmd"], seen["env"] = cmd, kwargs.get("env")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, '{"status": "ok", "account": {"email": "a@b.c"}}', "")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    monkeypatch.setattr(account, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(account, "BROWSERS", tmp_path / "browsers")
+    monkeypatch.setenv(
+        "PLAYWRIGHT_BROWSERS_PATH", "/Applications/NeuralLoop.app/Contents/Resources/runtime/browsers"
+    )
+    assert account.sign_in(lambda _: None) == 0
+    assert "chromium" in seen["cmd"]
+    assert seen["env"]["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "browsers")
+    assert (tmp_path / "browsers").is_dir()
