@@ -98,7 +98,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `FakeStaleSessionClient`, `ENUMS`) |
 | `neuralloop_books/selection.py`, `prompts.py`, `config.py`, `testing.py` | `parse_selection`; prompts (sent verbatim); task names, enums, timeouts, copy, `audio_length`; test book builders |
 | `neuralloop_books/assets/` | Fonts and Pip's artwork for explainer videos |
-| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account) · `sample/sample-book.epub` |
+| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account); `test_providers_e2e.py` runs every provider end to end against local stand-in services (`model_mocks.py`) · `sample/sample-book.epub` |
 
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
@@ -138,16 +138,19 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   in a real browser; the session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`,
   `--usage` (`NotebookLM usage: {known, available, fiveHour:{remaining, resetsAt}, weekly:{…}, podcast, video}`), `--check-ai`
   (prints `AI check: {role: {ok, provider, name, model, seconds} | {ok: false, provider, message}}` for `make`, `task:<item>`,
-  `recall`; exit 3 if any fail), `--grade-recall` (stdin `{question, keyPoints, answer}`, stdout `{covered:[bool], score,
+  `recall`; exit 3 if any fail; with `--provider`/`--model`/`--base-url` it checks that model as `make`), `--grade-recall` (stdin `{question, keyPoints, answer}`, stdout `{covered:[bool], score,
   feedback, missing, by}`). `--ai-config PATH` (or `NEURALLOOP_AI_CONFIG`): the person's `ai.json` = `{engine, make:{provider,
   model, baseUrl}, tasks:{<item>:{provider, model, baseUrl}}, recall:{provider, model, baseUrl}, voices:[A, B],
   voiceQuality:"fast"|"best", audioLength:"auto"|"short"|"default"|"long", hermesTools:false}` (Rumik 4-bit, about twice as fast, or 8-bit; podcast
-  length for NotebookLM and the local engine, `auto` = short for chapters under ~30,000 characters); flags override it.
+  length for NotebookLM and the local engine, `auto` = short for chapters under ~30,000 characters); flags override it. A task or recall
+  choice inherits a missing model or `baseUrl` only from a choice for the same provider. A `custom` address gets `http://` and `/v1`
+  when they're missing; with no model, a custom server's first listed model (LM Studio's loaded one) is used, and Ollama's default.
   Progress lines on stdout: `  added chapter N: …` (NotebookLM), `  ✓ chapter N task (Xs)`, `  ↪ chapter N task: NotebookLM
   couldn't (…); making it with X`, `  … chapter N task: {Engine} limit reached…` (the engine that actually ran the item),
   `  ✗ chapter N task: …`, final `Book: DIR`. Items waiting on a limit are retried on every run; `--retry` also retries failed
   items. Agent providers are locked down: opencode needs `--standalone` (else setup error) and runs with every tool permission
-  denied; Hermes is refused unless ai.json `hermesTools: true`; both get an environment without API keys; chapter text is
+  denied, with `HOME` and `XDG_CONFIG_HOME` in an empty folder so the person's global opencode config can't loosen that
+  (its data, cache, and state folders are kept for sign-ins); Hermes is refused unless ai.json `hermesTools: true`; both get an environment without API keys; chapter text is
   wrapped as data (`prompts.wrap_chapter`). Exit 2 = the book couldn't be read ("This book couldn't be read: …"), 3 = setup needed.
 - **Book folder** (`~/Library/Application Support/app.neuralloop.books/books/<id>/`): `state.json` (pipeline state; tasks record
   `by`; `timings: {"<maker>:<item>": [seconds…]}` (last 10, for the loader's estimates); `engine` stays `auto` when the fallback starts mid-run), `meta.json` (`path`, `originalPath`, `addedAt`, `title`

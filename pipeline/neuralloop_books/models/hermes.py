@@ -61,6 +61,8 @@ class HermesModel:
             stdout, stderr = await communicate(process, TIMEOUT)
         if process.returncode != 0:
             detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
+            if "no inference provider configured" in detail.lower():
+                raise SetupError("Hermes Agent has no model yet. Choose one in Terminal: hermes model")
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):
                 raise QuotaError(detail[:200])
             raise RuntimeError(f"Hermes Agent failed: {detail[:200]}")

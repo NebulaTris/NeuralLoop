@@ -443,3 +443,20 @@ def test_the_persons_opencode_config_can_never_turn_tools_back_on(place, clean_e
     assert "allow" not in resolved, resolved
     # Its sign-ins (data) and downloaded providers (cache) are still the person's own.
     assert f"data={home}/.local/share" in resolved and f"cache={home}/.cache" in resolved
+
+
+def test_a_hermes_without_a_model_is_setup_needed(tmp_path):
+    import asyncio
+
+    from neuralloop_books.models import SetupError
+    from neuralloop_books.models.hermes import HermesModel
+
+    script = tmp_path / "hermes"
+    script.write_text(
+        "#!/bin/sh\necho \"hermes -z: agent failed: No inference provider configured. Run 'hermes model' to "
+        'choose a provider and model." >&2\nexit 1\n'
+    )
+    script.chmod(0o755)
+    model = HermesModel(None, executable=str(script), allow_tools=True)
+    with pytest.raises(SetupError, match="hermes model"):
+        asyncio.run(model.complete("quiz", "S", "C", "P"))
