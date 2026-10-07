@@ -52,6 +52,10 @@ FRONT_MATTER = re.compile(
 # Appendices: kept as chapters when they're substantial (a forty-page tutorial), skipped when they're short.
 APPENDIX = re.compile(r"^\s*(?:appendix\b|appendices[\s.:;!?]*$)", re.IGNORECASE)
 
+# EPUB figures: at most this many bytes of pictures are copied out of one book (each picture once, however
+# many chapters show it); figures past it become their alt text.
+MAX_BOOK_IMAGE_BYTES = 200_000_000
+
 # Timeouts in seconds. NotebookLM media generation is slow.
 SOURCE_TIMEOUT = 900.0
 LIGHT_TIMEOUT = 900.0

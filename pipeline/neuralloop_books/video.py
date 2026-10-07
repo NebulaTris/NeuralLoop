@@ -150,8 +150,13 @@ window.renderAt = renderAt;
 
 
 def _script_json(value) -> str:
-    """JSON that is safe inside <script>: narration saying "</script>" can't end the scene's code."""
-    return json.dumps(value).replace("</", "<\\/")
+    """JSON that is safe inside <script>: narration saying "</script>" or "<!--<script>" can't end or swallow
+    the scene's code. Every <, >, & and line or paragraph separator becomes a \\uXXXX escape (still the same
+    string to JavaScript)."""
+    text = json.dumps(value)
+    for unsafe in ("<", ">", "&", " ", " "):
+        text = text.replace(unsafe, f"\\u{ord(unsafe):04x}")
+    return text
 
 
 def _decode_png(png: bytes, av):

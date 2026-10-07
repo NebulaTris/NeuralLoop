@@ -19,7 +19,7 @@ def normalise_name(name: str) -> str:
 
 def build(chapters: list[dict]) -> dict:
     nodes, edges, layers, tour = [], [], [], []
-    ids_by_name: dict[str, list[str]] = {}
+    ids_by_name: dict[str, list[tuple[int, str]]] = {}  # name -> (chapter, node id)
     seen: set[str] = set()  # a graph saved by an older version may repeat a concept id
     for chapter in chapters:
         graph = chapter.get("graph")
@@ -47,7 +47,7 @@ def build(chapters: list[dict]) -> dict:
                 }
             )
             if key := normalise_name(concept["name"]):  # a name with no words matches nothing
-                ids_by_name.setdefault(key, []).append(node_id)
+                ids_by_name.setdefault(key, []).append((chapter["n"], node_id))
         edges.extend(
             {
                 "source": prefix + e["source"],
@@ -67,14 +67,18 @@ def build(chapters: list[dict]) -> dict:
                 }
             )
     for same in ids_by_name.values():
+        firsts: dict[int, str] = {}  # one node per chapter: a name repeated inside a chapter links to nothing
+        for chapter_n, node_id in same:
+            firsts.setdefault(chapter_n, node_id)
+        first, *others = firsts.values()
         edges.extend(
             {
                 "source": other,
-                "target": same[0],
+                "target": first,
                 "type": "similar_to",
                 "description": "same idea in another chapter",
             }
-            for other in same[1:]
+            for other in others
         )
     return {
         "version": "1.0.0",

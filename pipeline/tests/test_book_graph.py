@@ -91,3 +91,16 @@ def test_only_the_same_idea_is_linked_across_chapters_whatever_the_script():
     )
     similar = [(e["source"], e["target"]) for e in g["edges"] if e["type"] == "similar_to"]
     assert similar == [("c2:x", "c1:a")]  # names with no words at all link to nothing
+
+
+def test_c_c_sharp_and_c_plus_plus_are_different_ideas():
+    g = book_graph.build([chapter(1, [("a", "C")]), chapter(2, [("b", "C#"), ("c", "C++")])])
+    assert [e for e in g["edges"] if e["type"] == "similar_to"] == []
+
+
+def test_same_name_twice_in_one_chapter_is_not_linked_to_itself():
+    g = book_graph.build(
+        [chapter(1, [("a", "Caching"), ("b", "caching!")]), chapter(2, [("c", "The caching")])]
+    )
+    similar = [(e["source"], e["target"]) for e in g["edges"] if e["type"] == "similar_to"]
+    assert similar == [("c2:c", "c1:a")]

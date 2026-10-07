@@ -3,6 +3,7 @@ import zipfile
 
 import pytest
 
+from neuralloop_books import chapters as chapters_module
 from neuralloop_books.chapters import (
     MAX_IMAGES_PER_CHAPTER,
     UnreadableBookError,
@@ -711,6 +712,84 @@ def test_figures_are_sized_up_before_they_are_read_and_read_at_most_once(tmp_pat
     figures = sum(n for name, n in reads.items() if "/f" in name)
     assert figures == MAX_IMAGES_PER_CHAPTER - 1 and all(n == 1 for name, n in reads.items() if "/f" in name)
     assert len(list((out / "img").iterdir())) == MAX_IMAGES_PER_CHAPTER
+
+
+def _counting_reads(monkeypatch) -> dict[str, int]:
+    reads: dict[str, int] = {}
+    real_read = zipfile.ZipFile.read
+
+    def counting_read(self, name, pwd=None):
+        key = name if isinstance(name, str) else name.filename
+        reads[key] = reads.get(key, 0) + 1
+        return real_read(self, name, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", counting_read)
+    return reads
+
+
+def test_an_image_shared_by_every_chapter_is_read_and_written_once(tmp_path, monkeypatch):
+    files = {f"images/f{k}.png": PNG for k in range(10)}
+    figures = "".join(f'<img src="images/f{k}.png" alt="Figure {k}"/>' for k in range(10))
+    chapters = [(f"Chapter {i}", LONG + "</p>" + figures + "<p>") for i in range(1, 6)]
+    book = write_epub(tmp_path / "b.epub", chapters, files=files)
+    reads = _counting_reads(monkeypatch)
+    out = tmp_path / "out"
+    made = split_book(book, out)
+    assert len(made) == 5
+    assert all(n == 1 for name, n in reads.items() if "/images/" in name)
+    assert sorted(p.name for p in (out / "img").iterdir()) == [f"01-{k + 1:02d}.png" for k in range(10)]
+    for chapter in made:
+        text = (out / chapter["file"]).read_text()
+        assert "![Figure 0](img/01-01.png)" in text and "![Figure 9](img/01-10.png)" in text
+
+
+def test_images_past_the_book_budget_become_their_alt_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(chapters_module, "MAX_BOOK_IMAGE_BYTES", 3 * len(PNG))
+    files = {f"images/f{k}.png": PNG for k in range(6)}
+    chapters = [
+        ("One", LONG + '</p><img src="images/f0.png" alt="Zero"/><img src="images/f1.png" alt="One"/><p>'),
+        ("Two", LONG + '</p><img src="images/f2.png" alt="Two"/><img src="images/f3.png" alt="Three"/><p>'),
+        ("Three", LONG + '</p><img src="images/f4.png" alt="Four"/><img src="images/f5.png"/><p>'),
+    ]
+    reads = _counting_reads(monkeypatch)
+    out = tmp_path / "out"
+    made = split_book(write_epub(tmp_path / "b.epub", chapters, files=files), out)
+    written = list((out / "img").iterdir())
+    assert len(written) == 3 and sum(p.stat().st_size for p in written) <= 3 * len(PNG)
+    assert "OEBPS/images/f4.png" not in reads  # over budget: never read
+    two = (out / made[1]["file"]).read_text()
+    assert "![Two](img/02-01.png)" in two
+    assert "Three" in two and "f3.png" not in two and "![Three]" not in two
+    three = (out / made[2]["file"]).read_text()
+    assert "Four" in three and "![" not in three
+
+
+def test_a_chapter_starting_partway_into_a_split_file_leaves_the_earlier_text_to_the_one_before(tmp_path):
+    split_tail = "OneTail " + LONG + '</p><section id="two"><h1>Two</h1><p>TwoStart ' + LONG + "</section><p>"
+    book = write_epub(
+        tmp_path / "b.epub",
+        [("One", "OneStart " + LONG), ("Two", split_tail)],
+        toc=[("One", 0, []), ("Two", "doc1.xhtml#two", [])],
+    )
+    out = tmp_path / "out"
+    made = split_book(book, out)
+    assert [c["title"] for c in made] == ["One", "Two"]
+    one, two = ((out / c["file"]).read_text() for c in made)
+    assert "OneStart" in one and "OneTail" in one and "TwoStart" not in one
+    assert "TwoStart" in two and "OneTail" not in two
+
+
+def test_a_short_label_before_a_chapters_anchor_stays_with_that_chapter(tmp_path):
+    labelled = 'Chapter 2</p><section id="two"><h1>Two</h1><p>TwoStart ' + LONG + "</section><p>"
+    book = write_epub(
+        tmp_path / "b.epub",
+        [("One", "OneStart " + LONG), ("Two", labelled)],
+        toc=[("One", 0, []), ("Two", "doc1.xhtml#two", [])],
+    )
+    out = tmp_path / "out"
+    made = split_book(book, out)
+    two = (out / made[1]["file"]).read_text()
+    assert "Chapter 2" in two and "TwoStart" in two
 
 
 def test_many_chapters_anchored_in_one_file_are_all_found(tmp_path):

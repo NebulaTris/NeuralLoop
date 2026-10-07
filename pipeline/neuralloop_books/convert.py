@@ -9,7 +9,19 @@ import re
 import unicodedata
 from typing import Any
 
-_CITATION = re.compile(r"\s*\[\d+(?:\s*[,\-–]\s*\d+)*\]")
+# A NotebookLM citation ("… speed [1].", "Fast. [2, 3] Next", "end.[4]") follows prose and ends a clause.
+# Never one right after a name or bracket (matrix[i][0], sorted([3, 1, 2])), after JSON punctuation
+# ("ids": [1, 2]), or one going on into lower-case words ("x [1] times"), and never [0].
+_CITE = r"\[(?!0\b)\d+(?:\s*[,\-–]\s*\d+)*\]"
+_CITATION = re.compile(
+    r"(?:(?<=[\w.!?;\"'”’*)])\s+|(?<=[.!?\"'”’]))"
+    + rf"{_CITE}(?:\s*{_CITE})*"
+    + r"(?=\s*(?:$|[.,;:!?)\"”’}\]])|\s+[^\sa-z])"
+)
+# Code a citation never sits in: a fence named for a language other than JSON, and `inline code`.
+_CODE_SPAN = re.compile(r"(```(?!json\b)[A-Za-z][\w+#-]*[^\S\n]*\n.*?```|`[^`\n]*`)", re.DOTALL)
+_PLUS = re.compile(r"(?<=[^\W_]|\+)\+")  # "c++", "g++": not "a + b"
+_SHARP = re.compile(r"(?<=[^\W\d_])#")  # "c#", "f#": not "#1"
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 # Small models sometimes open or close a JSON string with a curly quote; only fixed when parsing fails.
 _CURLY_CLOSE = re.compile(r"[”“](?=\s*[,}\]:])")
@@ -21,13 +33,39 @@ _MAX_SLIDES = 8
 _POSES = ("read", "hop", "nap", "stretch", "play", "hug", "study", "proud")
 
 
-def loose_json(text: str | None) -> Any:
-    """Parse JSON from a chat answer that may wrap it in prose, code fences, or citation markers."""
-    cleaned = _CITATION.sub("", text or "").strip()
-    parsed = _parse(cleaned)
-    if parsed is None and ("”" in cleaned or "“" in cleaned):
-        parsed = _parse(_CURLY_OPEN.sub(r'\1"', _CURLY_CLOSE.sub('"', cleaned)))
-    return parsed
+def loose_json(text: str | None, citations: bool = True) -> Any:
+    """Parse JSON from a chat answer that may wrap it in prose, code fences, or citation markers.
+
+    The answer is parsed as it is first, so number lists and code ("matrix[i][0]") survive; citation markers
+    after prose are then taken out of its strings. Only an answer that doesn't parse is cleaned of them before
+    parsing again. ``citations=False`` (a model that never cites) leaves every string as written.
+    """
+    raw = (text or "").strip()
+    parsed = _parse(raw)
+    if parsed is None and citations:
+        raw = strip_citations(raw)
+        parsed = _parse(raw)
+    if parsed is None and ("”" in raw or "“" in raw):
+        parsed = _parse(_CURLY_OPEN.sub(r'\1"', _CURLY_CLOSE.sub('"', raw)))
+    return _without_citations(parsed) if citations else parsed
+
+
+def strip_citations(text: str) -> str:
+    """Text without NotebookLM's citation markers ("Caches help [1]." -> "Caches help."); code spans and
+    brackets that belong to code or data stay as they are."""
+    parts = _CODE_SPAN.split(text)
+    return "".join(part if i % 2 else _CITATION.sub("", part) for i, part in enumerate(parts))
+
+
+def _without_citations(value: Any) -> Any:
+    if isinstance(value, str):
+        cleaned = strip_citations(value)
+        return cleaned.strip() if cleaned != value else value
+    if isinstance(value, list):
+        return [_without_citations(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _without_citations(item) for key, item in value.items()}
+    return value
 
 
 def _parse(cleaned: str) -> Any:
@@ -211,8 +249,10 @@ def mind_map(data: Any) -> dict | None:
 
 def plain_words(text: str) -> str:
     """Letters, digits, and marks of any script (Devanagari vowel signs too), casefolded; anything else
-    becomes a single space. "Кэш—Стратегия" -> "кэш стратегия", "Straße" -> "strasse"."""
+    becomes a single space. "Кэш—Стратегия" -> "кэш стратегия", "Straße" -> "strasse". A plus or sharp sign
+    that is part of a name stays a word, so "C++" ("c plus plus"), "C#" ("c sharp"), and "C" stay apart."""
     folded = unicodedata.normalize("NFKC", str(text)).casefold()
+    folded = _SHARP.sub(" sharp ", _PLUS.sub(" plus ", folded))
     return " ".join("".join(c if unicodedata.category(c)[0] in "LNM" else " " for c in folded).split())
 
 
