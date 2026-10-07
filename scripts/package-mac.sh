@@ -2,6 +2,7 @@
 # Package NeuralLoop for other Macs: a Release build with the self-contained runtime inside
 # (NeuralLoop.app/Contents/Resources/runtime), signed ad hoc, in a drag-to-Applications DMG.
 # People open it once with System Settings → Privacy & Security → "Open Anyway" (docs/specs/07-every-device.md).
+# The hardened runtime is off and nothing is notarized; docs/DEVELOPMENT.md → "Signing" says what changing that needs.
 #
 # The runtime is rebuilt whenever its stamp doesn't match the current sources (scripts/build-runtime.sh --stamp).
 # After the DMG is made, it is checked like a download: mounted, copied out, quarantined, marked approved the
@@ -41,6 +42,23 @@ echo "• Release build"
   -configuration Release -derivedDataPath "$DERIVED" CODE_SIGN_IDENTITY="-" build -quiet)
 APP="$DERIVED/Build/Products/Release/NeuralLoop.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+
+# Google sign-in for Drive sync needs the owner's OAuth client ID (apple/Config/Google.xcconfig, docs/DEVELOPMENT.md).
+CLIENT_ID="$(/usr/libexec/PlistBuddy -c 'Print GoogleClientID' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+EXAMPLE_ID="$(sed -n 's/^GOOGLE_CLIENT_ID *= *//p' "$ROOT/apple/Config/Google.xcconfig.example")"
+if [[ -n "$EXAMPLE_ID" && "$CLIENT_ID" == "$EXAMPLE_ID" ]]; then
+  echo "GoogleClientID is still the example from Google.xcconfig.example; paste your own client ID into" >&2
+  echo "apple/Config/Google.xcconfig (docs/DEVELOPMENT.md → Google Drive sync)." >&2
+  exit 1
+fi
+if [[ -z "$CLIENT_ID" ]]; then
+  echo "  Warning: no GoogleClientID (apple/Config/Google.xcconfig), so this build's Drive sync is off."
+fi
+
+# Licences travel with the app (apple/project.yml) and with its runtime (build-runtime.sh).
+for f in LICENSE NOTICE.md licenses/GPL-2.0.txt; do
+  test -f "$APP/Contents/Resources/$f" || { echo "The app is missing $f in its Resources." >&2; exit 1; }
+done
 
 echo "• Runtime into the app"
 rm -rf "$APP/Contents/Resources/runtime"

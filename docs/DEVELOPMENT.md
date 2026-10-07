@@ -8,9 +8,13 @@ makes everything by default; your own AI takes over whenever NotebookLM can't (o
 ## Install
 
 Download `NeuralLoop-<version>.dmg`, drag NeuralLoop to Applications, and open it. It isn't signed by Apple yet, so the first
-time macOS asks: open System Settings → Privacy & Security and choose **Open Anyway**. Everything it needs is inside the app
-(Python, every AI provider, Rumik's voices, NotebookLM, Chromium for videos, and Ollama); the local models download the first
-time they're needed.
+time macOS asks: open System Settings → Privacy & Security and choose **Open Anyway**. The programs it needs are inside the
+app (Python, every AI provider, Rumik's voice engine, NotebookLM, Chromium for videos, and Ollama); Rumik's voices and the
+local models download the first time they're needed.
+
+After an update, macOS may ask once whether NeuralLoop may use what it saved in your keychain ("NeuralLoop wants to use
+your confidential information…"). Enter your Mac's login password and click **Always Allow**; that's NeuralLoop reading
+its own API keys and Google sign-in again (each build is signed ad hoc, so macOS sees it as a new app).
 
 ## Using it
 
@@ -36,6 +40,25 @@ make package   # dist/NeuralLoop-<version>.dmg
 
 The rules: pure logic lives in `NeuralLoopCore` and `neuralloop_books`, with tests; screens stay thin. Write the failing test
 first, then the change. `CLAUDE.md` has the contracts between the app and the pipeline.
+
+## Signing
+
+`make package` makes a DMG that is **ad-hoc signed** (every Mach-O file in the runtime, inside out, then the app), **not
+notarized**, with the **hardened runtime off** (`ENABLE_HARDENED_RUNTIME: NO` in `apple/project.yml`). Ollama keeps its
+own Developer ID signature. So people choose **Open Anyway** once, and after each update macOS may ask once to let
+NeuralLoop use its saved Keychain items (**Always Allow**). `package-mac.sh` also stops if the build carries the example
+`GoogleClientID` from `Google.xcconfig.example`, and warns when there is none (Drive sync is then off).
+
+Turning on the hardened runtime needs, together:
+
+- **A Developer ID Application certificate** (paid Apple Developer Program) to sign the app and every Mach-O file in the
+  runtime with `--options runtime --timestamp`; ad-hoc signatures can't be notarized.
+- **Entitlements for the bundled runtime.** Python loads native extension modules signed by us, and MLX, PyAV, and
+  Chromium are native too: expect `com.apple.security.cs.disable-library-validation` on `runtime/python/bin/python3`,
+  and possibly `com.apple.security.cs.allow-jit` / `allow-unsigned-executable-memory` for Chromium and MLX. Test each
+  (`--dry-run`, a real local podcast, an explainer video, Ollama) before shipping.
+- **Notarization** (`xcrun notarytool submit … --wait`, then `xcrun stapler staple` on the DMG), which also removes the
+  "Open Anyway" step, and a stable signature, which ends the Keychain prompt after updates.
 
 ## Google Drive sync
 
