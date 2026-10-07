@@ -61,6 +61,9 @@ VIDEO_TIMEOUT = 3600.0
 # giving up (a podcast or video already asked for is waited for again, never asked for twice). Then the item
 # waits for the next run instead of failing.
 NOTEBOOKLM_RETRY_DELAYS = (20, 60, 120)
+# Google's session cookie can rotate more than once during an hour-long video: reload it up to this many times
+# per item before the item gives up (a podcast or video then waits for the next run).
+NOTEBOOKLM_SESSION_RELOADS = 3
 
 
 def quota_message(engine_name: str) -> str:

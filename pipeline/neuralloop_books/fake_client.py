@@ -183,6 +183,29 @@ class FakeStaleWhileWaitingClient(FakeClient):
         return await super()._wait(notebook_id, task_id, **kwargs)
 
 
+class FakeStaleTwiceWhileWaitingClient(FakeClient):
+    """A long video sees Google's cookie rotate twice: the first `stale` status checks are refused, each after
+    the session was refreshed, and the item must keep refreshing (a few times) rather than give up."""
+
+    def __init__(self, stale: int = 2, delay: float = 0.0):
+        super().__init__(delay)
+        self.stale, self.waits = stale, 0
+        self.generated: list[str] = []
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        if "audio_format" in kwargs or "video_format" in kwargs:
+            self.generated.append(f"{source_ids[0]}:{'audio' if 'audio_format' in kwargs else 'video'}")
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        self.waits += 1
+        if self.waits <= self.stale:
+            error = RuntimeError("The server rejected this request (unauthenticated).")
+            error.rpc_code = 16
+            raise error
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
 class FakeSlowClient(FakeClient):
     """NotebookLM answering slowly: the first status check of every podcast and video times out (it's still
     being made), and the item must ride it out with the same podcast or video, asked for once."""
@@ -204,11 +227,37 @@ class FakeSlowClient(FakeClient):
         return await super()._wait(notebook_id, task_id, **kwargs)
 
 
+class WaitTimeoutError(TimeoutError):
+    """notebooklm-py's name for a wait that ran its whole timeout (not one slow status check)."""
+
+
+class FakeSlowQuizClient(FakeClient):
+    """NotebookLM still making a quiz when the whole wait runs out, `timeouts` times in a row."""
+
+    def __init__(self, timeouts: int = 1, delay: float = 0.0):
+        super().__init__(delay)
+        self.timeouts, self.quiz_waits = timeouts, 0
+        self.quizzes_asked: list[str] = []
+        self.artifacts.generate_quiz = self._generate_quiz
+
+    async def _generate_quiz(self, notebook_id, source_ids=None, **kwargs):
+        self.quizzes_asked.append(source_ids[0])
+        return SimpleNamespace(task_id=f"{source_ids[0]}|quiz")
+
+    async def _wait(self, notebook_id, task_id, **kwargs):
+        if str(task_id).endswith("|quiz"):
+            self.quiz_waits += 1
+            if self.quiz_waits <= self.timeouts:
+                raise WaitTimeoutError(f"Task {task_id} did not complete in {kwargs.get('timeout')}s")
+        return await super()._wait(notebook_id, task_id, **kwargs)
+
+
 class FakeDownClient(FakeClient):
     """NotebookLM not answering at all for podcasts and videos (every request times out)."""
 
     async def _generate(self, notebook_id, source_ids=None, **kwargs):
         if "audio_format" in kwargs or "video_format" in kwargs:
+            self.asked = getattr(self, "asked", 0) + 1
             raise TimeoutError("Request timed out calling CREATE_ARTIFACT")
         return await super()._generate(notebook_id, source_ids, **kwargs)
 

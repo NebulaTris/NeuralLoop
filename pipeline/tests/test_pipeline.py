@@ -13,7 +13,9 @@ from neuralloop_books.fake_client import (
     FakeQuotaClient,
     FakeRotatedSessionClient,
     FakeSlowClient,
+    FakeSlowQuizClient,
     FakeStaleSessionClient,
+    FakeStaleTwiceWhileWaitingClient,
     FakeStaleWhileWaitingClient,
 )
 from neuralloop_books.models import QuotaError, SetupError
@@ -87,6 +89,22 @@ class LimitedModel(FakeModel):
         if kind == "quiz":
             raise QuotaError("429 rate limit")
         return await super().complete(kind, system, source, prompt)
+
+
+def test_items_that_wait_behind_a_limit_leave_the_progress_queue(options, monkeypatch):
+    from neuralloop_books.activity import Activity
+
+    skipped = []
+    real = Activity.skip
+
+    def recording(self, n, item):
+        skipped.append((n, item))
+        real(self, n, item)
+
+    monkeypatch.setattr(Activity, "skip", recording)
+    options.parallel = 1
+    run_local(options, LimitedModel())
+    assert (2, "quiz") in skipped  # never made: chapter 1's quiz hit the limit first
 
 
 def test_local_rate_limits_wait_for_the_next_run(options):
@@ -208,6 +226,20 @@ def test_a_crashed_run_is_resumed_and_its_working_items_finished(options):
     assert run_local(options).chapters[0]["tasks"]["quiz"]["status"] == DONE
 
 
+@pytest.mark.parametrize("broken", ['{"title": "T", "chapters": [', "", '["not", "a", "state"]'])
+def test_an_unreadable_state_file_is_kept_aside_and_the_book_split_again(options, broken):
+    """A state.json cut short (the Mac lost power mid-write) must not stop the book for good."""
+    lines = []
+    options.log = lines.append
+    options.out.mkdir(parents=True)
+    (options.out / "state.json").write_text(broken)
+    state = run_local(options)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE
+    aside = list(options.out.glob("state.json.unreadable-*"))
+    assert len(aside) == 1 and aside[0].read_text() == broken
+    assert any("couldn't be read" in line for line in lines)
+
+
 def test_two_runs_never_prepare_the_same_book_at_once(options):
     import fcntl
     import os
@@ -279,6 +311,30 @@ def test_a_setup_error_cancels_the_other_items_before_the_engine_closes(options)
     with pytest.raises(SetupError):
         asyncio.run(run(options, engine))
     assert engine.running_at_exit == 0
+
+
+def test_a_run_stopped_for_setup_leaves_nothing_working_and_says_what_needs_fixing(options):
+    with pytest.raises(SetupError):
+        asyncio.run(run(options, SetupFailsWhileMediaRuns()))
+    saved = json.loads((options.out / "state.json").read_text())
+    assert not [t for c in saved["chapters"] for t in c["tasks"].values() if t["status"] == "working"]
+    assert all(s != "working" for c in book_data(options.out)["chapters"] for s in c["status"].values())
+    assert "revoked" in saved["chapters"][0]["tasks"]["study"]["error"]
+
+
+def test_a_run_interrupted_with_ctrl_c_leaves_nothing_working(options):
+    class Interrupted(SetupFailsWhileMediaRuns):
+        async def make(self, task, chapter):
+            if task == "study":
+                raise KeyboardInterrupt
+            await asyncio.sleep(5 if task in ("audio", "video") else 0)
+            return {}
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(run(options, Interrupted()))
+    saved = json.loads((options.out / "state.json").read_text())
+    assert not [t for c in saved["chapters"] for t in c["tasks"].values() if t["status"] == "working"]
+    assert all(s != "working" for c in book_data(options.out)["chapters"] for s in c["status"].values())
 
 
 class Failing:
@@ -389,6 +445,25 @@ def test_a_podcast_already_asked_for_is_waited_for_not_asked_for_again(options):
     assert client.generated.count(client.generated[0]) == 1  # NotebookLM's allowance spent once
 
 
+def test_a_session_that_goes_stale_twice_during_one_item_is_refreshed_each_time(options):
+    """A video can take an hour, long enough for Google's cookie to rotate twice."""
+    client = FakeStaleTwiceWhileWaitingClient(stale=2)
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (DONE, DONE)
+    assert client.refreshes == 2
+    assert len(client.generated) == len(set(client.generated))  # asked for once, waited for again
+
+
+def test_a_session_that_never_recovers_leaves_media_waiting_not_failed(options):
+    client = FakeStaleTwiceWhileWaitingClient(stale=1_000)
+    state = run_with(options, client)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (WAITING, WAITING)
+    # A few refreshes per item that waits on NotebookLM (quiz and cards in both chapters, media in the first).
+    assert client.refreshes <= 3 * 6
+
+
 @pytest.fixture
 def no_retry_pause(monkeypatch):
     from neuralloop_books import config
@@ -411,6 +486,41 @@ def test_notebooklm_not_answering_leaves_media_waiting_for_the_next_run_not_fail
     assert first["audio"]["status"] == "waiting_quota" and first["video"]["status"] == "waiting_quota"
     assert "try again" in first["video"]["error"].lower()
     assert first["quiz"]["status"] == DONE  # other items carry on
+
+
+def test_a_quiz_still_being_made_when_the_wait_runs_out_is_waited_for_not_asked_for_again(
+    options, no_retry_pause
+):
+    options.chapters, options.media = "1", "none"
+    client = FakeSlowQuizClient(timeouts=1)
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE
+    assert client.quizzes_asked == ["source-1"]  # NotebookLM's allowance spent once
+
+
+def test_a_quiz_that_outlasts_two_whole_waits_waits_for_the_next_run(options, no_retry_pause):
+    """A whole wait is 15 minutes: one more is patient, three more would be an hour."""
+    options.chapters, options.media = "1", "none"
+    client = FakeSlowQuizClient(timeouts=1_000)
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == WAITING
+    assert client.quiz_waits == 2 and client.quizzes_asked == ["source-1"]
+
+
+def test_once_notebooklm_gave_up_on_a_kind_of_item_the_rest_of_that_kind_wait_without_retrying(
+    options, no_retry_pause
+):
+    """Each item would otherwise spend minutes of patient retries before waiting too."""
+    from neuralloop_books import config
+
+    options.media = "all"
+    client = FakeDownClient()
+    state = run_with(options, client)
+    tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
+    assert client.asked == 2 * tries  # chapter 1's podcast and video; chapter 2's never asked
+    second = state.chapters[1]["tasks"]
+    assert (second["audio"]["status"], second["video"]["status"]) == (WAITING, WAITING)
+    assert "try again" in second["audio"]["error"].lower() and "limit" not in second["audio"]["error"]
 
 
 def test_a_failed_item_never_saves_or_prints_an_api_key(options, monkeypatch):

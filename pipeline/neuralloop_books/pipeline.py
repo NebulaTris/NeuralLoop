@@ -17,7 +17,7 @@ from .engines.auto import made_by
 from .models import SetupError, safe_message
 from .notebook import is_quota_error
 from .selection import parse_selection
-from .state import DONE, FAILED, WAITING, WORKING, BookState
+from .state import DONE, FAILED, TODO, WAITING, WORKING, BookState, UnreadableState
 
 
 @dataclass
@@ -55,12 +55,12 @@ def prepare_state(opts: Options) -> BookState:
     """Load the saved state, or split the book and create it; then mark what this run should make."""
     for sub in ("chapters", "media", "raw"):
         (opts.out / sub).mkdir(parents=True, exist_ok=True)
-    state = BookState.load(opts.out / "state.json")
+    state = _load_state(opts)
     if state is None:
         opts.log(f"Splitting {safe_message(opts.book.name)} into chapters…")
         chapters = split_book(opts.book, opts.out / "chapters")
         if not chapters:
-            raise ValueError("Couldn't find any chapters in this book.")
+            raise BookProblem("Couldn't find any chapters in this book.")
         title = clean_title(opts.title or opts.book.stem.replace("_", " ").replace("-", " ")) or "Book"
         state = BookState.create(
             opts.out / "state.json",
@@ -72,7 +72,10 @@ def prepare_state(opts: Options) -> BookState:
     state.ensure_tasks()
     state.reset_interrupted()  # safe: the book's lock means no other run is working on it
     count = len(state.chapters)
-    chosen, media = parse_selection(opts.chapters, count), parse_selection(opts.media, count)
+    try:
+        chosen, media = parse_selection(opts.chapters, count), parse_selection(opts.media, count)
+    except ValueError as error:
+        raise BookProblem(str(error)) from error
     state.apply_selection(
         chosen,
         media,
@@ -89,6 +92,22 @@ def prepare_state(opts: Options) -> BookState:
     return state
 
 
+class BookProblem(ValueError):
+    """The run can't go on until the person changes something (the chapters asked for, the book itself)."""
+
+
+def _load_state(opts: Options) -> BookState | None:
+    """The saved state; one that can't be read is kept aside (never deleted) and the book is split again."""
+    path = opts.out / "state.json"
+    try:
+        return BookState.load(path)
+    except UnreadableState:
+        aside = path.with_name(f"state.json.unreadable-{time.strftime('%Y%m%d-%H%M%S')}")
+        os.replace(path, aside)
+        opts.log(f"This book's saved progress couldn't be read; kept it as {aside.name}, starting afresh.")
+        return None
+
+
 def book_options(opts: Options) -> dict:
     return {"audio": opts.audio, "video": opts.video, "style": opts.style, "language": opts.language}
 
@@ -99,6 +118,7 @@ async def run(opts: Options, engine) -> BookState:
         return await _run(opts, engine)
 
 
+NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
 ALREADY_RUNNING = "This book is already being prepared. Pip will keep going with that run."
 
 
@@ -116,7 +136,7 @@ def _book_lock(out: Path):
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             handle.close()
-            raise ValueError(ALREADY_RUNNING) from None
+            raise BookProblem(ALREADY_RUNNING) from None
         try:
             same_file = os.stat(path).st_ino == os.fstat(handle.fileno()).st_ino
         except FileNotFoundError:
@@ -145,9 +165,10 @@ async def _run(opts: Options, engine) -> BookState:
         feed = Activity(opts.out, state.data.get("timings", {}))
         feed.queue([(c["n"], t) for c, t in pending])
         lanes = {"text": asyncio.Semaphore(opts.parallel), "media": asyncio.Semaphore(opts.media_parallel)}
-        # (engine, item kind) pairs that hit a limit: later items of that kind made by the same engine wait.
-        # Keyed by engine, so a limit on auto's fallback never stops NotebookLM trying the next ones.
-        quota_hit: set[tuple[str, str]] = set()
+        # (engine, item kind) pairs that hit a limit (or that NotebookLM didn't answer after patient retries)
+        # -> why: later items of that kind made by the same engine wait without trying. Keyed by engine, so a
+        # limit on auto's fallback never stops NotebookLM trying the next ones.
+        quota_hit: dict[tuple[str, str], str] = {}
 
         def lane(task: str) -> asyncio.Semaphore:
             return lanes["media" if task in MEDIA_TASKS else "text"]
@@ -163,6 +184,11 @@ async def _run(opts: Options, engine) -> BookState:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # Items stopped half-way go back to the queue, so the app never shows them as being made.
+            state.reset_interrupted()
+            state.data["timings"] = feed.timings
+            state.save()
+            bookdata.write(opts.out, state, book_options(opts))
             raise
         finally:
             feed.close()
@@ -174,14 +200,20 @@ async def _run(opts: Options, engine) -> BookState:
 
 async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
     entry = chapter["tasks"][task]
-    if (engine.name, task) in quota_hit:
-        entry.update(status=WAITING, error=quota_message(engine.name))
+
+    def wait_behind_limit() -> bool:
+        if (engine.name, task) not in quota_hit:
+            return False
+        entry.update(status=WAITING, error=quota_hit[engine.name, task])
         state.save()
+        if feed:
+            feed.skip(chapter["n"], task)
+        return True
+
+    if wait_behind_limit():
         return
     async with limiter:
-        if (engine.name, task) in quota_hit:  # another item of this kind hit the limit while we waited
-            entry.update(status=WAITING, error=quota_message(engine.name))
-            state.save()
+        if wait_behind_limit():  # another item of this kind hit the limit while we waited
             return
         entry["status"] = WORKING
         state.save()
@@ -196,19 +228,21 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             chapter.update(result)
             entry.update(status=DONE, error="")
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
-        except SetupError:
-            raise  # e.g. a revoked key: stop the run and say what to fix
+        except SetupError as error:
+            # e.g. a revoked key: stop the run and say what to fix; the item says so and is made next run.
+            entry.update(status=TODO, error=safe_message(error))
+            raise
         except Exception as error:  # one item failing must not stop the rest; it's recorded and retried later
             if getattr(error, "try_later", False):  # NotebookLM didn't answer after patient retries: next run
-                entry.update(
-                    status=WAITING, error="NotebookLM didn't answer this time; Pip will try again next run."
-                )
+                # The rest of this kind wait too, instead of each spending minutes on the same retries.
+                quota_hit[made_by(error, engine.name), task] = NOT_ANSWERING
+                entry.update(status=WAITING, error=NOT_ANSWERING)
                 opts.log(
                     f"  … chapter {chapter['n']} {task}: NotebookLM didn't answer; will try again next run"
                 )
             elif is_quota_error(error):
                 who = made_by(error, engine.name)  # auto may have handed this item to its fallback
-                quota_hit.add((who, task))
+                quota_hit[who, task] = quota_message(who)
                 entry.update(status=WAITING, error=quota_message(who))
                 opts.log(f"  … chapter {chapter['n']} {task}: {who} limit reached; will continue next run")
             else:

@@ -9,6 +9,13 @@ def read(out):
     return json.loads((out / "activity.json").read_text())
 
 
+def test_an_item_that_waits_without_being_made_leaves_the_queue(tmp_path):
+    feed = Activity(tmp_path, timings={})
+    feed.queue([(1, "quiz"), (2, "quiz")])
+    feed.skip(2, "quiz")
+    assert read(tmp_path)["queue"] == [{"n": 1, "item": "quiz"}]
+
+
 def test_an_item_being_made_is_written_with_its_step_and_estimate(tmp_path):
     clock = iter([1000.0, 1001.0, 1002.0, 1003.0, 1004.0, 1005.0])
     feed = Activity(tmp_path, timings={"NotebookLM:audio": [400, 500, 600]}, clock=lambda: next(clock))

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from . import aiconfig
+from .chapters import UnreadableBookError, UnsafeBookError
 from .config import (
     AUDIO_FORMATS,
     AUDIO_LENGTHS,
@@ -21,7 +22,7 @@ from .config import (
     VIDEO_STYLES,
 )
 from .models import SetupError, is_local_url, resolve_provider, safe_message
-from .pipeline import Options, run
+from .pipeline import BookProblem, Options, run
 from .state import FAILED, WAITING
 
 SAMPLE_BOOK = Path(__file__).resolve().parent.parent / "sample" / "sample-book.epub"
@@ -249,17 +250,24 @@ def _engine(opts: Options):
     if opts.engine == "notebooklm":
         try:
             import notebooklm  # noqa: F401
-        except ImportError:
-            sys.exit(
+        except ImportError as error:
+            raise SetupError(
                 'Install the NotebookLM library first: pip install "notebooklm-py[browser]" pypdf\n'
                 "Then sign in once: python nl_book.py --signin"
-            )
+            ) from error
         return _notebooklm_engine(opts)
     if opts.engine == "local":
         return _local_engine(opts)
     from .engines.auto import AutoEngine
 
-    return AutoEngine(lambda: _notebooklm_engine(opts), lambda: _local_engine(opts), opts.log)
+    # NotebookLM keeps the run's lanes; a model on this Mac (LM Studio too) gets one text item at a time.
+    local = _on_this_mac(opts)
+    return AutoEngine(
+        lambda: _notebooklm_engine(opts),
+        lambda: _local_engine(opts),
+        opts.log,
+        fallback_parallel=1 if local else None,
+    )
 
 
 # NotebookLM's own words for a missing or expired sign-in (not just any error that mentions "author").
@@ -286,15 +294,27 @@ def _signin() -> int:
     return account.sign_in(print)
 
 
+MIN_CONTEXT = 1_000
+
+
+def _context(args: argparse.Namespace) -> int | None:
+    """--context in characters; anything smaller than a paragraph or two is raised to a workable size."""
+    return None if args.context is None else max(MIN_CONTEXT, args.context)
+
+
+def _on_this_mac(args) -> bool:
+    provider = resolve_provider(args.provider, os.environ)
+    return provider in LOCAL_PROVIDERS or (
+        provider == "custom" and is_local_url(args.base_url or os.environ.get("NEURALLOOP_BASE_URL"))
+    )
+
+
 def _default_parallel(args: argparse.Namespace) -> int:
     if args.parallel:
         return max(1, args.parallel)
-    provider = resolve_provider(args.provider, os.environ)
+    # With auto, NotebookLM's work keeps two lanes; AutoEngine holds a local fallback to one at a time.
     # A model on this Mac (LM Studio and other local servers too) answers one request at a time anyway.
-    on_this_mac = provider in LOCAL_PROVIDERS or (
-        provider == "custom" and is_local_url(args.base_url or os.environ.get("NEURALLOOP_BASE_URL"))
-    )
-    local = args.engine in ("auto", "local") and on_this_mac
+    local = args.engine == "local" and _on_this_mac(args)
     return 1 if local else 2
 
 
@@ -354,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         engine=args.engine,
         provider=args.provider,
         model=args.model,
-        context=args.context,
+        context=_context(args),
         speech=args.speech,
         voices=args.voices,
         base_url=args.base_url,
@@ -374,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     except SetupError as error:
         print(safe_message(error, 1000))
         return 3
-    except ValueError as error:
+    except (BookProblem, UnreadableBookError, UnsafeBookError) as error:
         print(safe_message(error, 1000))
         return 2
     except Exception as error:

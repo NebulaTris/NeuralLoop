@@ -105,6 +105,63 @@ def test_a_broken_book_exits_2_with_a_friendly_message(tmp_path, capsys):
     assert "This book couldn't be read" in capsys.readouterr().out
 
 
+def test_notebooklm_work_uses_two_lanes_even_when_the_fallback_would_be_ollama(epub, monkeypatch):
+    from neuralloop_books import cli
+
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cli, "resolve_provider", lambda provider, env: "ollama")
+    assert cli._default_parallel(parse_args([str(epub), "--engine", "auto", "--provider", "auto"])) == 2
+    assert cli._default_parallel(parse_args([str(epub), "--engine", "local", "--provider", "ollama"])) == 1
+
+
+@pytest.mark.parametrize("given", ["0", "-100", "12"])
+def test_a_tiny_or_negative_context_is_raised_to_a_workable_size(epub, given):
+    from neuralloop_books import cli
+
+    assert cli._context(parse_args([str(epub), "--context", given])) == 1_000
+    assert cli._context(parse_args([str(epub), "--context", "50000"])) == 50_000
+    assert cli._context(parse_args([str(epub)])) is None
+
+
+def test_notebooklm_engine_without_its_library_is_a_setup_problem(epub, tmp_path, capsys, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_notebooklm(name, *args, **kwargs):
+        if name == "notebooklm":
+            raise ImportError("No module named 'notebooklm'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_notebooklm)
+    code = main([str(epub), "--engine", "notebooklm", "--no-open", "--out", str(tmp_path / "o")])
+    assert code == 3 and "notebooklm-py" in capsys.readouterr().out
+
+
+def test_a_corrupt_state_file_does_not_say_the_book_is_unreadable(epub, tmp_path, capsys):
+    """Exit 2 makes the app wait for a settings change: only a book that can't be read earns it."""
+    out = tmp_path / "o"
+    out.mkdir()
+    (out / "state.json").write_text('{"chapters": [')
+    assert main([str(epub), "--dry-run", "--no-open", "--out", str(out)]) == 0
+
+
+def test_only_book_problems_exit_2_and_other_value_errors_are_not_mistaken_for_one(
+    epub, tmp_path, monkeypatch
+):
+    import json
+
+    from neuralloop_books import cli
+
+    async def fails(opts, engine):
+        json.loads("{broken")
+
+    monkeypatch.setattr(cli, "run", fails)
+    with pytest.raises(ValueError):
+        main([str(epub), "--dry-run", "--no-open", "--out", str(tmp_path / "o")])
+
+
 def test_only_real_sign_in_problems_are_reported_as_not_signed_in(epub, tmp_path, capsys, monkeypatch):
     from neuralloop_books import cli
 

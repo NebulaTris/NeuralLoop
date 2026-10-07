@@ -9,12 +9,15 @@ import asyncio
 from .. import activity
 from ..config import MEDIA_TASKS
 from ..models import SetupError, safe_message
-from ..notebook import is_quota_error
+from ..notebook import is_auth_error, is_quota_error
 
 
 class AutoEngine:
-    def __init__(self, primary_factory, fallback_factory, log):
+    def __init__(self, primary_factory, fallback_factory, log, fallback_parallel: int | None = None):
+        """`fallback_parallel`: how many text items the fallback makes at once (1 for a model on this Mac),
+        while NotebookLM keeps the run's own lanes; None leaves it to the lanes."""
         self._primary_factory, self._fallback_factory, self._log = primary_factory, fallback_factory, log
+        self._fallback_text = asyncio.Semaphore(fallback_parallel) if fallback_parallel else None
         self.primary = self.fallback = None
         self._fallback_lock = asyncio.Lock()
         self._state = None
@@ -56,13 +59,16 @@ class AutoEngine:
         state.save()
 
     async def make(self, task: str, chapter: dict) -> dict:
+        primary_error: BaseException | None = None
         if self.primary is not None:
             try:
                 return {**await self.primary.make(task, chapter), "_by": self.primary.name}
             except Exception as error:  # this item is made locally instead; the book always finishes
-                if task in MEDIA_TASKS and (is_quota_error(error) or getattr(error, "try_later", False)):
+                if task in MEDIA_TASKS and (
+                    is_quota_error(error) or is_auth_error(error) or getattr(error, "try_later", False)
+                ):
                     # People want NotebookLM's own podcasts and videos: wait for its limit to reset, or for
-                    # it to answer again (marked waiting, tried next run) rather than make them here.
+                    # it to answer (or take its session) again, rather than make them here.
                     raise _tagged(error, self.primary.name) from None
                 if task in self._fallback_limited:
                     # The fallback is at its limit for this kind of item: this one fails (or waits) as
@@ -77,12 +83,23 @@ class AutoEngine:
                     f"  ↪ chapter {chapter['n']} {task}: NotebookLM couldn't ({_short(error)}); "
                     f"making it with {fallback.name}"
                 )
+                primary_error = error
         fallback = await self._fallback_ready()
         try:
-            if self.primary is not None:  # NotebookLM tried this item and couldn't: the clock restarts
+            if primary_error is not None:  # NotebookLM tried this item and couldn't: the clock restarts
                 step = f"NotebookLM couldn't, so {fallback.name} is making it"
                 activity.report(step, by=fallback.name, restart=True)
-            return {**await fallback.make(task, chapter), "_by": fallback.name}
+            if self._fallback_text is None or task in MEDIA_TASKS:  # media have their own lane already
+                return {**await fallback.make(task, chapter), "_by": fallback.name}
+            async with self._fallback_text:
+                return {**await fallback.make(task, chapter), "_by": fallback.name}
+        except SetupError as error:
+            if primary_error is None:
+                raise  # the fallback is the whole run's engine: stop and say what to fix
+            # The fallback stopped working mid-run (Ollama quit, a key was refused): NotebookLM's items carry
+            # on, this one fails (or waits) as NotebookLM's, and the fallback isn't asked again this run.
+            self._fallback_error = error
+            raise _tagged(primary_error, self.primary.name) from None
         except Exception as error:  # say who failed, so a limit is reported under the right name
             if self.primary is not None and is_quota_error(error):
                 self._fallback_limited.add(task)

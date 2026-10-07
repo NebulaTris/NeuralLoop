@@ -8,6 +8,7 @@ from . import convert, prompts
 
 def chunks(text: str, budget: int) -> list[str]:
     """Split on paragraph boundaries into pieces of at most `budget` characters; nothing is lost."""
+    budget = max(1, budget)  # a zero or negative budget would never split (or never end)
     if len(text) <= budget:
         return [text]
     pieces: list[str] = []
@@ -18,7 +19,8 @@ def chunks(text: str, budget: int) -> list[str]:
             if len(candidate) <= budget and (current or part):
                 current = candidate
             else:
-                pieces.append(current)
+                if current:  # never an empty piece (a model would be asked to condense nothing)
+                    pieces.append(current)
                 current = part
     if current:
         pieces.append(current)
