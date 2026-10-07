@@ -11,7 +11,7 @@ import subprocess
 import urllib.request
 from collections.abc import Callable, Iterator
 
-from .models import SetupError
+from .models import SetupError, agent_env
 
 _GB = 1024**3
 DEFAULT_HOST = "http://127.0.0.1:11434"
@@ -53,7 +53,8 @@ async def ensure_ollama(host: str, log: Callable[[str], None], wait: float = 0.5
     if not binary or not os.path.exists(binary):
         raise SetupError("Ollama isn't running and isn't installed. Reinstall NeuralLoop, or install Ollama.")
     log("  setup: Starting Pip's local brain (Ollama)…")
-    env = {**os.environ, "OLLAMA_HOST": host.split("://", 1)[-1]}
+    # Ollama keeps running after we exit: it gets the basics and its own settings, never our providers' keys.
+    env = {**agent_env(own_prefixes=("OLLAMA_",)), "OLLAMA_HOST": host.split("://", 1)[-1]}
     if os.environ.get("NEURALLOOP_MODELS_DIR"):
         env["OLLAMA_MODELS"] = os.environ["NEURALLOOP_MODELS_DIR"]
     _spawn([binary, "serve"], env)

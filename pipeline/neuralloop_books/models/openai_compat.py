@@ -1,13 +1,17 @@
 """OpenAI, OpenRouter, and any OpenAI-compatible service (Nous, Together, Groq, LM Studio, vLLM, …)
 through the OpenAI Chat Completions API (official `openai` SDK)."""
 
+import asyncio
+import json
+import re
+import urllib.request
 from urllib.parse import urlparse
 
 import openai
 
 from ..prompts import wrap_chapter
 from ..schemas import SCHEMAS
-from . import QuotaError, SetupError, is_local_url, normalize_base_url, safe_message
+from . import QuotaError, SetupError, is_local_url, normalize_base_url, output_cap_from_error, safe_message
 
 # A "thinking" model behind an OpenAI-compatible server can't be told to skip thinking; don't let one request
 # hang for half an hour (the SDK's default is 10 minutes, retried twice).
@@ -17,6 +21,52 @@ LOCAL_TIMEOUT = 900.0
 MAX_OUTPUT_TOKENS = 8_192
 # OpenAI's reasoning models count their thinking in this too, so it's roomier.
 OPENAI_MAX_COMPLETION_TOKENS = 32_768
+# Older OpenAI models allow less output than that; asking for more is a 400 on every item. Others are
+# learned from the refusal (see `complete`).
+_KNOWN_CAPS = (
+    (re.compile(r"^(?:chat)?gpt-4o(?:-|$)"), 16_384),
+    (re.compile(r"^gpt-4-(?:turbo|\d{4}-preview|1106|0125|vision)"), 4_096),
+    (re.compile(r"^gpt-4(?:-\d{4}|-32k.*)?$"), 8_192),
+    (re.compile(r"^gpt-3\.5-turbo"), 4_096),
+)
+# Listed models that can't write text: never picked as the one to use.
+_NOT_CHAT = re.compile(r"embed|rerank|whisper|tts|transcribe|moderation|dall-e", re.IGNORECASE)
+_CHAT_TYPES = frozenset({"llm", "vlm", "chat"})
+NATIVE_TIMEOUT = 3.0
+
+
+def known_output_cap(model: str | None) -> int | None:
+    name = (model or "").removeprefix("openai/")
+    return next((cap for pattern, cap in _KNOWN_CAPS if pattern.match(name)), None)
+
+
+def _lm_studio_models(base_url: str) -> dict[str, dict]:
+    """What LM Studio's own API says about each model (`type`: llm, vlm, embeddings; `state`: loaded or
+    not-loaded), which its OpenAI-compatible list leaves out. Empty when the server isn't LM Studio."""
+    address = urlparse(base_url)
+    try:
+        with urllib.request.urlopen(
+            f"{address.scheme}://{address.netloc}/api/v0/models", timeout=NATIVE_TIMEOUT
+        ) as response:
+            data = json.load(response).get("data", [])
+    except (OSError, ValueError, AttributeError):  # not LM Studio, or an answer we can't read
+        return {}
+    if not isinstance(data, list):
+        return {}
+    return {m["id"]: m for m in data if isinstance(m, dict) and isinstance(m.get("id"), str)}
+
+
+def pick_chat_model(models: list[dict]) -> str | None:
+    """The model to use when none is named: one that writes text (never an embedding, reranking or speech
+    model), preferring one the server says is loaded."""
+    chat = [
+        m
+        for m in models
+        if not _NOT_CHAT.search(m["id"]) and (not m.get("type") or str(m["type"]).lower() in _CHAT_TYPES)
+    ]
+    loaded = [m for m in chat if m.get("state") == "loaded" or m.get("loaded") is True]
+    return (loaded or chat or [{"id": None}])[0]["id"]
+
 
 BASE_URLS = {"openai": None, "openrouter": "https://openrouter.ai/api/v1"}
 NAMES = {"openai": "OpenAI", "openrouter": "OpenRouter"}
@@ -37,6 +87,7 @@ class OpenAICompatModel:
         else:
             self.name = address.hostname or "your AI service"
         self._json_mode = True  # off once the service says it can't do it, so it isn't refused every time
+        self._output_cap: int | None = None  # what the model said it allows, once it refused more
         self.client = openai.AsyncOpenAI(
             api_key=api_key,
             base_url=self.base_url,
@@ -74,31 +125,44 @@ class OpenAICompatModel:
         """Compatible servers (LM Studio, vLLM, …) often have no single-model lookup, but they all list their
         models: check the named one is there, or use the first (LM Studio's loaded one) when none is named."""
         try:
-            listed = [m.id async for m in self.client.models.list()]
+            found = [{**(m.model_extra or {}), "id": m.id} async for m in self.client.models.list()]
         except openai.AuthenticationError as error:
             raise SetupError(f"{self.name} didn't accept your key. Check it in Settings.") from error
         except openai.APIConnectionError as error:
             raise SetupError(self._unreachable()) from error
         except openai.APIStatusError:
-            listed = None  # can't list here; the test request that follows checks the model
-        if listed is None:
+            found = None  # can't list here; the test request that follows checks the model
+        if found is None:
             if not self.model:
                 raise SetupError(f"Choose a model for {self.name} in Settings.")
             return
+        listed = [m["id"] for m in found]
         if not listed:
             raise SetupError(f"{self.name} has no models yet. Load a model in it (in LM Studio: Developer).")
         if not self.model:
-            self.model = listed[0]
+            if self.local:
+                native = await asyncio.to_thread(_lm_studio_models, self.base_url)
+                found = [{**m, **native.get(m["id"], {}), "id": m["id"]} for m in found]
+            self.model = pick_chat_model(found)
+            if not self.model:
+                raise SetupError(
+                    f"{self.name} has only embedding or speech models. Load a chat model in it "
+                    "(in LM Studio: Developer)."
+                )
         elif self.model not in listed:
             raise SetupError(
                 f"{self.name} doesn't have a model called {self.model}. It has: {', '.join(listed[:5])}."
             )
 
+    def _max_tokens(self) -> int:
+        roomy = OPENAI_MAX_COMPLETION_TOKENS if self.provider == "openai" else MAX_OUTPUT_TOKENS
+        return min(cap for cap in (roomy, known_output_cap(self.model), self._output_cap) if cap)
+
     def _request(self, kind: str, schema: dict | None, structured: bool) -> dict:
         tokens = (
-            {"max_completion_tokens": OPENAI_MAX_COMPLETION_TOKENS}
+            {"max_completion_tokens": self._max_tokens()}
             if self.provider == "openai"  # OpenAI's newer models refuse max_tokens
-            else {"max_tokens": MAX_OUTPUT_TOKENS}
+            else {"max_tokens": self._max_tokens()}
         )
         if not structured:
             return tokens
@@ -124,10 +188,22 @@ class OpenAICompatModel:
             {"role": "user", "content": f"{wrap_chapter(source)}\n\n{prompt}"},
         ]
 
-        async def ask(structured: bool):
+        async def send(structured: bool):
             return await self.client.chat.completions.create(
                 model=self.model, messages=messages, **self._request(kind, schema, structured)
             )
+
+        async def ask(structured: bool):
+            try:
+                return await send(structured)
+            except openai.BadRequestError as error:
+                # A model that allows less output than we asked for: once more within its limit, which is
+                # kept for the rest of the run.
+                cap = output_cap_from_error(error.message, self._max_tokens())
+                if cap is None:
+                    raise
+                self._output_cap = cap
+                return await send(structured)
 
         try:
             try:

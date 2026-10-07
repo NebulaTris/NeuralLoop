@@ -9,6 +9,13 @@ from neuralloop_books.models.opencode import OpencodeModel
 from neuralloop_books.notebook import is_quota_error
 
 
+@pytest.fixture(autouse=True)
+def no_real_opencode_config(monkeypatch, tmp_path):
+    """opencode's settings are read from the person's home; never the developer's own in tests."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
 def test_auto_picks_the_first_provider_with_a_key():
     assert models.resolve_provider("auto", {"OPENROUTER_API_KEY": "k"}) == "openrouter"
     assert models.resolve_provider("auto", {"ANTHROPIC_API_KEY": "k", "OPENAI_API_KEY": "k"}) == "anthropic"
@@ -600,3 +607,94 @@ def test_only_claude_models_that_can_think_adaptively_are_asked_to():
         assert adaptive_thinking(model), model
     for model in ("claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-sonnet-4-20250514"):
         assert not adaptive_thinking(model), model
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-3-7-sonnet-latest",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-latest",
+        "claude-3-opus-20240229",
+        "claude-3-haiku-20240307",
+        "claude-2.1",
+        "claude-2",
+        "claude-instant-1.2",
+    ],
+)
+def test_legacy_claude_names_get_no_adaptive_thinking(model):
+    """Claude 3 and older are named `claude-<version>-<family>`; they refuse adaptive thinking."""
+    from neuralloop_books.models.anthropic import FALLBACK_MODELS, adaptive_thinking
+
+    assert not adaptive_thinking(model)
+    assert model not in FALLBACK_MODELS
+
+
+@pytest.mark.parametrize(
+    ("model", "cap"),
+    [
+        ("claude-opus-4-1", 32_000),
+        ("claude-opus-4-1-20250805", 32_000),
+        ("claude-opus-4-0", 32_000),
+        ("claude-opus-4-20250514", 32_000),
+        ("claude-3-5-haiku-latest", 8_192),
+        ("claude-3-opus-20240229", 4_096),
+        ("claude-opus-5-5", 64_000),
+        ("claude-sonnet-4-5", 64_000),
+        ("claude-next", 64_000),
+    ],
+)
+def test_claude_asks_for_no_more_output_than_the_model_allows(model, cap):
+    from neuralloop_books.models.anthropic import max_output_tokens
+
+    assert max_output_tokens(model) == cap
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "cap"),
+    [
+        ("openai", "gpt-4o", 16_384),
+        ("openai", "gpt-4o-mini", 16_384),
+        ("openai", "gpt-4o-2024-08-06", 16_384),
+        ("openai", "gpt-4-turbo", 4_096),
+        ("openai", "gpt-4", 8_192),
+        ("openai", "gpt-3.5-turbo", 4_096),
+        ("openai", "gpt-4.1", 32_768),
+        ("openai", "gpt-5.5", 32_768),
+        ("openrouter", "openai/gpt-4-turbo", 4_096),
+        ("openrouter", "openai/gpt-4o", 8_192),
+        ("custom", "qwen/qwen3-8b", 8_192),
+    ],
+)
+def test_openai_compatible_asks_for_no_more_output_than_the_model_allows(provider, model, cap):
+    from neuralloop_books.models.openai_compat import OpenAICompatModel
+
+    url = "http://localhost:1234/v1" if provider == "custom" else None
+    request = OpenAICompatModel(provider, model, api_key="k", base_url=url)._request("quiz", None, False)
+    assert max(request.values()) == cap
+
+
+@pytest.mark.parametrize(
+    ("message", "cap"),
+    [
+        (
+            "max_tokens is too large: 32768. This model supports at most 16384 completion tokens, "
+            "whereas you provided 32768.",
+            16_384,
+        ),
+        (
+            "max_tokens: 64000 > 32000, which is the maximum allowed number of output tokens for "
+            "claude-opus-4-1-20250805",
+            32_000,
+        ),
+        ("max_tokens must be less than or equal to `4096`", 4_096),
+        ("'max_tokens' is too large for this model", 32_000),  # no number: half of what was asked
+        ("you must provide a model parameter", None),
+        ("This model's maximum context length is 8192 tokens. Please reduce the length.", None),
+    ],
+)
+def test_a_too_large_output_limit_is_read_from_the_error(message, cap):
+    from neuralloop_books.models import output_cap_from_error
+
+    assert output_cap_from_error(message, asked=64_000) == cap

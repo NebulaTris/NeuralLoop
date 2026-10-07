@@ -65,6 +65,32 @@ def safe_message(text: object, limit: int = 200, env: Mapping[str, str] | None =
     return _KEY_SHAPES.sub("[key hidden]", line)[:limit]
 
 
+_TOKEN_PARAMETER = re.compile(r"max_(?:completion_|output_)?tokens", re.IGNORECASE)
+_STATED_CAP = (
+    re.compile(r"at most `?(\d+)`? (?:completion |output )?tokens", re.IGNORECASE),  # OpenAI
+    re.compile(r"> ?(\d+), which is the maximum", re.IGNORECASE),  # Anthropic
+    re.compile(
+        r"(?:less than or equal to|<=|at most|maximum (?:value |allowed )?is) ?`?(\d+)", re.IGNORECASE
+    ),
+)
+_TOO_LARGE = re.compile(r"too large|too many|exceed|maximum|greater than|must be less", re.IGNORECASE)
+MIN_OUTPUT_CAP = 1_024
+
+
+def output_cap_from_error(message: str, asked: int) -> int | None:
+    """When a service refuses a request because it asked for more output tokens than the model allows, the
+    limit to ask for instead: the one the message states, or half of what was asked when it states none.
+    None when the refusal is about something else (an input too long for the model is not fixed by this)."""
+    text = str(message)
+    if not _TOKEN_PARAMETER.search(text) or not _TOO_LARGE.search(text):
+        return None
+    for pattern in _STATED_CAP:
+        match = pattern.search(text)
+        if match and 0 < int(match.group(1)) < asked:
+            return int(match.group(1))
+    return asked // 2 if asked // 2 >= MIN_OUTPUT_CAP else None
+
+
 # What an agent's command line (opencode, Hermes) needs from our environment to start and reach its own
 # service; everything else, above all the keys for our other providers, stays with us.
 _AGENT_ENV = (
