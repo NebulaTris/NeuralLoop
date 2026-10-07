@@ -16,7 +16,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// Brings NeuralLoop's library window to the front, opening one if it was closed.
     func showLibrary() {
         NSApp.activate(ignoringOtherApps: true)
-        if let main = NSApp.windows.first(where: { $0.identifier?.rawValue.hasPrefix("main") == true && $0.canBecomeMain }) {
+        if NSApp.isHidden { NSApp.unhide(nil) }  // a hidden app's windows aren't visible, yet they're still open
+        // Only a window that's still open (on screen or in the Dock): SwiftUI keeps closed ones in NSApp.windows.
+        if let main = NSApp.windows.first(where: {
+            $0.identifier?.rawValue.hasPrefix("main") == true && $0.canBecomeMain && ($0.isVisible || $0.isMiniaturized)
+        }) {
             if main.isMiniaturized { main.deminiaturize(nil) }
             main.makeKeyAndOrderFront(nil)
         } else {
