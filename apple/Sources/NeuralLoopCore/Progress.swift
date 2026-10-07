@@ -158,6 +158,70 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     }
 }
 
+/// This device's study time already counted under an id it gave up after a clash. A clash means the device was
+/// copied (Migration Assistant, a restored backup): both copies carry the history up to the copy, and the old id's
+/// file, which the other copy keeps writing, counts it. So this device's own progress.json still holds its whole log,
+/// but under its new id only the time beyond this goes up, and merging here takes this much off its own log.
+/// Kept per book in `.counted-elsewhere.json` (a dot file: never synced).
+public struct CountedElsewhere: Codable, Equatable, Sendable {
+    public var log: [String: Double] = [:]   // local day -> seconds already counted under `ids`
+    public var ids: [String] = []            // the ids given up whose time is in `log` (each added once)
+
+    public static let fileName = ".counted-elsewhere.json"
+
+    public init(log: [String: Double] = [:], ids: [String] = []) { (self.log, self.ids) = (log, ids) }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        log = ((try? c.decodeIfPresent([String: Lossy<Double>].self, forKey: .log)) ?? nil)?.compactMapValues(\.value) ?? [:]
+        ids = ((try? c.decodeIfPresent([String].self, forKey: .ids)) ?? nil) ?? []
+    }
+
+    public static func load(from folder: URL) -> CountedElsewhere? {
+        (try? Data(contentsOf: folder.appendingPathComponent(fileName))).flatMap { try? JSONDecoder().decode(Self.self, from: $0) }
+    }
+
+    public func save(to folder: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(self) else { return }
+        try? data.write(to: folder.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+
+    /// The time under `id` (just given up) joins what's counted elsewhere: `sent` is the log last sent under it (which
+    /// already left out what was counted elsewhere before). An id already added changes nothing.
+    public mutating func add(id: String, sent: [String: Double]) {
+        guard !ids.contains(id) else { return }
+        ids.append(id)
+        for (day, seconds) in sent where seconds > 0 { log[day, default: 0] += seconds }
+    }
+
+    /// This device's log beyond what's counted elsewhere (days with nothing left are left out).
+    public func beyond(_ own: [String: Double]) -> [String: Double] {
+        own.reduce(into: [:]) { out, entry in
+            let left = entry.value - (log[entry.key] ?? 0)
+            if left > 0 { out[entry.key] = left }
+        }
+    }
+
+    /// What merging takes off this device's own log: never more than the own log holds that day (as negative time).
+    public func correction(own: [String: Double]) -> [String: Double] {
+        log.reduce(into: [:]) { out, entry in
+            let off = min(entry.value, own[entry.key] ?? 0)
+            if off > 0 { out[entry.key] = -off }
+        }
+    }
+
+    /// This device's progress.json as it goes up under its new id: the same, with only the time beyond what's counted
+    /// elsewhere in its log (every other field as it is, even ones this version doesn't know). Nil if it isn't JSON.
+    public func uploadable(_ data: Data) -> Data? {
+        guard var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let progress = try? JSONDecoder().decode(StudyProgress.self, from: data) else { return nil }
+        object["log"] = beyond(progress.log).mapValues { $0.rounded() == $0 && abs($0) < 1e15 ? NSNumber(value: Int64($0)) : NSNumber(value: $0) }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+    }
+}
+
 /// The study site writes `true` for closedShown and timestamps for steps; accept both as numbers.
 struct FlexibleNumber: Decodable {
     let value: Double
@@ -194,12 +258,22 @@ public enum ProgressFile {
         return (own, others.isEmpty ? own : StudyProgress.merged([own] + others))
     }
 
-    /// Every other device's progress for this book (their files, downloaded by sync, in `devices/<id>.json`).
+    /// Every other device's progress for this book (their files, downloaded by sync, in `devices/<id>.json`). When
+    /// some of this device's study time is already counted under an id it gave up (`CountedElsewhere`), one more entry
+    /// takes that time back off, so merging counts it once.
     public static func others(in folder: URL) -> [StudyProgress] {
         let devices = folder.appendingPathComponent("devices", isDirectory: true)
-        return ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [])
+        var all = ((try? FileManager.default.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }
             .compactMap { (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) } }
+        if let counted = CountedElsewhere.load(from: folder) {
+            let own = (try? Data(contentsOf: folder.appendingPathComponent("progress.json")))
+                .flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) }?.log ?? [:]
+            var correction = StudyProgress()
+            correction.log = counted.correction(own: own)
+            if !correction.log.isEmpty { all.append(correction) }
+        }
+        return all
     }
 
     /// A cheap fingerprint of the other devices' progress files (names, sizes, modification times): when it changes,

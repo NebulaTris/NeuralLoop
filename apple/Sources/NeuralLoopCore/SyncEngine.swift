@@ -34,6 +34,8 @@ public struct SyncReport: Equatable, Sendable {
     public var removedElsewhere: [String] = []
     /// Another device writes this device's progress files (they share an id): nothing was uploaded; take a new id.
     public var deviceClash = false
+    /// Other devices' progress copies here whose file has left the Drive (that id is gone): removed, so they stop counting.
+    public var forgotten = 0
     /// Every device signed in to this library, this one first, then by name.
     public var devices: [DeviceInfo] = []
     public var problems: [String] = []
@@ -128,41 +130,91 @@ struct SyncState: Codable {
     struct Attempt: Codable { var count: Int; var last: Double }
     var hashes: [String: Hash] = [:]
     var taken: Set<String> = []   // Mac: inbox paths already turned into books
+    // What follows, down to `dropInboxBefore`, is about one Google account's Drive (`account`); see `Records`.
     var sent: Set<String> = []    // pad: inbox paths uploaded
-    var removed: Set<String> = []          // books removed on any device (never synced again)
+    var removed: Set<String> = []          // books removed (here or on another device) in this account's library
     var removeFromDrive: Set<String> = []  // removed here, still to be taken out of the Drive
     var uploaded: [String: String] = [:]   // our own progress paths → the md5 we last saw there (ours)
     var attempted: [String: [String]] = [:]  // … → md5s sent there whose answer never came back (the last few)
+    var sentLogs: [String: [String: [String: Double]]] = [:]  // … → md5 (uploaded or attempted) → the study log in it
     var retired: [String: [String]] = [:]  // progress paths under an id we gave up → the md5s we wrote there
-    var account: String?                   // the Google account the three above belong to (a hash, never the address)
-    var accounts: [String: Records] = [:]  // … and other accounts' (signing in to one and back keeps each its own)
-    var untitled: Set<String> = []         // Mac: inbox books seen once without their sidecar (taken untitled next time)
-    var tries: [String: Attempt] = [:]     // Mac: inbox book paths that couldn't be prepared yet
     var dropInbox: Set<String> = []        // inbox paths to take out of the Drive ("Remove all books")
     var dropInboxBefore: Double?           // … and every inbox upload older than this (Unix ms)
+    var account: String?                   // the Google account the records above belong to (a hash, never the address)
+    var accounts: [String: Records] = [:]  // … and other accounts' (signing in to one and back keeps each its own)
+    var removedEver: Set<String> = []      // books removed under any account (their ids are never reused here)
+    var clashed: Set<String> = []          // ids given up after a clash: their files stay (the other copy's), never retired
+    var untitled: Set<String> = []         // Mac: inbox books seen once without their sidecar (taken untitled next time)
+    var tries: [String: Attempt] = [:]     // Mac: inbox book paths that couldn't be prepared yet
     var noteAt: Double?                    // when this device last wrote its note (Unix ms)
     var noteName: String?                  // … the name in it
     var noteDevice: String?                // … and the id it went up under (another id: never written)
     var notes: [String: Note] = [:]        // other devices' notes, by device id (re-read when their md5 changes)
     struct Note: Codable { var md5: String; var info: DeviceInfo }
+    /// One account's records: what this device sent there and what it still means to do there.
     struct Records: Codable {
         var uploaded: [String: String] = [:]
         var attempted: [String: [String]] = [:]
         var retired: [String: [String]] = [:]
+        var sentLogs: [String: [String: [String: Double]]] = [:]
+        var removed: Set<String> = []
+        var removeFromDrive: Set<String> = []
+        var sent: Set<String> = []
+        var dropInbox: Set<String> = []
+        var dropInboxBefore: Double?
+
+        init() {}
+        init(from decoder: Decoder) throws {  // records saved before the newer fields lack them
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            uploaded = (try? c.decode([String: String].self, forKey: .uploaded)) ?? [:]
+            attempted = (try? c.decode([String: [String]].self, forKey: .attempted)) ?? [:]
+            retired = (try? c.decode([String: [String]].self, forKey: .retired)) ?? [:]
+            sentLogs = (try? c.decode([String: [String: [String: Double]]].self, forKey: .sentLogs)) ?? [:]
+            removed = (try? c.decode(Set<String>.self, forKey: .removed)) ?? []
+            removeFromDrive = (try? c.decode(Set<String>.self, forKey: .removeFromDrive)) ?? []
+            sent = (try? c.decode(Set<String>.self, forKey: .sent)) ?? []
+            dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
+            dropInboxBefore = try? c.decode(Double.self, forKey: .dropInboxBefore)
+        }
     }
 
-    /// Signed in to `account` (nil: not known, nothing changes): what we know about our own progress files belongs to
-    /// one account's Drive, so another account's is put aside and this one's brought back. Records from before
-    /// accounts were noted belong to the first account seen.
+    /// The signed-in account's records.
+    var records: Records {
+        get {
+            var r = Records()
+            (r.uploaded, r.attempted, r.retired, r.sentLogs) = (uploaded, attempted, retired, sentLogs)
+            (r.removed, r.removeFromDrive, r.sent, r.dropInbox, r.dropInboxBefore) = (removed, removeFromDrive, sent, dropInbox, dropInboxBefore)
+            return r
+        }
+        set {
+            (uploaded, attempted, retired, sentLogs) = (newValue.uploaded, newValue.attempted, newValue.retired, newValue.sentLogs)
+            (removed, removeFromDrive, sent, dropInbox, dropInboxBefore)
+                = (newValue.removed, newValue.removeFromDrive, newValue.sent, newValue.dropInbox, newValue.dropInboxBefore)
+        }
+    }
+
+    /// Signed in to `account` (nil: not known, nothing changes): what we know about our own progress files, removed
+    /// books, and inbox uploads belongs to one account's Drive, so another account's is put aside and this one's
+    /// brought back. Records from before accounts were noted belong to the first account seen.
     mutating func use(account email: String?, device: String) {
         guard let email, !email.isEmpty else { return }
         let key = Self.accountKey(email)
         guard key != account else { return }
-        let current = Records(uploaded: uploaded, attempted: attempted, retired: retired)
+        let current = records
         if let account { accounts[account] = current }
-        let next = accounts.removeValue(forKey: key) ?? (account == nil ? current : Records())
-        (uploaded, attempted, retired, account) = (next.uploaded, next.attempted, next.retired, key)
+        records = accounts.removeValue(forKey: key) ?? (account == nil ? current : Records())
+        account = key
         retireOtherIDs(keeping: device)
+    }
+
+    /// Inbox paths sent to any account (a pad never sends one book to a second account's Mac too).
+    var sentAnywhere: Set<String> { accounts.values.reduce(sent) { $0.union($1.sent) } }
+
+    /// What we sent to our own progress file changed: logs are kept only for md5s still known to be ours there.
+    mutating func pruneLogs(_ path: String) {
+        let known = Set((attempted[path] ?? []) + (uploaded[path].map { [$0] } ?? []))
+        sentLogs[path] = sentLogs[path]?.filter { known.contains($0.key) }
+        if sentLogs[path]?.isEmpty == true { sentLogs[path] = nil }
     }
 
     /// An address names one account however it's typed; only a hash of it is kept on disk.
@@ -171,15 +223,18 @@ struct SyncState: Codable {
             .prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Progress we sent under any id but `device` (one we gave up after a clash) is remembered as retired: ours, so it
-    /// leaves the Drive and is never counted as another device's.
+    /// Progress we sent under any id but `device` is remembered as retired: ours, so it leaves the Drive and is never
+    /// counted as another device's. Except under an id given up after a clash: that id's files are the other copy's
+    /// too (they carry the history both share, counted there once, `CountedElsewhere`), so they stay.
     mutating func retireOtherIDs(keeping device: String) {
         let sent = uploaded.mapValues { [$0] }.merging(attempted) { $0 + $1 }
-        for (path, md5s) in sent where SyncLayout.progressDevice(path).map({ $0 != device }) ?? false {
+        for (path, md5s) in sent {
+            guard let owner = SyncLayout.progressDevice(path), owner != device, !clashed.contains(owner) else { continue }
             retired[path] = Array(Set((retired[path] ?? []) + md5s)).sorted()
         }
         uploaded = uploaded.filter { SyncLayout.progressDevice($0.key) == device }
         attempted = attempted.filter { SyncLayout.progressDevice($0.key) == device }
+        sentLogs = sentLogs.filter { SyncLayout.progressDevice($0.key) == device }
         retired = retired.filter { SyncLayout.progressDevice($0.key).map { $0 != device } ?? false }
     }
 
@@ -194,8 +249,12 @@ struct SyncState: Codable {
         uploaded = (try? c.decode([String: String].self, forKey: .uploaded)) ?? [:]
         attempted = (try? c.decode([String: [String]].self, forKey: .attempted)) ?? [:]
         retired = (try? c.decode([String: [String]].self, forKey: .retired)) ?? [:]
+        sentLogs = (try? c.decode([String: [String: [String: Double]]].self, forKey: .sentLogs)) ?? [:]
         account = try? c.decode(String.self, forKey: .account)
         accounts = (try? c.decode([String: Records].self, forKey: .accounts)) ?? [:]
+        removedEver = (try? c.decode(Set<String>.self, forKey: .removedEver))
+            ?? accounts.values.reduce(removed) { $0.union($1.removed) }
+        clashed = (try? c.decode(Set<String>.self, forKey: .clashed)) ?? []
         untitled = (try? c.decode(Set<String>.self, forKey: .untitled)) ?? []
         tries = (try? c.decode([String: Attempt].self, forKey: .tries)) ?? [:]
         dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
@@ -237,7 +296,7 @@ public actor SyncEngine {
     }
 
     /// Books removed on any device, as last saved here (readable before signing in, so removed ids are never reused).
-    public static func removedBooks(savedIn root: URL) -> Set<String> { SyncState.load(root).removed }
+    public static func removedBooks(savedIn root: URL) -> Set<String> { SyncState.load(root).removedEver }
 
     /// The Mac has made a book from an inbox upload: remember it, so the upload (and its sidecar) leave the Drive.
     public func markTaken(_ bookFile: URL) {
@@ -258,13 +317,16 @@ public actor SyncEngine {
         save()
     }
 
-    /// Books removed on any device (so a new book never reuses one of their ids).
-    public var removedBooks: Set<String> { state.removed }
+    /// Books removed on any device, under any account (so a new book never reuses one of their ids).
+    public var removedBooks: Set<String> { state.removedEver }
 
     /// The person removed a book on this device: it leaves the Drive on the next sync, and every other device drops it.
+    /// (The Drive of the account signed in now: another account's library, which may hold a book with the same id,
+    /// is never touched.)
     public func remove(book id: String) {
         guard BookID.isValid(id) else { return }
         state.removed.insert(id)
+        state.removedEver.insert(id)
         state.removeFromDrive.insert(id)
         save()
     }
@@ -288,9 +350,13 @@ public actor SyncEngine {
         await settleRetired(&remote, report: &report)
         let local = scan()
         let localByPath = Dictionary(local.map { ($0.path, $0.md5) }, uniquingKeysWith: { a, _ in a })
-        // Someone else writes our progress files (a copied device id): touch nothing, so we never overwrite theirs.
-        if DeviceClash.found(remote: remote, device: device, lastUploaded: state.uploaded, attempted: state.attempted, local: localByPath) {
+        // Someone else writes our progress files (a copied device id): touch nothing, so we never overwrite theirs. Only
+        // the copy of each file the plan keeps (the newest) counts: an older duplicate of our own file (a listing that
+        // lagged, so it was created twice) is tidied away, not taken for another device.
+        let kept = SyncPlan.deduplicated(remote).kept
+        if DeviceClash.found(remote: kept, device: device, lastUploaded: state.uploaded, attempted: state.attempted, local: localByPath) {
             report.deviceClash = true
+            recordClash(remote: kept)
             save()
             return report
         }
@@ -306,7 +372,9 @@ public actor SyncEngine {
                 state.removeFromDrive.remove(id)
             } catch { report.problems.append("removing \(id): \(error.localizedDescription)") }
         }
-        state.removed.formUnion(remote.compactMap { SyncLayout.removedBook($0.path) })
+        let markers = remote.compactMap { SyncLayout.removedBook($0.path) }
+        state.removed.formUnion(markers)
+        state.removedEver.formUnion(markers)
         // Whatever is left of a removed book (from a device that was offline, say) leaves the Drive, whoever sees it.
         var gone = Set<String>()
         for file in remote where SyncLayout.book(file.path).map(state.removed.contains) ?? false {
@@ -340,23 +408,39 @@ public actor SyncEngine {
             && (localByPath[file.path] == file.md5 || (state.attempted[file.path] ?? []).contains(file.md5)) {
             state.uploaded[file.path] = file.md5
             state.attempted[file.path] = nil
+            state.pruneLogs(file.path)
         }
-        // A pad never re-sends an inbox book it already sent (once it's gone from the Drive, the Mac has it).
-        let settled = role == .mac ? state.taken : state.sent
+        // A pad never re-sends an inbox book it already sent, to this account or another (once it's gone from this
+        // account's Drive, its Mac has it).
+        let settled = role == .mac ? state.taken : state.sentAnywhere
         let plan = SyncPlan.make(local: local, remote: remote, device: device, role: role, wantedMedia: wantedMedia,
                                  takenInbox: settled, removed: state.removed)
+        var untitled = Set<String>()  // inbox sidecars that couldn't go up: their books wait (never sent without a title)
         for file in plan.uploads {
             var snapshot: URL?
             defer { if let snapshot { try? FileManager.default.removeItem(at: snapshot) } }
+            if SyncLayout.isInbox(file.path), !file.path.hasSuffix(".json"),
+               untitled.contains(String(file.path[..<(file.path.lastIndex(of: ".") ?? file.path.endIndex)]) + ".json") { continue }
             do {
                 guard var source = localURL(file.path) else { continue }
                 if SyncLayout.progressDevice(file.path) == device {
                     // What's sent is noted (and saved) before it goes, from a copy that a study tick can't change on the
-                    // way: if the answer never comes back, the Drive's copy is still known to be ours.
+                    // way: if the answer never comes back, the Drive's copy is still known to be ours. With time counted
+                    // under an id given up, only the time beyond it goes (`CountedElsewhere`).
                     let copy = root.appendingPathComponent(".sending-\(UUID().uuidString).json")
-                    try FileManager.default.copyItem(at: source, to: copy)
+                    if let counted = SyncLayout.book(file.path).flatMap({ CountedElsewhere.load(from: books.appendingPathComponent($0)) }),
+                       let adjusted = counted.uploadable(try Data(contentsOf: source)) {
+                        try adjusted.write(to: copy)
+                    } else {
+                        try FileManager.default.copyItem(at: source, to: copy)
+                    }
                     (snapshot, source) = (copy, copy)
-                    state.attempted[file.path] = SentProgress.remembered(state.attempted[file.path] ?? [], adding: try FileHash.md5(of: copy))
+                    let md5 = try FileHash.md5(of: copy)
+                    state.attempted[file.path] = SentProgress.remembered(state.attempted[file.path] ?? [], adding: md5)
+                    if let log = (try? JSONDecoder().decode(StudyProgress.self, from: Data(contentsOf: copy)))?.log {
+                        state.sentLogs[file.path, default: [:]][md5] = log
+                    }
+                    state.pruneLogs(file.path)
                     save()
                 }
                 let stored: SyncFile
@@ -370,8 +454,12 @@ public actor SyncEngine {
                 if SyncLayout.progressDevice(file.path) == device {
                     state.uploaded[file.path] = stored.md5.isEmpty ? state.attempted[file.path]?.last ?? file.md5 : stored.md5
                     state.attempted[file.path] = nil
+                    state.pruneLogs(file.path)
                 }
-            } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
+            } catch {
+                if SyncLayout.isInbox(file.path), file.path.hasSuffix(".json") { untitled.insert(file.path) }
+                report.problems.append("\(file.path): \(error.localizedDescription)")
+            }
         }
         for file in plan.downloads {
             do {
@@ -380,6 +468,16 @@ public actor SyncEngine {
                 report.downloaded += 1
                 report.bytes += file.size
                 remember(file.path, destination, md5: file.md5)
+            } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
+        }
+        // Another device's progress whose file has left the Drive (that device took a new id, say) stops counting here:
+        // the whole listing came back, so a file missing from it is really gone.
+        let listed = Set(remote.map(\.path))
+        for file in local where !listed.contains(file.path) && !(SyncLayout.book(file.path).map(state.removed.contains) ?? false) {
+            guard let owner = SyncLayout.progressDevice(file.path), owner != device, let url = localURL(file.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+                report.forgotten += 1
             } catch { report.problems.append("\(file.path): \(error.localizedDescription)") }
         }
         var undeleted = Set<String>()
@@ -519,6 +617,35 @@ public actor SyncEngine {
         }
     }
 
+    /// Another device writes this id's progress: this device was copied (both copies carry the history up to the copy,
+    /// and the other one keeps writing this id's files, which count it). Before this device takes a new id, what it
+    /// sent under this one is noted per book as counted elsewhere, so under its new id only time beyond that counts.
+    /// That's the log in the copy of ours the Drive still holds (a book the other copy hasn't touched since), else the
+    /// log we last sent here (the other copy's file started from at least that); a send from before logs were kept
+    /// counts all of this device's time so far. A clash found again for the same id adds nothing.
+    private func recordClash(remote: [SyncFile]) {
+        let there = Dictionary(remote.map { ($0.path, $0.md5) }, uniquingKeysWith: { a, _ in a })
+        for folder in (try? FileManager.default.contentsOfDirectory(at: books, includingPropertiesForKeys: nil)) ?? []
+        where BookID.isValid(folder.lastPathComponent) {
+            let path = SyncLayout.progressPath(book: folder.lastPathComponent, device: device)
+            let logs = state.sentLogs[path] ?? [:]
+            var counted = CountedElsewhere.load(from: folder) ?? CountedElsewhere()
+            guard !counted.ids.contains(device) else { continue }
+            let sent: [String: Double]
+            if let md5 = there[path], let log = logs[md5] { sent = log }
+            else if let md5 = state.uploaded[path], let log = logs[md5] { sent = log }
+            else if state.uploaded[path] == nil, state.attempted[path] == nil { sent = [:] }  // never sent under this id
+            else {
+                let own = (try? Data(contentsOf: folder.appendingPathComponent("progress.json")))
+                    .flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) }?.log ?? [:]
+                sent = counted.beyond(own)
+            }
+            counted.add(id: device, sent: sent)
+            counted.save(to: folder)
+        }
+        state.clashed.insert(device)
+    }
+
     /// Deleting something that's already gone is fine (another device got there first).
     private func deleteRemote(_ file: SyncFile) async throws {
         do { try await store.delete(file) } catch DriveError.http(404, _) {}
@@ -568,7 +695,12 @@ public actor SyncEngine {
             let id = folder.lastPathComponent
             guard BookID.isValid(id) else { continue }
             let own = folder.appendingPathComponent("progress.json")
-            if let file = hashed(own, as: SyncLayout.progressPath(book: id, device: device)) { files.append(file) }
+            let ownPath = SyncLayout.progressPath(book: id, device: device)
+            // With time counted under an id given up, what goes up (and is compared) is the file without it.
+            if let counted = CountedElsewhere.load(from: folder), let data = try? Data(contentsOf: own),
+               let adjusted = counted.uploadable(data) {
+                files.append(SyncFile(path: ownPath, md5: FileHash.md5(adjusted), size: Int64(adjusted.count)))
+            } else if let file = hashed(own, as: ownPath) { files.append(file) }
             let devices = folder.appendingPathComponent("devices", isDirectory: true)
             for other in (try? fm.contentsOfDirectory(at: devices, includingPropertiesForKeys: nil)) ?? [] where other.pathExtension == "json" {
                 let name = other.deletingPathExtension().lastPathComponent

@@ -189,10 +189,10 @@ final class DriveSync {
             lastSync = Date()
             if !report.devices.isEmpty, account.isSignedIn || Self.fakeDrive != nil { devices = DeviceInfo.unique(report.devices) }
             problem = report.problems.first
-            if report.downloaded > 0 {
-                NotificationCenter.default.post(name: BookSession.progressArrived, object: nil)  // open books merge it in
+            if report.downloaded > 0 || report.forgotten > 0 {
+                NotificationCenter.default.post(name: BookSession.progressArrived, object: nil)  // open books merge again
             }
-            if report.downloaded > 0 || !report.arrived.isEmpty || !report.removedElsewhere.isEmpty { onChanged() }
+            if report.downloaded > 0 || report.forgotten > 0 || !report.arrived.isEmpty || !report.removedElsewhere.isEmpty { onChanged() }
         } catch {
             problem = error.localizedDescription
         }

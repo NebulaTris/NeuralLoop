@@ -177,3 +177,28 @@ func progress(_ json: String) throws -> StudyProgress {
     try Data("x".utf8).write(to: folder.appendingPathComponent("devices/notes.txt"))
     #expect(ProgressFile.devicesSignature(in: folder) == after)
 }
+
+@Test func timeCountedUnderAnIDGivenUpIsLeftOutOfWhatGoesUpAndCountedOnceHere() throws {
+    var counted = CountedElsewhere()
+    counted.add(id: "mac1", sent: ["d1": 100, "d2": 10])
+    counted.add(id: "mac1", sent: ["d1": 999])  // the same id again: nothing more
+    #expect(counted.log == ["d1": 100, "d2": 10] && counted.ids == ["mac1"])
+    #expect(counted.beyond(["d1": 100, "d2": 25, "d3": 5]) == ["d2": 15, "d3": 5])
+    #expect(counted.correction(own: ["d1": 100, "d2": 4]) == ["d1": -100, "d2": -4])  // never more than the own log
+    // What goes up keeps every other field, even ones this version doesn't know, and whole seconds stay whole.
+    let up = try #require(counted.uploadable(Data(#"{"log":{"d1":100,"d2":25.5},"future":{"x":1},"mapSeen":[1]}"#.utf8)))
+    let object = try #require(try JSONSerialization.jsonObject(with: up) as? [String: Any])
+    #expect((object["future"] as? [String: Int]) == ["x": 1] && (object["mapSeen"] as? [Int]) == [1])
+    #expect(String(decoding: up, as: UTF8.self).contains(#""log":{"d2":15.5}"#))
+    #expect(counted.uploadable(Data("not json".utf8)) == nil)
+    // Merged here: own 125.5 + the old id's 100 (still in the Drive) − 100 counted there = 125.5.
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nl-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder.appendingPathComponent("devices"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try Data(#"{"log":{"d1":100,"d2":25.5}}"#.utf8).write(to: folder.appendingPathComponent("progress.json"))
+    try Data(#"{"log":{"d1":100}}"#.utf8).write(to: folder.appendingPathComponent("devices/mac1.json"))
+    counted.save(to: folder)
+    #expect(CountedElsewhere.load(from: folder) == counted)
+    #expect(ProgressFile.loadMerged(from: folder).merged.log == ["d1": 100, "d2": 15.5])
+    #expect(SyncLayout.isPrivate(CountedElsewhere.fileName))  // never synced
+}

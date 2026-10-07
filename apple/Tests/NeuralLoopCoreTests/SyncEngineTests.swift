@@ -223,7 +223,9 @@ private struct StaleListing: DriveStore {
     #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":2}}"#.utf8))
     let fresh = try await SyncEngine(root: b, device: "mac-2", role: .mac, store: drive).sync()
     #expect(!fresh.deviceClash && read(b, "books/mcp/devices/mac1.json") == #"{"log":{"d":2}}"#)
-    #expect(await drive.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d":3}}"#.utf8))
+    // Only study time beyond what was already counted under mac1 (d:1, shared by both copies) goes up as mac-2.
+    #expect(await drive.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d":2}}"#.utf8))
+    #expect(studied(b, "mcp") == 4)  // 1 before the copy, then 1 on the original and 2 on the copy
 }
 
 @Test func inboxBooksNotYetTakenAreOfferedAgainWithBackoff() async throws {
@@ -696,17 +698,22 @@ private actor TwoAccounts: DriveStore {
     #expect(try await SyncEngine(root: b, device: "mac1", role: .mac, store: drive).sync().deviceClash)
     let copy = SyncEngine(root: b, device: "mac-2", role: .mac, store: drive)
     _ = try await copy.sync()
-    // The other Mac's file stays and is counted; the one only we wrote leaves the Drive.
+    // The old id's files stay and are counted (they carry the history both copies share, plus the other Mac's own
+    // time); this copy counts only what it studies beyond that. (Changed on purpose: before, the file only we had
+    // written left the Drive, and once the other Mac sent it again the shared history was counted under both ids.)
     #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":2}}"#.utf8))
     #expect(read(b, "books/mcp/devices/mac1.json") == #"{"log":{"d":2}}"#)
-    #expect(await drive.data(at: "books/other/progress/mac1.json") == nil && read(b, "books/other/devices/mac1.json") == nil)
-    // The other Mac sends it again: now it's theirs, comes down here, and stays in the Drive.
+    #expect(await drive.data(at: "books/other/progress/mac1.json") == Data(#"{"log":{"o":1}}"#.utf8))
+    #expect(read(b, "books/other/devices/mac1.json") == #"{"log":{"o":1}}"#)
     let original = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
     #expect(!original.deviceClash)
     _ = try await copy.sync()
     _ = try await copy.sync()
     #expect(await drive.data(at: "books/other/progress/mac1.json") == Data(#"{"log":{"o":1}}"#.utf8))
     #expect(read(b, "books/other/devices/mac1.json") == #"{"log":{"o":1}}"#)
+    // 1 before the copy, then 1 more on the original and 2 more on the copy: the shared part is never counted twice.
+    #expect(studied(b, "other") == 1 && studied(a, "other") == 1)
+    #expect(studied(b, "mcp") == 4 && studied(a, "mcp") == 4)
 }
 
 @Test func anInboxBookWaitsOneSyncForItsTitleThenGoesAhead() async throws {
@@ -721,4 +728,220 @@ private actor TwoAccounts: DriveStore {
     let second = try await macSync.sync()
     #expect(second.arrived.map(\.lastPathComponent) == ["u1.pdf", "u2.pdf"])
     #expect(read(mac, "inbox/u2.json") == #"{"title":"Clean Code"}"#)
+}
+
+// MARK: review fixes: forgotten devices, copied devices, lagging lists, accounts, titles
+
+@Test func aThirdDeviceForgetsAProgressFileThatLeftTheDrive() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot(), pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac); try? FileManager.default.removeItem(at: pad) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    try write(#"{"log":{"2026-09-29":215}}"#, mac, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync()
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    #expect(read(pad, "books/mcp/devices/mac1.json") != nil)
+    // The Mac moves to a new id (its old id's file leaves the Drive): the iPad lets go of its copy too.
+    _ = try await SyncEngine(root: mac, device: "mac-2", role: .mac, store: drive).sync()
+    let report = try await padSync.sync()
+    #expect(read(pad, "books/mcp/devices/mac1.json") == nil && report.forgotten == 1)
+    #expect(read(pad, "books/mcp/devices/mac-2.json") != nil)
+    #expect(studied(pad, "mcp") == 215)
+}
+
+/// A Mac copied onto another (Migration Assistant, a restored backup): both carry the same history and the same id.
+/// Whichever syncs second after the copy finds the clash and takes a new id. Every device must count the shared
+/// history once, each copy's own time after the copy once, and a book neither touched since just as before.
+private func copiedMacScenario(copySyncsFirst: Bool) async throws {
+    let drive = MemoryDrive()
+    let a = try temporaryRoot(), b = try temporaryRoot(), pad = try temporaryRoot()
+    defer { for url in [a, b, pad] { try? FileManager.default.removeItem(at: url) } }
+    try write(#"{"title":"MCP"}"#, a, "books/mcp/book.json")
+    try write(#"{"title":"Other"}"#, a, "books/other/book.json")
+    try write(#"{"log":{"d1":100}}"#, a, "books/mcp/progress.json")
+    try write(#"{"log":{"d1":30}}"#, a, "books/other/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: drive).sync()
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)  // the copy: same files, same sync state, same id
+    // After the copy each studies MCP; neither touches the other book.
+    try write(#"{"log":{"d1":100,"d2":10}}"#, a, "books/mcp/progress.json")
+    try write(#"{"log":{"d1":100,"d2":20}}"#, b, "books/mcp/progress.json")
+    let (first, second) = copySyncsFirst ? (b, a) : (a, b)
+    #expect(try await !SyncEngine(root: first, device: "mac1", role: .mac, store: drive).sync().deviceClash)
+    #expect(try await SyncEngine(root: second, device: "mac1", role: .mac, store: drive).sync().deviceClash)
+    // The app quit before taking its new id: the clash is found again, and nothing is counted twice for it.
+    #expect(try await SyncEngine(root: second, device: "mac1", role: .mac, store: drive).sync().deviceClash)
+    let renamed = SyncEngine(root: second, device: "mac-2", role: .mac, store: drive)
+    #expect(try await !renamed.sync().deviceClash)
+    _ = try await SyncEngine(root: first, device: "mac1", role: .mac, store: drive).sync()
+    _ = try await renamed.sync()
+    _ = try await padSync.sync()
+    for root in [a, b, pad] {
+        #expect(studied(root, "mcp") == 130)
+        #expect(studied(root, "other") == 30)
+    }
+    // The renamed copy keeps studying: its new time counts everywhere, once.
+    let before = copySyncsFirst ? 10 : 20  // what the renamed one had studied on d2
+    try write(#"{"log":{"d1":100,"d2":\#(before),"d3":5}}"#, second, "books/mcp/progress.json")
+    _ = try await renamed.sync()
+    _ = try await SyncEngine(root: first, device: "mac1", role: .mac, store: drive).sync()
+    _ = try await padSync.sync()
+    for root in [a, b, pad] { #expect(studied(root, "mcp") == 135) }
+}
+
+@Test func aCopiedMacCountsTheSharedHistoryOnceWhenTheCopyClashes() async throws {
+    try await copiedMacScenario(copySyncsFirst: false)
+}
+
+@Test func aCopiedMacCountsTheSharedHistoryOnceWhenTheOriginalClashes() async throws {
+    try await copiedMacScenario(copySyncsFirst: true)
+}
+
+@Test func aLaggingListingsDuplicateOfOurOwnProgressIsNotAClash() async throws {
+    let drive = MemoryDrive()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"MCP"}"#, mac, "books/mcp/book.json")
+    try write(#"{"log":{"d":1}}"#, mac, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync()
+    // The next listing lags and doesn't show that upload yet, so the progress is created a second time.
+    try write(#"{"log":{"d":2}}"#, mac, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: StaleListing(drive: drive, snapshot: [])).sync()
+    #expect(try await drive.list().filter { $0.path == "books/mcp/progress/mac1.json" }.count == 2)
+    // Both copies are ours: the older one is a duplicate to tidy, not another device writing our file.
+    let report = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync()
+    #expect(!report.deviceClash)
+    #expect(try await drive.list().filter { $0.path == "books/mcp/progress/mac1.json" }.count == 1)
+    #expect(await drive.data(at: "books/mcp/progress/mac1.json") == Data(#"{"log":{"d":2}}"#.utf8))
+}
+
+@Test func aBookRemovedUnderOneAccountIsNeverDeletedFromAnother() async throws {
+    let accounts = TwoAccounts()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"Gone"}"#, mac, "books/gone/book.json")
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts)
+    _ = try await engine.sync(account: "sam@example.com")
+    await engine.remove(book: "gone")
+    try FileManager.default.removeItem(at: mac.appendingPathComponent("books/gone"))
+    _ = try await engine.sync(account: "sam@example.com")
+    #expect(await accounts.a.data(at: "removed/gone.json") != nil)
+    // The work account has its own book with that id (from another Mac).
+    await accounts.use(b: true)
+    await accounts.b.insert(Data(#"{"title":"Theirs"}"#.utf8), as: "books/gone/book.json")
+    _ = try await engine.sync(account: "work@example.com")
+    _ = try await engine.sync(account: "work@example.com")
+    #expect(await accounts.b.data(at: "books/gone/book.json") != nil)
+    #expect(await accounts.b.data(at: "removed/gone.json") == nil)
+    // Ids are still never reused here, whatever the account.
+    #expect(await engine.removedBooks.contains("gone"))
+    #expect(SyncEngine.removedBooks(savedIn: mac).contains("gone"))
+}
+
+@Test func aRemovalNotYetSyncedGoesToTheAccountItWasMadeUnder() async throws {
+    let accounts = TwoAccounts()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"title":"Gone"}"#, mac, "books/gone/book.json")
+    let engine = SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts)
+    _ = try await engine.sync(account: "sam@example.com")
+    await engine.remove(book: "gone")
+    try FileManager.default.removeItem(at: mac.appendingPathComponent("books/gone"))
+    await accounts.use(b: true)
+    _ = try await engine.sync(account: "work@example.com")
+    #expect(await accounts.b.data(at: "removed/gone.json") == nil)
+    await accounts.use(b: false)
+    _ = try await engine.sync(account: "sam@example.com")
+    #expect(await accounts.a.data(at: "removed/gone.json") != nil)
+    #expect(await accounts.a.data(at: "books/gone/book.json") == nil)
+}
+
+@Test func anInboxBookSentToOneAccountStaysOnThePadUnderAnother() async throws {
+    let accounts = TwoAccounts()
+    let pad = try temporaryRoot(), mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad); try? FileManager.default.removeItem(at: mac) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"Clean Code"}"#, pad, "inbox/u1.json")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: accounts)
+    _ = try await padSync.sync(account: "sam@example.com")
+    await accounts.use(b: true)
+    let other = try await padSync.sync(account: "work@example.com")
+    #expect(read(pad, "inbox/u1.pdf") == "%PDF")  // the Mac on the first account hasn't taken it yet
+    #expect(other.uploaded == 0)                  // and it isn't sent to this account as well
+    #expect(await accounts.b.data(at: "inbox/u1.pdf") == nil)
+    // Back on the first account, its Mac takes it, and only then does the pad let go.
+    await accounts.use(b: false)
+    _ = try await padSync.sync(account: "sam@example.com")
+    #expect(read(pad, "inbox/u1.pdf") == "%PDF")
+    let macSync = SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts.a)
+    let arrived = try await macSync.sync().arrived
+    await macSync.markTaken(arrived[0])
+    _ = try await macSync.sync()
+    _ = try await padSync.sync(account: "sam@example.com")
+    #expect(read(pad, "inbox/u1.pdf") == nil)
+}
+
+@Test func removingEveryBookUnderOneAccountLeavesAnotherAccountsInboxAlone() async throws {
+    let accounts = TwoAccounts()
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await accounts.a.insert(Data("%PDF".utf8), as: "inbox/a1.pdf")
+    await accounts.b.insert(Data("%PDF".utf8), as: "inbox/b1.pdf")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: accounts)
+    _ = try await padSync.sync(account: "sam@example.com")
+    await padSync.forgetInbox(now: Date(timeIntervalSince1970: 2_000_000_000))  // then signed in to another account
+    await accounts.use(b: true)
+    _ = try await padSync.sync(account: "work@example.com")
+    #expect(await accounts.b.data(at: "inbox/b1.pdf") != nil)
+    await accounts.use(b: false)
+    _ = try await padSync.sync(account: "sam@example.com")
+    #expect(await accounts.a.data(at: "inbox/a1.pdf") == nil)
+}
+
+@Test func removalsSavedBeforeAccountsWereNotedBelongToTheFirstAccountSeen() async throws {
+    let accounts = TwoAccounts()
+    let mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: mac) }
+    try write(#"{"removed":["gone"],"removeFromDrive":["gone"]}"#, mac, "sync-state.json")
+    #expect(SyncEngine.removedBooks(savedIn: mac) == ["gone"])
+    _ = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com")
+    #expect(await accounts.a.data(at: "removed/gone.json") != nil)
+    #expect(SyncEngine.removedBooks(savedIn: mac) == ["gone"])
+}
+
+/// A Drive that refuses inbox sidecar uploads (the book's title) a given number of times.
+private actor RefusesSidecars: DriveStore {
+    let inner: MemoryDrive
+    private var refusals: Int
+    init(_ inner: MemoryDrive, refusals: Int) { (self.inner, self.refusals) = (inner, refusals) }
+    func list() async throws -> [SyncFile] { try await inner.list() }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        if SyncLayout.isInbox(path), path.hasSuffix(".json"), refusals > 0 {
+            refusals -= 1
+            throw URLError(.networkConnectionLost)
+        }
+        return try await inner.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws { try await inner.delete(file) }
+}
+
+@Test func anInboxBookWaitsForItsTitleToGoUpFirst() async throws {
+    let drive = MemoryDrive()
+    let pad = try temporaryRoot(), mac = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad); try? FileManager.default.removeItem(at: mac) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"Clean Code"}"#, pad, "inbox/u1.json")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: RefusesSidecars(drive, refusals: 1))
+    let failed = try await padSync.sync()
+    #expect(!failed.problems.isEmpty && failed.uploaded == 0)
+    #expect(await drive.data(at: "inbox/u1.pdf") == nil)  // never there without its title
+    _ = try await padSync.sync()
+    #expect(await drive.data(at: "inbox/u1.pdf") != nil)
+    #expect(await drive.data(at: "inbox/u1.json") != nil)
+    let arrived = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync().arrived
+    #expect(arrived.map(\.lastPathComponent) == ["u1.pdf"] && read(mac, "inbox/u1.json") == #"{"title":"Clean Code"}"#)
 }
