@@ -176,6 +176,10 @@ private struct MindTreeNode: View {
             }
             .buttonStyle(.plain)
             .disabled(node.children.isEmpty)
+            // VoiceOver hears whether a branch is open, and a leaf reads as plain text rather than a dimmed button.
+            .accessibilityValue(node.children.isEmpty ? "" : "\(open ? "Expanded" : "Collapsed"), \(node.children.count) idea\(node.children.count == 1 ? "" : "s")")
+            .accessibilityHint(node.children.isEmpty ? "" : (open ? "Hides its ideas" : "Shows its ideas"))
+            .accessibilityRemoveTraits(node.children.isEmpty ? .isButton : [])
             if open, !node.children.isEmpty {
                 Rectangle().fill(color.opacity(0.6)).frame(width: 18, height: 1.5)
                 VStack(alignment: .leading, spacing: 8) {
