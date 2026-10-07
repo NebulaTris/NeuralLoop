@@ -95,3 +95,11 @@ private let sample = #"""
     #expect(p.detail == "Just started · about 12 min left")
 }
 
+@Test func aMeasuredItemThatJustStartedReadsAsOneSentence() throws {
+    let a = try feed(#"{"items": [{"n": 1, "item": "video", "by": "Ollama", "step": "Drawing the video", "started": 0, "done": 50, "total": 100, "fraction": 0.5}]}"#)
+    let p = PrepProgress.of(try #require(a.item(1, "video")), now: 20_000)
+    #expect(p.detail == "50 of 100 · just started · almost there")
+    let alone = try feed(#"{"items": [{"n": 1, "item": "audio", "by": "Ollama", "step": "Writing the script", "started": 0, "fraction": 0.05}]}"#)
+    #expect(PrepProgress.of(try #require(alone.item(1, "audio")), now: 20_000).detail.hasPrefix("Just started · "))
+}
+

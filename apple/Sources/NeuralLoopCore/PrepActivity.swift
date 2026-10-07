@@ -81,8 +81,9 @@ public enum PrepProgress {
             var parts: [String] = []
             if let total = item.total, total > 0 { parts.append("\(min(item.done ?? 0, total)) of \(total)") }
             parts.append(soFar(elapsed))
-            if overall < 1, elapsed > 0 { parts.append(left(elapsed / overall * (1 - overall)).lowercased()) }
-            let detail = parts.joined(separator: " · ")
+            if overall < 1, elapsed > 0 { parts.append(left(elapsed / overall * (1 - overall))) }
+            // One sentence: only its first word starts with a capital ("50 of 100 · just started · almost there").
+            let detail = parts.joined(separator: " · ").lowercased()
             return ItemProgress(fraction: fraction, step: item.step, by: item.by,
                                 detail: detail.prefix(1).uppercased() + detail.dropFirst(), slow: false)
         }
