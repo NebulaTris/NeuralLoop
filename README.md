@@ -68,7 +68,7 @@ fills in a little square for every day you study.
   <tr>
     <td valign="top"><h3>🐾 Pip in your menu bar</h3>Pick up where you left off, play the podcast, see what's ready, and get at most one gentle nudge a day (never in quiet hours, never guilt).</td>
     <td valign="top"><h3>🎧 Voices on your Mac</h3>Podcasts and explainers are voiced on-device with Rumik, with a "fast" mode, and podcast length that fits the chapter.</td>
-    <td valign="top"><h3>📦 Install once</h3>One download with the programs inside: no Python, no Docker, no terminal. Rumik's voices and local models download on first use.</td>
+    <td valign="top"><h3>📦 Install once</h3>One download with the programs inside: no Python, no Docker, no terminal. Rumik's voices and the local model download the first time your Mac's own AI is used.</td>
   </tr>
 </table>
 
