@@ -6,13 +6,19 @@ needs text back, so every tool is denied (the model isn't even offered one), the
 ignored, and it runs in an empty folder with a minimal environment (none of our providers' keys). opencode 2
 serves every `run` from one background service with the person's own settings, where these rules wouldn't
 apply; so a private server (`--standalone`) is required, and an opencode without it must be updated first.
+The person's global opencode config is layered after our rules (the last matching rule wins), so an agent
+permission there (`agent.build.permission.bash: allow`) would switch tools back on: opencode runs with its
+home and config folders pointed at the empty folder, keeping only its data (sign-ins) and cache folders.
 """
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import tempfile
+from collections.abc import Mapping
+from pathlib import Path
 
 from ..prompts import wrap_chapter
 from . import QuotaError, SetupError, agent_env, communicate
@@ -23,15 +29,35 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _QUOTA_HINTS = ("rate limit", "ratelimit", "quota", "429", "insufficient", "credit")
 NO_TOOLS = json.dumps({"permission": {"*": "deny"}})
 _standalone: dict[str, bool] = {}  # executable -> whether its `run` has --standalone
+FREE_TIER = (
+    "opencode's free models only work inside opencode itself. Type a model you've connected in opencode in "
+    "Settings (for example deepseek/deepseek-v4-pro), or choose another AI."
+)
 UPDATE = (
     "Update opencode to use it safely: this version can't run on a private server, so NeuralLoop can't "
     "switch its tools off. Run: opencode upgrade"
 )
 
 
-def locked_down_env() -> dict[str, str]:
-    """Only the basics, and none of the person's own opencode settings (they could turn tools back on)."""
-    return {**agent_env(), "OPENCODE_CONFIG_CONTENT": NO_TOOLS, "OPENCODE_DISABLE_PROJECT_CONFIG": "1"}
+def locked_down_env(empty: str, env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Only the basics, and none of the person's own opencode settings (they could turn tools back on):
+    home and config are the `empty` folder; data (where `opencode auth login` keeps sign-ins), cache, and
+    state stay the person's own."""
+    env = os.environ if env is None else env
+    home = Path(env.get("HOME") or Path.home())
+    own = {
+        "XDG_DATA_HOME": env.get("XDG_DATA_HOME") or str(home / ".local" / "share"),
+        "XDG_CACHE_HOME": env.get("XDG_CACHE_HOME") or str(home / ".cache"),
+        "XDG_STATE_HOME": env.get("XDG_STATE_HOME") or str(home / ".local" / "state"),
+    }
+    return {
+        **agent_env(env=env),
+        **own,
+        "HOME": empty,
+        "XDG_CONFIG_HOME": str(Path(empty) / "config"),
+        "OPENCODE_CONFIG_CONTENT": NO_TOOLS,
+        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+    }
 
 
 class OpencodeModel:
@@ -54,15 +80,17 @@ class OpencodeModel:
     async def _has_standalone(self) -> bool:
         if self.executable not in _standalone:
             try:
-                process = await asyncio.create_subprocess_exec(
-                    self.executable,
-                    "run",
-                    "--help",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=locked_down_env(),
-                )
-                stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
+                with tempfile.TemporaryDirectory(prefix="neuralloop-opencode-") as empty:
+                    process = await asyncio.create_subprocess_exec(
+                        self.executable,
+                        "run",
+                        "--help",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=empty,
+                        env=locked_down_env(empty),
+                    )
+                    stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
                 _standalone[self.executable] = b"--standalone" in stdout + stderr
             except (OSError, asyncio.TimeoutError, TimeoutError):  # an old or odd opencode: not safe to run
                 _standalone[self.executable] = False
@@ -80,11 +108,13 @@ class OpencodeModel:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=empty,
-                env=locked_down_env(),
+                env=locked_down_env(empty),
             )
             stdout, stderr = await communicate(process, TIMEOUT)
         if process.returncode != 0:
             detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
+            if "free tier can only be used from within opencode" in detail.lower():
+                raise SetupError(FREE_TIER)
             if any(hint in detail.lower() for hint in _QUOTA_HINTS):
                 raise QuotaError(detail[:200])
             raise RuntimeError(f"opencode failed: {detail[:200]}")

@@ -69,3 +69,28 @@ def test_the_local_engine_uses_each_items_own_model(tmp_path):
     asyncio.run(engine.make("quiz", chapter))
     asyncio.run(engine.make("cards", chapter))
     assert [k for k, _ in quiz_model.calls] == ["quiz"] and [k for k, _ in default.calls] == ["cards"]
+
+
+def test_a_choice_never_borrows_another_providers_model(tmp_path):
+    """Settings leaves the model empty for LM Studio, Ollama's default, opencode, and Hermes: such a choice
+    must not inherit the main model's name (or recall's gemma2:2b), which belongs to a different provider."""
+    path = tmp_path / "ai.json"
+    lm_studio = {"provider": "custom", "baseUrl": "http://localhost:1234/v1"}
+    path.write_text(
+        json.dumps(
+            {
+                "make": {"provider": "anthropic", "model": "claude-opus-5-5"},
+                "tasks": {
+                    "quiz": {"provider": "ollama"},
+                    "cards": {"provider": "anthropic"},
+                    "audio": lm_studio,
+                },
+                "recall": lm_studio,
+            }
+        )
+    )
+    config = aiconfig.load(path)
+    assert config.task("quiz") == aiconfig.ModelChoice("ollama")
+    assert config.task("cards") == aiconfig.ModelChoice("anthropic", "claude-opus-5-5")
+    assert config.task("audio").model is None and config.recall.model is None
+    assert config.recall.base_url == "http://localhost:1234/v1"

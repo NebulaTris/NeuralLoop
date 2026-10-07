@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Mapping
 from typing import Protocol
+from urllib.parse import urlparse
 
 from ..config import DEFAULT_MODELS, PROVIDER_KEYS
 
@@ -99,6 +100,29 @@ def agent_env(own_prefixes: tuple[str, ...] = (), env: Mapping[str, str] | None 
     for variable in KEY_VARIABLES:
         keep.pop(variable, None)
     return keep
+
+
+def normalize_base_url(url: str | None) -> str | None:
+    """An OpenAI-compatible address as people type it into Settings, as the SDK needs it: with a scheme, and
+    with /v1 when no path was given (LM Studio, vLLM, Together, … all serve the API under /v1)."""
+    if not url:
+        return url
+    url = url.strip()
+    if "://" not in url:
+        url = f"http://{url}"
+    if urlparse(url).path in ("", "/"):
+        url = f"{url.rstrip('/')}/v1"
+    return url
+
+
+def is_local_url(url: str | None) -> bool:
+    """Whether an OpenAI-compatible address is a server on this Mac (LM Studio and friends)."""
+    return bool(url) and urlparse(normalize_base_url(url)).hostname in (
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+    )
 
 
 def resolve_provider(provider: str, env: Mapping[str, str]) -> str:

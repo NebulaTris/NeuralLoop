@@ -20,7 +20,7 @@ from .config import (
     VIDEO_FORMATS,
     VIDEO_STYLES,
 )
-from .models import SetupError, resolve_provider, safe_message
+from .models import SetupError, is_local_url, resolve_provider, safe_message
 from .pipeline import Options, run
 from .state import FAILED, WAITING
 
@@ -103,6 +103,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         return args
     # Flags win over the person's ai.json, which wins over built-in defaults.
     args.engine = args.engine or args.config.engine
+    if args.provider is not None and args.check_ai:  # check the model named here, not ai.json's
+        made = aiconfig.ModelChoice(args.provider, args.model, args.base_url)
+        args.config = dataclasses.replace(args.config, make=made, tasks={})
     if args.provider is None:
         args.provider, args.model = args.config.make.provider, args.model or args.config.make.model
         args.base_url = args.base_url or args.config.make.base_url
@@ -195,7 +198,7 @@ async def _check_ai(config: aiconfig.AIConfig) -> dict:
             return {
                 "ok": False,
                 "provider": choice.provider,
-                "message": safe_message(str(error).strip().splitlines()[0] if str(error).strip() else "")
+                "message": safe_message(str(error).strip().splitlines()[0] if str(error).strip() else "", 500)
                 or type(error).__name__,
             }
         return {
@@ -286,9 +289,12 @@ def _signin() -> int:
 def _default_parallel(args: argparse.Namespace) -> int:
     if args.parallel:
         return max(1, args.parallel)
-    local = args.engine in ("auto", "local") and (
-        resolve_provider(args.provider, os.environ) in LOCAL_PROVIDERS
+    provider = resolve_provider(args.provider, os.environ)
+    # A model on this Mac (LM Studio and other local servers too) answers one request at a time anyway.
+    on_this_mac = provider in LOCAL_PROVIDERS or (
+        provider == "custom" and is_local_url(args.base_url or os.environ.get("NEURALLOOP_BASE_URL"))
     )
+    local = args.engine in ("auto", "local") and on_this_mac
     return 1 if local else 2
 
 

@@ -56,7 +56,8 @@ class OllamaModel:
         installed = [m["name"] for m in tags.get("models", [])]
         if not installed:
             raise SetupError(
-                "Ollama has no models yet. Download one first, for example: ollama pull gpt-oss:20b"
+                "Ollama has no models yet. Download one first, for example: "
+                f"ollama pull {default_local_model()}"
             )
         if not self.model:
             preferred = default_local_model()
@@ -67,6 +68,8 @@ class OllamaModel:
     async def complete(
         self, kind: str, system: str, source: str, prompt: str, schema: dict | None = None
     ) -> str:
+        if not self.model:
+            await self.check()  # e.g. grading recall: picks the installed model, as a book run does
         body = {
             "model": self.model,
             "stream": False,

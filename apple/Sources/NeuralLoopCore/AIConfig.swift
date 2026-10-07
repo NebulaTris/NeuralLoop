@@ -79,19 +79,19 @@ public struct ProviderPreset: Identifiable, Equatable, Sendable {
         .init(id: "ollama", title: "Ollama", detail: "Free and private, on this Mac. Leave the model empty to use the one NeuralLoop set up.",
               provider: "ollama", keyVariable: nil, keyOptional: false, defaultModel: "", baseUrl: nil,
               suggestions: ["qwen3:8b", "qwen3:4b", "gemma2:2b", "gpt-oss:20b"]),
-        .init(id: "lmstudio", title: "LM Studio", detail: "Any model you load in LM Studio. Start its local server (Developer → Start Server).",
+        .init(id: "lmstudio", title: "LM Studio", detail: "Any model you load in LM Studio. Start its local server (Developer → Start Server). Leave the model empty to use the one that's loaded.",
               provider: "custom", keyVariable: "NEURALLOOP_API_KEY", keyOptional: true, defaultModel: "", baseUrl: "http://localhost:1234/v1",
               suggestions: []),
         .init(id: "anthropic", title: "Claude (Anthropic)", detail: "Your Anthropic API key.",
-              provider: "anthropic", keyVariable: "ANTHROPIC_API_KEY", keyOptional: false, defaultModel: "claude-opus-5", baseUrl: nil,
-              suggestions: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]),
+              provider: "anthropic", keyVariable: "ANTHROPIC_API_KEY", keyOptional: false, defaultModel: "claude-opus-5-5", baseUrl: nil,
+              suggestions: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]),
         .init(id: "openai", title: "OpenAI", detail: "Your OpenAI API key.",
               provider: "openai", keyVariable: "OPENAI_API_KEY", keyOptional: false, defaultModel: "gpt-6-sol", baseUrl: nil,
               suggestions: ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]),
         .init(id: "openrouter", title: "OpenRouter", detail: "One key for hundreds of models, including DeepSeek, Qwen, Llama, and Hermes.",
               provider: "openrouter", keyVariable: "OPENROUTER_API_KEY", keyOptional: false, defaultModel: "deepseek/deepseek-v4.1-flash", baseUrl: nil,
               suggestions: ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro-0813"]),
-        .init(id: "opencode", title: "opencode", detail: "Uses the model you've chosen in opencode. Type one to override it, for example deepseek/deepseek-v4-pro.",
+        .init(id: "opencode", title: "opencode", detail: "A model you've connected in opencode (opencode auth login), for example deepseek/deepseek-v4-pro. NeuralLoop runs it without your own opencode settings, so its tools stay off.",
               provider: "opencode", keyVariable: nil, keyOptional: false, defaultModel: "", baseUrl: nil,
               suggestions: ["deepseek/deepseek-v4-pro", "anthropic/claude-sonnet-5"]),
         .init(id: "hermes", title: "Hermes Agent", detail: "Nous Research's Hermes Agent, as you've set it up (hermes setup). It's an agent: if its tools are on, text in a book could steer it, so turn its tools off in Hermes first.",
@@ -102,10 +102,19 @@ public struct ProviderPreset: Identifiable, Equatable, Sendable {
 
     public static func named(_ id: String) -> ProviderPreset? { all.first { $0.id == id } }
 
+    /// LM Studio's server on this Mac, however it was typed (the pipeline adds a missing scheme and /v1).
+    static func isLMStudio(_ baseUrl: String?) -> Bool {
+        guard var address = baseUrl?.trimmingCharacters(in: .whitespaces), !address.isEmpty else { return false }
+        if !address.contains("://") { address = "http://" + address }
+        guard let url = URLComponents(string: address), let host = url.host else { return false }
+        let path = url.path.hasSuffix("/") ? String(url.path.dropLast()) : url.path
+        return ["localhost", "127.0.0.1"].contains(host) && url.port == 1234 && ["", "/v1"].contains(path)
+    }
+
     /// Which preset a saved choice came from.
     public static func matching(_ choice: ModelChoice) -> ProviderPreset? {
         if choice.provider == "custom" {
-            return choice.baseUrl == named("lmstudio")?.baseUrl ? named("lmstudio") : named("custom")
+            return isLMStudio(choice.baseUrl) ? named("lmstudio") : named("custom")
         }
         return all.first { $0.provider == choice.provider }
     }
