@@ -9,7 +9,7 @@ from posixpath import dirname, join, normpath
 from typing import ClassVar
 from urllib.parse import unquote, urldefrag
 
-from .config import APPENDIX, FRONT_MATTER
+from .config import APPENDIX, FRONT_MATTER, MAX_BOOK_IMAGE_BYTES
 
 MIN_PDF_PAGES = 2
 MIN_EPUB_CHARS = 1500
@@ -40,6 +40,7 @@ IMAGE_TYPES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
 MIN_IMAGE_BYTES = 2048  # smaller is a spacer, bullet, or icon, not a figure
 MAX_IMAGES_PER_CHAPTER = 80
 MAX_TITLE = 200
+MIN_TAIL_CHARS = 200  # text before a chapter's anchor this long is the end of the chapter before, not a label
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # Our own placeholders: alt text and paths never hold brackets, parentheses, or spaces (matching stops early).
 _IMAGE_REF = re.compile(r"!\[([^\[\]\n]*)\]\(zip:([^()\[\]\s]+)\)")
@@ -316,12 +317,13 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             found = _grouped(body)  # mostly short pieces (essays, poems): read a few at a time
         typical = _median([len(text) for title, text in found if not is_appendix(title)])
         chapters = []
+        images = _Images(book, out_dir / "img")
         for title, text in found:
             if is_appendix(title) and len(text) < max(MIN_APPENDIX_CHARS, typical / 2):
                 continue  # a short appendix: reference pages, not a chapter
             number = len(chapters) + 1
             file = out_dir / f"{number:02d}.md"
-            text = _save_images(book, text, out_dir / "img", number)
+            text = images.save(text, number)
             file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
             chapters.append({"n": number, "title": title, "file": file.name})
         return chapters
@@ -593,20 +595,27 @@ def _toc_starts(
     """(title, spine index, offset in that file) where each table-of-contents entry begins, in reading order.
 
     Usually each entry is its own file (offset 0). Some books keep several chapters in one file and link to
-    them by #anchor: those entries start at their anchor instead.
+    them by #anchor: those entries start at their anchor instead. Books split into files by size (Calibre)
+    can start a chapter partway into a file: the text before its anchor ends the chapter before, unless it's
+    only a label ("Chapter 3") in front of the heading.
     """
     by_file: dict[str, list[tuple[str, str]]] = {}
     for title, href, fragment in toc:
         if href in spine:
             by_file.setdefault(href, []).append((title, fragment))
+    earliest = min((spine.index(href) for href in by_file), default=0)
     starts = []
     for href, entries in by_file.items():
         index = spine.index(href)
-        (title, _), rest = entries[0], entries[1:]
-        starts.append((title, index, 0))  # the file's first entry takes everything before the next anchor
-        text = documents.get(href) if rest else None
+        (title, first_fragment), rest = entries[0], entries[1:]
+        later = index > earliest  # a chapter before it can take the text in front of its anchor
+        text = documents.get(href) if rest or (later and first_fragment) else None
         offsets = _anchor_offsets(text) if text else {}
-        seen = {0}
+        first = offsets.get(first_fragment, 0) if later and first_fragment else 0
+        if first and len(_visible_text(text[:first])) < MIN_TAIL_CHARS:
+            first = 0
+        starts.append((title, index, first))  # the file's first entry takes everything before the next anchor
+        seen = {first}
         for title, fragment in rest:
             offset = offsets.get(fragment) if fragment else None
             if offset and offset not in seen:
@@ -701,6 +710,13 @@ class _MarkdownText(HTMLParser):
         return re.sub(r"\n{3,}", "\n\n", joined).strip()
 
 
+def _visible_text(markup: str) -> str:
+    """The text a reader would see in a piece of XHTML (no head, scripts, or styles), in one pass."""
+    parser = _MarkdownText()
+    parser.feed(markup)
+    return parser.text()
+
+
 def _html_to_markdown(documents: _Documents, pieces: list[tuple[str, int, int | None]]) -> str:
     parser = _MarkdownText()
     for name, start, end in pieces:
@@ -712,35 +728,59 @@ def _html_to_markdown(documents: _Documents, pieces: list[tuple[str, int, int | 
     return parser.text()
 
 
-def _save_images(book: zipfile.ZipFile, text: str, folder: Path, number: int) -> str:
-    """Copy the chapter's real figures to img/NN-KK.ext and point the Markdown at them; drop the rest."""
-    names = set(book.namelist())
-    saved: dict[str, str] = {}
-    rejected: set[str] = set()  # never read twice, however often the chapter points at it
+class _Images:
+    """The book's figures, copied out once each: archive path -> img/NN-KK.ext, shared by every chapter that
+    shows it, with a byte budget for the whole book."""
 
-    def replace(match: re.Match) -> str:
-        alt, path = match.group(1), match.group(2)
-        suffix = Path(path).suffix.lower()
-        if path in rejected or path not in names or ".." in path.split("/") or suffix not in IMAGE_TYPES:
-            return ""
-        if path not in saved:
-            # Sized up and counted before reading: a book pointing at one huge picture again and again
-            # costs one look at the archive's index, not one read each time.
-            if len(saved) >= MAX_IMAGES_PER_CHAPTER or book.getinfo(path).file_size < MIN_IMAGE_BYTES:
-                rejected.add(path)
-                return ""
-            data = book.read(path)
-            if len(data) < MIN_IMAGE_BYTES:
-                rejected.add(path)
-                return ""
-            folder.mkdir(parents=True, exist_ok=True)
-            name = f"{number:02d}-{len(saved) + 1:02d}{suffix}"
-            (folder / name).write_bytes(data)
-            saved[path] = f"img/{name}"
-        return f"![{alt}]({saved[path]})"
+    def __init__(self, book: zipfile.ZipFile, folder: Path):
+        self.book, self.folder = book, folder
+        self.names = set(book.namelist())
+        self.saved: dict[str, str] = {}
+        self.rejected: set[str] = set()  # never read twice, however often the book points at it
+        self.bytes = 0
 
-    cleaned = _IMAGE_REF.sub(replace, text)
-    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    def save(self, text: str, number: int) -> str:
+        """Point chapter ``number``'s Markdown at its real figures, copying new ones to img/NN-KK.ext; drop
+        the rest. Figures past the book's budget become their alt text."""
+        shown: set[str] = set()  # this chapter's figures, at most MAX_IMAGES_PER_CHAPTER
+        new = 0
+
+        def replace(match: re.Match) -> str:
+            nonlocal new
+            alt, path = match.group(1), match.group(2)
+            suffix = Path(path).suffix.lower()
+            if path in self.rejected or path not in self.names or ".." in path.split("/"):
+                return ""
+            if suffix not in IMAGE_TYPES:
+                return ""
+            if path not in shown and len(shown) >= MAX_IMAGES_PER_CHAPTER:
+                return ""
+            if path not in self.saved:
+                # Sized up before reading: a book pointing at one huge picture again and again costs one look
+                # at the archive's index, not one read each time.
+                size = self.book.getinfo(path).file_size
+                if size < MIN_IMAGE_BYTES:
+                    self.rejected.add(path)
+                    return ""
+                if self.bytes + size > MAX_BOOK_IMAGE_BYTES:
+                    return f"\n\n{alt}\n\n" if alt.strip() else ""
+                data = self.book.read(path)
+                if len(data) < MIN_IMAGE_BYTES:
+                    self.rejected.add(path)
+                    return ""
+                if self.bytes + len(data) > MAX_BOOK_IMAGE_BYTES:
+                    return f"\n\n{alt}\n\n" if alt.strip() else ""
+                self.folder.mkdir(parents=True, exist_ok=True)
+                new += 1
+                name = f"{number:02d}-{new:02d}{suffix}"
+                (self.folder / name).write_bytes(data)
+                self.bytes += len(data)
+                self.saved[path] = f"img/{name}"
+            shown.add(path)
+            return f"![{alt}]({self.saved[path]})"
+
+        cleaned = _IMAGE_REF.sub(replace, text)
+        return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
 def chapter_size(chapter: dict, out_dir: Path) -> int:
