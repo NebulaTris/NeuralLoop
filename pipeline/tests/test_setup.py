@@ -65,3 +65,42 @@ def test_an_installed_model_is_not_downloaded_again(monkeypatch):
     monkeypatch.setattr(setup, "_installed_models", lambda host: ["qwen3:8b"])
     monkeypatch.setattr(setup, "_stream_pull", lambda host, name: pytest.fail("should not pull"))
     asyncio.run(setup.ensure_model("http://localhost:11434", "qwen3:8b", log=lambda _: None))
+
+
+def test_the_started_ollama_never_sees_our_keys(monkeypatch, tmp_path):
+    binary = tmp_path / "ollama"
+    binary.write_text("#!/bin/sh\n")
+    calls = {"up": 0}
+
+    def up(host):
+        calls["up"] += 1
+        return calls["up"] > 1
+
+    keys = {
+        "ANTHROPIC_API_KEY": "sk-ant-secret-1234567890",
+        "OPENAI_API_KEY": "sk-openai-secret-1234567890",
+        "OPENROUTER_API_KEY": "sk-or-secret-1234567890",
+        "NEURALLOOP_API_KEY": "my-server-secret",
+        "NEURALLOOP_BASE_URL": "https://example.ai/v1",
+        "SOME_OTHER_TOKEN": "x-other-secret",
+    }
+    for name, value in {
+        **keys,
+        "PATH": "/usr/bin",
+        "HOME": "/Users/me",
+        "TMPDIR": "/tmp/me",
+        "OLLAMA_KEEP_ALIVE": "10m",
+        "NEURALLOOP_MODELS_DIR": "/models",
+    }.items():
+        monkeypatch.setenv(name, value)
+    started = []
+    monkeypatch.setattr(setup, "_ollama_up", up)
+    monkeypatch.setattr(setup, "_spawn", lambda argv, env: started.append(env))
+    monkeypatch.setenv("NEURALLOOP_OLLAMA", str(binary))
+    asyncio.run(setup.ensure_ollama("http://127.0.0.1:11434", log=lambda _: None, wait=0.01))
+    env = started[0]
+    assert not set(keys) & set(env)
+    assert not any(value in env.values() for value in keys.values())
+    assert env["PATH"] == "/usr/bin" and env["HOME"] == "/Users/me" and env["TMPDIR"] == "/tmp/me"
+    assert env["OLLAMA_KEEP_ALIVE"] == "10m" and env["OLLAMA_MODELS"] == "/models"
+    assert env["OLLAMA_HOST"] == "127.0.0.1:11434"
