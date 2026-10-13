@@ -408,10 +408,9 @@ class ChapterMaker:
                 if (made := _created(artifact)) is not None
                 and made >= since - CLOCK_SLACK
                 and artifact.id not in taken
-                and (
-                    not (made_from := getattr(artifact, "source_ids", None))
-                    or chapter.get("sourceId") in made_from
-                )
+                # Only an item that says it was made from this chapter: one that doesn't say could be
+                # another chapter's, and taking it would swap the two.
+                and chapter.get("sourceId") in (getattr(artifact, "source_ids", None) or ())
             ]
             if candidates:
                 return max(candidates)[1]
@@ -462,7 +461,7 @@ def _created(artifact) -> float | None:
     if isinstance(made, (int, float)):
         return float(made)
     try:
-        return made.timestamp()  # a datetime (notebooklm-py's are local time, without a zone)
+        return made.timestamp()  # a datetime (notebooklm-py 0.8's are timezone-aware UTC)
     except (AttributeError, ValueError, OverflowError, OSError):
         return None
 

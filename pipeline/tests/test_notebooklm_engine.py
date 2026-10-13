@@ -487,3 +487,29 @@ def test_an_item_that_never_downloads_stops_after_a_few_runs(options):
     assert tasks["quiz"]["status"] == DONE and tasks["quiz"]["by"] == "Ollama"  # text may be made locally
     assert (1, "audio") not in fallback.made
     assert client.generated.count("source-1:audio") == 1
+
+
+# ---- 10. a lost request is never matched to another chapter's item ----
+
+
+def test_a_lost_request_is_not_matched_to_an_item_that_does_not_say_its_source(options):
+    """NotebookLM's listing can leave out which sources an item was made from: that item could be any
+    chapter's, so it's never taken for this one."""
+    options.chapters, options.media = "1", "none"
+    run_with(options, LostQuizClient())
+    client = FakeClient(delay=0)
+    client.made.append(
+        SimpleNamespace(id="someone-else|quiz", kind="quiz", source_ids=(), created_at=datetime.now())
+    )
+    asked = counting(client, "generate_quiz")
+    waited = []
+    original = client.artifacts.wait_for_completion
+
+    async def wait(notebook_id, task_id, **kwargs):
+        waited.append(task_id)
+        return await original(notebook_id, task_id, **kwargs)
+
+    client.artifacts.wait_for_completion = wait
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and len(asked) == 1
+    assert "someone-else|quiz" not in waited
