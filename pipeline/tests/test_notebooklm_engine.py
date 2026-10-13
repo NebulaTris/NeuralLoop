@@ -10,9 +10,10 @@ import pytest
 
 from neuralloop_books import config
 from neuralloop_books.engines.auto import AutoEngine
-from neuralloop_books.engines.notebooklm import NotebookLMEngine
+from neuralloop_books.engines.notebooklm import STILL_READING, NotebookLMEngine
 from neuralloop_books.pipeline import Options, run
 from neuralloop_books.state import DONE, FAILED, WAITING
+from neuralloop_books.testing import LONG, write_epub
 
 from .fake_client import (
     ENUMS,
@@ -456,6 +457,66 @@ def test_a_chapter_notebooklm_could_not_read_is_not_uploaded_again_and_its_broke
     assert [t[:3] for t in client.uploads] == ["01 ", "02 "]
     assert client.deleted == ["source-2"] and not second.get("sourceId")
     assert statuses(second) == {FAILED}
+
+
+@pytest.fixture
+def four_chapters(tmp_path):
+    chapters = [("Caching", LONG), ("Queues", LONG), ("Logs", LONG), ("Locks", LONG)]
+    book = write_epub(tmp_path / "four.epub", chapters)
+    return Options(book=book, out=tmp_path / "four", media="none", log=lambda _: None)
+
+
+def test_one_chapter_notebooklm_is_slow_to_read_never_holds_up_the_chapters_after_it(four_chapters):
+    """Only a limit or NotebookLM not answering stops adding chapters; a chapter still being read waits on
+    its own while the rest are added and made."""
+    client = FakeSlowSourceClient(only=1, slow=10**6)
+    state = run_with(four_chapters, client)
+    assert [t[:3] for t in client.uploads] == ["01 ", "02 ", "03 ", "04 "]
+    assert statuses(state.chapters[0]) == {WAITING}
+    assert all(statuses(chapter) == {DONE} for chapter in state.chapters[1:])
+    waiting = {e["error"] for e in state.chapters[0]["tasks"].values() if e["status"] == WAITING}
+    assert waiting == {STILL_READING}
+
+
+def test_a_chapter_notebooklm_never_reads_is_uploaded_once_more_then_fails(four_chapters, monkeypatch):
+    """A source can't stay unread for ever: after a few runs it's removed and added once more, and if
+    NotebookLM still can't read it the chapter's items fail (auto then makes the text items another way)."""
+    monkeypatch.setattr(config, "NOTEBOOKLM_READ_TRIES", 3)
+    client = FakeSlowSourceClient(only=1, slow=10**6)
+    run_with(four_chapters, client)  # run 1: added, not read
+    assert statuses(run_with(four_chapters, client).chapters[0]) == {WAITING}  # run 2: still not read
+    assert [t[:3] for t in client.uploads].count("01 ") == 1
+
+    fallback = LocalStandIn()
+    state = run_auto(four_chapters, client, fallback)  # run 3: removed, added once more, still not read
+    first = state.chapters[0]
+    assert [t[:3] for t in client.uploads].count("01 ") == 2
+    assert len(client.deleted) == 2 and client.deleted[0] == "source-1" and not first.get("sourceId")
+    assert statuses(first) == {DONE}  # the local stand-in made the text items
+    made_here = sorted(t for t, e in first["tasks"].items() if e["status"] != "skipped")
+    assert sorted(task for n, task in fallback.made if n == 1) == made_here
+
+    state = run_with(four_chapters, client)  # nothing left to do: never uploaded again
+    assert [t[:3] for t in client.uploads].count("01 ") == 2
+
+
+def test_a_podcast_for_a_chapter_notebooklm_never_reads_fails_as_notebooklms(four_chapters, monkeypatch):
+    monkeypatch.setattr(config, "NOTEBOOKLM_READ_TRIES", 1)
+    four_chapters.media = "1"
+    fallback = LocalStandIn()
+    state = run_auto(four_chapters, FakeSlowSourceClient(only=1, slow=10**6), fallback)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (FAILED, FAILED)
+    assert not any(task in ("audio", "video") for _, task in fallback.made)
+
+
+def test_a_chapter_notebooklm_never_reads_fails_its_items_without_auto(four_chapters, monkeypatch):
+    monkeypatch.setattr(config, "NOTEBOOKLM_READ_TRIES", 1)
+    client = FakeSlowSourceClient(only=1, slow=10**6)
+    state = run_with(four_chapters, client)
+    assert statuses(state.chapters[0]) == {FAILED}
+    assert [t[:3] for t in client.uploads].count("01 ") == 2
+    assert "readTries" not in state.chapters[0] and "readAgain" not in state.chapters[0]
 
 
 # ---- 9. an item NotebookLM made but that couldn't be downloaded is downloaded again, not made again ----

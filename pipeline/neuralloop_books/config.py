@@ -71,6 +71,9 @@ NOTEBOOKLM_SESSION_RELOADS = 3
 # An item NotebookLM made but that couldn't be downloaded is downloaded again by the next runs (never made
 # again), at most this many runs in all; then it fails as NotebookLM's.
 NOTEBOOKLM_DOWNLOAD_TRIES = 3
+# A chapter NotebookLM took but hasn't finished reading is waited for this many runs in all; then its source
+# is removed and added once more, and if NotebookLM still hasn't read it, the chapter's items fail.
+NOTEBOOKLM_READ_TRIES = 3
 
 
 def quota_message(engine_name: str) -> str:
