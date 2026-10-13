@@ -24,6 +24,7 @@ from .config import (
     VIDEO_TIMEOUT,
     audio_length,
 )
+from .models import short_error
 
 # Word boundaries, so "page 429" or "after 1429s" never read as a limit.
 _QUOTA = re.compile(
@@ -340,13 +341,16 @@ class ChapterMaker:
             tries = (_number(entry.get("downloadTries")) or 0) + 1
             if tries >= config.NOTEBOOKLM_DOWNLOAD_TRIES:
                 _forget(entry)
+                why = short_error(error)
                 raise NotDownloaded(
-                    f"NotebookLM made it, but it couldn't be downloaded after {tries} tries ({_short(error)})"
+                    f"NotebookLM made it, but it couldn't be downloaded after {tries} tries ({why})"
                 ) from error
             entry["downloadTries"] = int(tries)
             with contextlib.suppress(OSError):  # the pipeline saves again as the item waits
                 self._save()
-            raise DownloadLater(f"NotebookLM made it, but downloading it failed ({_short(error)})") from error
+            raise DownloadLater(
+                f"NotebookLM made it, but downloading it failed ({short_error(error)})"
+            ) from error
         self.pending.pop(key, None)
         _forget(entry)
         return result
@@ -378,7 +382,7 @@ class ChapterMaker:
             task_id = await self._find(kind, chapter, requested, look_again=True)
             if not task_id:
                 raise NotebookLMBusy(
-                    f"NotebookLM didn't confirm it got the request ({_short(error)}); "
+                    f"NotebookLM didn't confirm it got the request ({short_error(error)}); "
                     "Pip will look for it next run"
                 ) from error
         self._remember(entry, task_id, requested)
@@ -475,11 +479,6 @@ def _finished(status) -> None:
 
         raise QuotaError(f"NotebookLM's limit was reached ({reason or 'it said to try later'})")
     raise GenerationFailed(f"NotebookLM couldn't make it ({reason or 'it gave no reason'})")
-
-
-def _short(error: BaseException) -> str:
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return text[:100]
 
 
 def _whole_wait_ran_out(error: BaseException, seconds: float, timeout: float) -> bool:

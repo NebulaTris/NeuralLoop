@@ -802,6 +802,13 @@ def test_a_saved_key_only_ever_goes_to_its_official_service(provider, variable, 
     assert str(model.client.base_url).rstrip("/") == official
 
 
+def test_an_error_is_cut_to_its_first_line_with_keys_hidden():
+    key = "sk-ant-api03-" + "x" * 40
+    assert models.short_error(RuntimeError(f"  refused {key}\nTraceback …")) == "refused [key hidden]"
+    assert models.short_error(TimeoutError()) == "TimeoutError"
+    assert models.short_error(RuntimeError("y" * 500)) == "y" * 120
+
+
 def test_a_custom_service_keeps_its_own_address(monkeypatch):
     pytest.importorskip("openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://somewhere-else.example/v1")

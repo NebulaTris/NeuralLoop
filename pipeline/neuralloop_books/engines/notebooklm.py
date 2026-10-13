@@ -6,6 +6,7 @@ from types import ModuleType
 
 from .. import activity, config
 from ..config import SOURCE_TIMEOUT, quota_message
+from ..models import short_error
 from ..notebook import (
     NOT_ANSWERING,
     ChapterMaker,
@@ -134,7 +135,7 @@ class NotebookLMEngine:
                     if task in config.MEDIA_TASKS:
                         # A podcast or video waits for NotebookLM (next run), never made on the Mac instead.
                         raise NotebookLMBusy(
-                            f"NotebookLM kept refusing the session ({_short(error)})"
+                            f"NotebookLM kept refusing the session ({short_error(error)})"
                         ) from error
                     raise
                 if not is_transient_error(error):
@@ -142,7 +143,7 @@ class NotebookLMEngine:
                 if not delays:
                     tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
                     raise NotebookLMBusy(
-                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                        f"NotebookLM didn't answer ({short_error(error)}) after {tries} tries"
                     ) from error
                 pause = delays.pop(0)
                 activity.report(f"NotebookLM is slow right now, trying again in {pause} s")
@@ -287,7 +288,7 @@ class NotebookLMEngine:
                 if not delays:
                     tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
                     raise NotebookLMBusy(
-                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                        f"NotebookLM didn't answer ({short_error(error)}) after {tries} tries"
                     ) from error
                 await asyncio.sleep(delays.pop(0))
 
@@ -358,11 +359,11 @@ def _is_setup_error(error: BaseException) -> bool:
 def _waiting(error: BaseException) -> NoSourceYet | None:
     """A chapter NotebookLM wouldn't take because of a limit or a hiccup waits; None for anything else."""
     if is_quota_error(error):
-        return NoSourceYet(_short(error), quota_message("NotebookLM"), limit=True)
+        return NoSourceYet(short_error(error), quota_message("NotebookLM"), limit=True)
     if _made_source(error) and not _source_unreadable(error):
-        return NoSourceYet(_short(error), STILL_READING, limit=False)
+        return NoSourceYet(short_error(error), STILL_READING, limit=False)
     if getattr(error, "try_later", False) or is_transient_error(error):
-        return NoSourceYet(_short(error), NOT_ANSWERING, limit=False)
+        return NoSourceYet(short_error(error), NOT_ANSWERING, limit=False)
     return None
 
 
@@ -370,9 +371,4 @@ def _again(error: BaseException) -> BaseException:
     """A fresh copy of the reason a chapter has no source, for each of its items."""
     if isinstance(error, NoSourceYet):
         return NoSourceYet(str(error), error.waiting_message, error.limit)
-    return RuntimeError(f"NotebookLM wouldn't take this chapter ({_short(error)})")
-
-
-def _short(error: BaseException) -> str:
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return text[:100]
+    return RuntimeError(f"NotebookLM wouldn't take this chapter ({short_error(error)})")

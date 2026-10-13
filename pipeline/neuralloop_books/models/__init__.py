@@ -81,6 +81,12 @@ def safe_message(text: object, limit: int = 200, env: Mapping[str, str] | None =
     return _KEY_SHAPES.sub("[key hidden]", line)[:limit]
 
 
+def short_error(error: BaseException, limit: int = 120) -> str:
+    """An error's first line (its type's name when it says nothing), safe to print and save."""
+    text = str(error).strip()
+    return safe_message(text.splitlines()[0] if text else type(error).__name__, limit)
+
+
 _TOKEN_PARAMETER = re.compile(r"max_(?:completion_|output_)?tokens", re.IGNORECASE)
 _STATED_CAP = (
     re.compile(r"at most `?(\d+)`? (?:completion |output )?tokens", re.IGNORECASE),  # OpenAI
