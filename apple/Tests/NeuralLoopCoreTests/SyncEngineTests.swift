@@ -892,7 +892,7 @@ private func copiedMacScenario(copySyncsFirst: Bool) async throws {
     await accounts.b.insert(Data("%PDF".utf8), as: "inbox/b1.pdf")
     let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: accounts)
     _ = try await padSync.sync(account: "sam@example.com")
-    await padSync.forgetInbox(now: Date(timeIntervalSince1970: 2_000_000_000))  // then signed in to another account
+    await padSync.forgetInbox()  // then signed in to another account
     await accounts.use(b: true)
     _ = try await padSync.sync(account: "work@example.com")
     #expect(await accounts.b.data(at: "inbox/b1.pdf") != nil)
@@ -974,17 +974,95 @@ private actor DuringDelete: DriveStore {
     try write(#"{"title":"One"}"#, pad, "inbox/u1.json")
     let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
     _ = try await padSync.sync()
-    await padSync.forgetInbox(now: Date(timeIntervalSince1970: 500_000))
+    await padSync.forgetInbox()
     try FileManager.default.removeItem(at: pad.appendingPathComponent("inbox"))  // what the caller does
     // While that sync deletes u1, another book reaches the Drive and the person removes every book again.
     await drive.onNextDelete {
         await inner.insert(Data("%PDF".utf8), as: "inbox/u2.pdf", modified: Date(timeIntervalSince1970: 1_500_000))
-        await padSync.forgetInbox(now: Date(timeIntervalSince1970: 2_000_000))
+        await padSync.forgetInbox()
     }
     _ = try await padSync.sync()
     #expect(await inner.data(at: "inbox/u1.pdf") == nil)
     _ = try await padSync.sync()
     #expect(await inner.data(at: "inbox/u2.pdf") == nil)  // the second removal still stands
+}
+
+/// A Drive that says nothing about when its files changed (`modifiedTime` missing), or can't be listed for a while.
+private actor Unreliable: DriveStore {
+    let inner: MemoryDrive
+    var noTimes = false
+    var listFails = false
+    init(_ inner: MemoryDrive) { self.inner = inner }
+    func set(noTimes: Bool = false, listFails: Bool = false) { (self.noTimes, self.listFails) = (noTimes, listFails) }
+    func list() async throws -> [SyncFile] {
+        if listFails { throw URLError(.notConnectedToInternet) }
+        return try await inner.list().map { noTimes ? SyncFile(path: $0.path, md5: $0.md5, size: $0.size, id: $0.id) : $0 }
+    }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        try await inner.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws { try await inner.delete(file) }
+}
+
+/// "Remove all books" is timed by the Drive's own clock, never this device's: a device whose clock runs ahead (here,
+/// decades ahead of the stand-in Drive's) doesn't take a book another device adds just afterwards.
+@Test func removingEveryBookKeepsABookAddedJustAfterwardsWhateverThisDevicesClockSays() async throws {
+    let drive = MemoryDrive()
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u1.pdf")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    await padSync.forgetInbox()
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u2.pdf")  // another device, a moment later
+    _ = try await padSync.sync()
+    #expect(await drive.data(at: "inbox/u1.pdf") == nil)
+    #expect(await drive.data(at: "inbox/u2.pdf") != nil)
+}
+
+@Test func removingEveryBookTakesAFileWithNoTimeOnlyIfItWasThereThen() async throws {
+    let inner = MemoryDrive()
+    let drive = Unreliable(inner)
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await drive.set(noTimes: true)
+    await inner.insert(Data("%PDF".utf8), as: "inbox/u1.pdf")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    await padSync.forgetInbox()
+    await inner.insert(Data("%PDF".utf8), as: "inbox/u2.pdf")
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u1.pdf") == nil)
+    #expect(await inner.data(at: "inbox/u2.pdf") != nil)
+}
+
+@Test func removingEveryBookWhileTheDriveCantBeListedWaitsForTheNextSyncsListing() async throws {
+    let inner = MemoryDrive()
+    let drive = Unreliable(inner)
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await inner.insert(Data("%PDF".utf8), as: "inbox/u1.pdf")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    await drive.set(listFails: true)
+    await padSync.forgetInbox()
+    await drive.set()
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u1.pdf") == nil)
+    await inner.insert(Data("%PDF".utf8), as: "inbox/u2.pdf")
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u2.pdf") != nil)  // the removal is done with
+}
+
+@Test func aRemovalSavedByAnOlderVersionStillStands() async throws {
+    let drive = MemoryDrive()
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u1.pdf", modified: Date(timeIntervalSince1970: 1_000))
+    await drive.insert(Data("%PDF".utf8), as: "inbox/u2.pdf", modified: Date(timeIntervalSince1970: 3_000))
+    try write(#"{"dropInbox":[],"dropInboxBefore":2000000}"#, pad, "sync-state.json")
+    _ = try await SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive).sync()
+    #expect(await drive.data(at: "inbox/u1.pdf") == nil)
+    #expect(await drive.data(at: "inbox/u2.pdf") != nil)
 }
 
 /// After a clash, the time counted under the old id is only taken off while that id's file is really there: in

@@ -106,7 +106,6 @@ public struct StudyProgress: Codable, Equatable, Sendable {
     // Changes that carry their own time (use these rather than setting the fields, so merging knows what's newest).
 
     public mutating func setQuiz(_ key: String, _ value: JSONValue, now: Double) { quiz[key] = value; stamp("quiz.\(key)", now) }
-    public mutating func setRecall(_ key: String, _ value: JSONValue, now: Double) { recall[key] = value; stamp("recall.\(key)", now) }
     public mutating func setRemake(_ key: String, _ value: JSONValue, now: Double) { remake[key] = value; stamp("remake.\(key)", now) }
     public mutating func setMapPos(_ id: String, _ point: [Double], now: Double) { mapPos[id] = point; stamp("mapPos.\(id)", now) }
     public mutating func setLast(_ resume: Resume, now: Double) { last = resume; stamp("last", now) }

@@ -101,7 +101,8 @@ public enum PrepProgress {
             let ratio = elapsed / expected
             // Reaches 90 % at the usual time, then creeps towards 99 % without ever claiming done.
             let fraction = ratio < 1 ? 0.9 * ratio : 0.9 + 0.09 * (1 - exp(-(ratio - 1)))
-            let slow = ratio > 1.3
+            // Only once it has run long enough to say "N min so far": a quick item that's just started isn't slow.
+            let slow = ratio > 1.3 && elapsed >= slowAfter
             // Only NotebookLM's own work is put down to NotebookLM being busy.
             let why = item.by == "NotebookLM" ? ": NotebookLM can be slow when it's busy." : "."
             let detail = slow
@@ -121,8 +122,11 @@ public enum PrepProgress {
 
     /// How long it has really been going: "Just started", "4 min so far".
     static func soFar(_ seconds: Double) -> String {
-        seconds < 45 ? "Just started" : "\(minutes(seconds)) so far"
+        seconds < slowAfter ? "Just started" : "\(minutes(seconds)) so far"
     }
+
+    /// Below this many seconds an item has "just started", so it's never called slow.
+    static let slowAfter = 45.0
 
     static func left(_ seconds: Double) -> String {
         if seconds < 45 { return "Almost there" }

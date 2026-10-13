@@ -247,6 +247,25 @@ public struct Book: Decodable, Equatable, Sendable {
     }
 }
 
+extension Book {
+    /// A book folder's book.json, or book-data.js from books made before the app (only when there's no book.json).
+    public static func load(from folder: URL) -> Book? {
+        if let data = try? Data(contentsOf: folder.appendingPathComponent("book.json")) {
+            return try? JSONDecoder().decode(Book.self, from: data)
+        }
+        guard let text = try? String(contentsOf: folder.appendingPathComponent("book-data.js"), encoding: .utf8) else { return nil }
+        return fromBookData(text)
+    }
+
+    /// book-data.js as the old pipeline wrote it: `window.BOOK = <book.json's payload>;` (read as data, never run).
+    public static func fromBookData(_ script: String) -> Book? {
+        var text = script.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("window.BOOK = ") { text.removeFirst("window.BOOK = ".count) }
+        if text.hasSuffix(";") { text.removeLast() }
+        return try? JSONDecoder().decode(Book.self, from: Data(text.utf8))
+    }
+}
+
 extension KnowledgeGraph {
     static let empty = try! JSONDecoder().decode(KnowledgeGraph.self, from: Data("{}".utf8))
 }

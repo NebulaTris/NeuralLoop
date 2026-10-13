@@ -19,11 +19,6 @@ public enum Remake {
     /// A guess shorter than this only matches a branch word for word, so "e" can't match "Failure modes".
     static let minimumSubstring = 4
 
-    /// 0-3 points for how many key points an answer covered.
-    public static func recallScore(covered: Int, total: Int) -> Int {
-        total > 0 ? Int((3 * Double(covered) / Double(total)).rounded()) : 0
-    }
-
     static func significantWords(_ text: String) -> [String] {
         let cleaned = String(text.lowercased().map { (c: Character) -> Character in c.isLetter || c.isNumber ? c : " " })
         return cleaned.split(separator: " ").map(String.init).filter { $0.count > 3 && !stopWords.contains($0) }

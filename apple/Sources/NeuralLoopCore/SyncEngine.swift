@@ -130,7 +130,7 @@ struct SyncState: Codable {
     struct Attempt: Codable { var count: Int; var last: Double }
     var hashes: [String: Hash] = [:]
     var taken: Set<String> = []   // Mac: inbox paths already turned into books
-    // What follows, down to `dropInboxBefore`, is about one Google account's Drive (`account`); see `Records`.
+    // What follows, down to `dropInboxPending`, is about one Google account's Drive (`account`); see `Records`.
     var sent: Set<String> = []    // pad: inbox paths uploaded
     var removed: Set<String> = []          // books removed (here or on another device) in this account's library
     var removeFromDrive: Set<String> = []  // removed here, still to be taken out of the Drive
@@ -138,8 +138,9 @@ struct SyncState: Codable {
     var attempted: [String: [String]] = [:]  // … → md5s sent there whose answer never came back (the last few)
     var sentLogs: [String: [String: [String: Double]]] = [:]  // … → md5 (uploaded or attempted) → the study log in it
     var retired: [String: [String]] = [:]  // progress paths under an id we gave up → the md5s we wrote there
-    var dropInbox: Set<String> = []        // inbox paths to take out of the Drive ("Remove all books")
-    var dropInboxBefore: Double?           // … and every inbox upload older than this (Unix ms)
+    var dropInbox: Set<String> = []        // inbox paths to take out of the Drive ("Remove all books"), and those listed then
+    var dropInboxBefore: Double?           // … and every inbox upload the Drive says is older than this (its own time, Unix ms)
+    var dropInboxPending = false           // … the Drive couldn't be listed then: the next sync's listing stands in
     var account: String?                   // the Google account the records above belong to (a hash, never the address)
     var accounts: [String: Records] = [:]  // … and other accounts' (signing in to one and back keeps each its own)
     var removedEver: Set<String> = []      // books removed under any account (their ids are never reused here)
@@ -162,6 +163,7 @@ struct SyncState: Codable {
         var sent: Set<String> = []
         var dropInbox: Set<String> = []
         var dropInboxBefore: Double?
+        var dropInboxPending = false
 
         init() {}
         init(from decoder: Decoder) throws {  // records saved before the newer fields lack them
@@ -175,6 +177,7 @@ struct SyncState: Codable {
             sent = (try? c.decode(Set<String>.self, forKey: .sent)) ?? []
             dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
             dropInboxBefore = try? c.decode(Double.self, forKey: .dropInboxBefore)
+            dropInboxPending = (try? c.decode(Bool.self, forKey: .dropInboxPending)) ?? false
         }
     }
 
@@ -184,12 +187,14 @@ struct SyncState: Codable {
             var r = Records()
             (r.uploaded, r.attempted, r.retired, r.sentLogs) = (uploaded, attempted, retired, sentLogs)
             (r.removed, r.removeFromDrive, r.sent, r.dropInbox, r.dropInboxBefore) = (removed, removeFromDrive, sent, dropInbox, dropInboxBefore)
+            r.dropInboxPending = dropInboxPending
             return r
         }
         set {
             (uploaded, attempted, retired, sentLogs) = (newValue.uploaded, newValue.attempted, newValue.retired, newValue.sentLogs)
             (removed, removeFromDrive, sent, dropInbox, dropInboxBefore)
                 = (newValue.removed, newValue.removeFromDrive, newValue.sent, newValue.dropInbox, newValue.dropInboxBefore)
+            dropInboxPending = newValue.dropInboxPending
         }
     }
 
@@ -209,6 +214,15 @@ struct SyncState: Codable {
 
     /// Inbox paths sent to any account (a pad never sends one book to a second account's Mac too).
     var sentAnywhere: Set<String> { accounts.values.reduce(sent) { $0.union($1.sent) } }
+
+    /// "Remove all books", as the Drive stood then (`listed`): its inbox files, and its own time (the newest file in it).
+    mutating func forgetInbox(listed: [SyncFile]) {
+        dropInbox.formUnion(listed.map(\.path).filter(SyncLayout.isInbox))
+        if let driveNow = listed.compactMap(\.modified).max() {
+            dropInboxBefore = max(dropInboxBefore ?? 0, driveNow.timeIntervalSince1970 * 1000)
+        }
+        dropInboxPending = false
+    }
 
     /// What we sent to our own progress file changed: logs are kept only for md5s still known to be ours there.
     mutating func pruneLogs(_ path: String) {
@@ -259,6 +273,7 @@ struct SyncState: Codable {
         tries = (try? c.decode([String: Attempt].self, forKey: .tries)) ?? [:]
         dropInbox = (try? c.decode(Set<String>.self, forKey: .dropInbox)) ?? []
         dropInboxBefore = try? c.decode(Double.self, forKey: .dropInboxBefore)
+        dropInboxPending = (try? c.decode(Bool.self, forKey: .dropInboxPending)) ?? false
         noteAt = try? c.decode(Double.self, forKey: .noteAt)
         noteName = try? c.decode(String.self, forKey: .noteName)
         noteDevice = try? c.decode(String.self, forKey: .noteDevice)
@@ -332,13 +347,19 @@ public actor SyncEngine {
     }
 
     /// "Remove all books": every book waiting in the inbox leaves the Drive too (whether sent from here or not yet
-    /// taken by the Mac), on the next sync. The caller empties the local inbox folder.
-    public func forgetInbox(now: Date = Date()) {
+    /// taken by the Mac), on the next sync. The caller empties the local inbox folder. What's waiting is timed by the
+    /// Drive's own clock, never this device's (which may run ahead, and take a book another device adds just after):
+    /// the inbox files listed now, and any the Drive says changed before the newest file it lists now. If the Drive
+    /// can't be listed now, the next sync's listing stands in.
+    public func forgetInbox() async {
         let local = ((try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil)) ?? [])
             .map { "inbox/\($0.lastPathComponent)" }
         state.dropInbox.formUnion(state.sent.union(local).filter(SyncLayout.isInbox))
-        state.dropInboxBefore = now.timeIntervalSince1970 * 1000
         state.tries = [:]
+        state.dropInboxPending = true
+        save()
+        guard let listed = try? await store.list() else { return }
+        state.forgetInbox(listed: listed)
         save()
     }
 
@@ -392,6 +413,7 @@ public actor SyncEngine {
             report.removedElsewhere.append(id)
         }
         // "Remove all books": inbox uploads leave the Drive.
+        if state.dropInboxPending { state.forgetInbox(listed: remote) }
         if !state.dropInbox.isEmpty || state.dropInboxBefore != nil {
             // What's being dropped now: `forgetInbox` may run again while this awaits the Drive, and what it adds then
             // stays for the next sync (only this snapshot is cleared afterwards).
@@ -662,10 +684,12 @@ public actor SyncEngine {
         do { try await store.delete(file) } catch DriveError.http(404, _) {}
     }
 
+    /// Listed when every book was removed, or older (by the Drive's clock) than the newest file listed then. A file
+    /// the Drive gives no time for goes only if it was listed then.
     private static func drops(_ file: SyncFile, paths: Set<String>, before: Double?) -> Bool {
         if paths.contains(file.path) { return true }
-        guard let before else { return false }
-        return (file.modified.map { $0.timeIntervalSince1970 * 1000 } ?? 0) < before
+        guard let before, let modified = file.modified else { return false }
+        return modified.timeIntervalSince1970 * 1000 < before
     }
 
     /// Mac: every inbox book here that isn't taken yet, unless it's waiting out a back-off or Pip gave up on it.

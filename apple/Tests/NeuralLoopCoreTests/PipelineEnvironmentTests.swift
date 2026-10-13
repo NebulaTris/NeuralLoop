@@ -29,3 +29,17 @@ import Testing
     #expect(env["SOMETHING_ELSE"] == nil)
     #expect(env["OPENROUTER_API_KEY"] == "or")
 }
+
+@Test func noProviderSDKSettingsComeFromWhereTheAppWasStarted() {
+    // The Anthropic and OpenAI SDKs read these themselves: an address, a token, an organization, extra headers.
+    let fromTheShell = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_URL", "ANTHROPIC_CUSTOM_HEADERS",
+                        "ANTHROPIC_PROFILE", "ANTHROPIC_IDENTITY_TOKEN_FILE", "OPENAI_BASE_URL", "OPENAI_API_BASE",
+                        "OPENAI_ORG_ID", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID", "OPENAI_CUSTOM_HEADERS",
+                        "OPENAI_ADMIN_KEY", "OPENROUTER_BASE_URL", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY"]
+    var inherited = ["PATH": "/usr/bin", "NEURALLOOP_VIDEO": "0"]
+    for name in fromTheShell { inherited[name] = "http://elsewhere.example" }
+    let env = PipelineEnvironment.make(inherited: inherited, keys: ["ANTHROPIC_API_KEY": "saved"], aiConfig: nil)
+    for name in fromTheShell { #expect(env[name] == nil, "\(name) came through") }
+    #expect(env["ANTHROPIC_API_KEY"] == "saved")
+    #expect(env["PATH"] == "/usr/bin" && env["NEURALLOOP_VIDEO"] == "0")
+}

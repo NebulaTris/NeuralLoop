@@ -15,7 +15,7 @@ public enum PipelineLine: Equatable, Sendable {
 
     public static func parse(_ raw: String) -> PipelineLine {
         let line = raw.trimmingCharacters(in: .whitespaces)
-        if line.hasPrefix("Book: ") || line.hasPrefix("Study site:") { return .finished }  // "Study site:" from older pipelines
+        if line.hasPrefix("Book: ") { return .finished }
         if line.hasPrefix("setup:") { return .setup(line.dropFirst("setup:".count).trimmingCharacters(in: .whitespaces)) }
         if let m = line.firstMatch(of: /^added chapter (\d+):/) { return .added(chapter: Int(m.1)!) }
         if let m = line.firstMatch(of: /^✓ chapter (\d+) (\w+) \(/) { return .made(chapter: Int(m.1)!, item: String(m.2)) }

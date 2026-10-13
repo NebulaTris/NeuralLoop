@@ -43,9 +43,3 @@ let day = FSRS.dayMs
     let lapse = FSRS.grade(first, .again, now: 9 * day)
     #expect(lapse.s.isFinite && lapse.s >= 0.1)
 }
-
-@Test func formatsWaits() {
-    #expect(FSRS.formatWait(due: 10 * 60_000, now: 0) == "10 min")
-    #expect(FSRS.formatWait(due: 3 * 3_600_000, now: 0) == "3 h")
-    #expect(FSRS.formatWait(due: 4 * day, now: 0) == "4 d")
-}

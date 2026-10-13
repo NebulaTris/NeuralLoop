@@ -5,11 +5,9 @@ public enum RunProblemText {
     public static func card(code: Int32, tail: [String] = []) -> String {
         switch code {
         case 2:
-            // Exit 2 is also another run already having the book, or chapters asked for that didn't make sense
-            // (the pipeline's `ALREADY_RUNNING` and `parse_selection` messages): neither is about the file itself.
-            if tail.contains(where: { $0.contains("already being prepared") }) {
-                return "Pip is already preparing this book in another run and will carry on there."
-            }
+            // Exit 2 is also chapters asked for that didn't make sense (the pipeline's `parse_selection` messages),
+            // which isn't about the file itself. (Another run already having the book is never a problem: the app
+            // shows nothing for it, `Library.outcome`.)
             if tail.contains(where: { $0.hasPrefix("Invalid chapter selection") || $0.hasPrefix("Invalid range") }) {
                 return "Pip got mixed up about which chapters to prepare. Open the book and choose Prepare more to prepare them all."
             }

@@ -361,17 +361,7 @@ final class Library {
     }
 
     /// book.json, or book-data.js from books made before the app existed.
-    nonisolated static func loadBook(_ folder: URL) -> Book? {
-        let decoder = JSONDecoder()
-        if let data = try? Data(contentsOf: folder.appendingPathComponent("book.json")) {
-            return try? decoder.decode(Book.self, from: data)
-        }
-        guard var text = try? String(contentsOf: folder.appendingPathComponent("book-data.js"), encoding: .utf8) else { return nil }
-        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("window.BOOK = ") { text.removeFirst("window.BOOK = ".count) }
-        if text.hasSuffix(";") { text.removeLast() }
-        return try? decoder.decode(Book.self, from: Data(text.utf8))
-    }
+    nonisolated static func loadBook(_ folder: URL) -> Book? { Book.load(from: folder) }
 
     // MARK: adding and preparing
 
