@@ -34,7 +34,12 @@ class FakeClient:
         # Every quiz, deck, podcast and video asked for, as NotebookLM lists them (artifacts.list_*).
         self.made: list[SimpleNamespace] = []
         self.notebooks = SimpleNamespace(create=self._create_notebook)
-        self.sources = SimpleNamespace(add_file=self._add_file, add_text=self._add_text)
+        self.sources = SimpleNamespace(
+            add_file=self._add_file,
+            add_text=self._add_text,
+            wait_until_ready=self._wait_until_ready,
+            delete=self._delete_source,
+        )
         self.chat = SimpleNamespace(ask=self._ask)
         self.mind_maps = SimpleNamespace(generate=self._generate_mind_map)
         self.artifacts = SimpleNamespace(
@@ -80,6 +85,14 @@ class FakeClient:
 
     async def _add_text(self, notebook_id, title, content, **kwargs):
         return await self._add_file(notebook_id, title, title=title)
+
+    async def _wait_until_ready(self, notebook_id, source_id, **kwargs):
+        await self._pause()
+        return SimpleNamespace(id=source_id)
+
+    async def _delete_source(self, notebook_id, source_id):
+        await self._pause()
+        self.source_titles.pop(source_id, None)
 
     def _title_of(self, task_id) -> str:
         return self.source_titles.get(str(task_id).split("|")[0], "this chapter")
@@ -311,6 +324,56 @@ class FakeLostReplyClient(FakeClient):
         self._record(source_ids, **kwargs)
         self.asked.append(self.made[-1].kind)
         raise RPCTimeoutError("Request timed out calling CREATE_ARTIFACT")
+
+
+class SourceTimeoutError(TimeoutError):
+    """notebooklm-py's name: the source was made, but NotebookLM hadn't finished reading it in time."""
+
+    def __init__(self, source_id: str, timeout: float = 900.0):
+        self.source_id, self.timeout = source_id, timeout
+        super().__init__(f"Source {source_id} not ready after {timeout:.1f}s")
+
+
+class SourceProcessingError(Exception):
+    """notebooklm-py's name: the source was made, but NotebookLM couldn't read it."""
+
+    def __init__(self, source_id: str):
+        self.source_id = source_id
+        super().__init__(f"Source {source_id} failed to process")
+
+
+class FakeSlowSourceClient(FakeClient):
+    """NotebookLM takes chapter `only` as a source but is slow reading it: the add's own wait runs out, and
+    so do the next `slow` waits for that source (or, `broken`, it can't read it at all)."""
+
+    def __init__(self, only: int, slow: int = 0, broken: bool = False):
+        super().__init__(delay=0)
+        self.only, self.slow, self.broken = only, slow, broken
+        self.uploads: list[str] = []
+        self.ready_waits = 0
+        self.reading: set[str] = set()
+        self.deleted: list[str] = []
+
+    async def _add_file(self, notebook_id, path, **kwargs):
+        source = await super()._add_file(notebook_id, path, **kwargs)
+        title = kwargs.get("title") or str(path)
+        self.uploads.append(title)
+        if title.startswith(f"{self.only:02d} "):
+            self.reading.add(source.id)
+            raise (SourceProcessingError if self.broken else SourceTimeoutError)(source.id)
+        return source
+
+    async def _wait_until_ready(self, notebook_id, source_id, **kwargs):
+        if source_id in self.reading:
+            self.ready_waits += 1
+            if self.ready_waits <= self.slow:
+                raise SourceTimeoutError(source_id)
+            self.reading.discard(source_id)
+        return await super()._wait_until_ready(notebook_id, source_id, **kwargs)
+
+    async def _delete_source(self, notebook_id, source_id):
+        self.deleted.append(source_id)
+        await super()._delete_source(notebook_id, source_id)
 
 
 class FakeQuotaClient(FakeClient):

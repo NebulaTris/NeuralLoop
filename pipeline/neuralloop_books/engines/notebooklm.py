@@ -23,6 +23,10 @@ from ..state import TODO, WORKING, BookState
 MAX_RELOADS_PER_RUN = 6
 
 
+# NotebookLM took the chapter but hadn't finished reading it when the wait ran out.
+STILL_READING = "NotebookLM is still reading this chapter; Pip will look again next run."
+
+
 class NoSourceYet(RuntimeError):
     """NotebookLM wouldn't take this chapter this run (a limit, or it didn't answer): its items wait for the
     next run, which adds it again. Other chapters' items of the same kind carry on, and auto never makes them
@@ -82,7 +86,7 @@ class NotebookLMEngine:
         )
         stuck: BaseException | None = None  # once NotebookLM won't take one chapter, don't ask for more
         for chapter in state.chapters:
-            if chapter.get("sourceId") or not _has_work(chapter):
+            if _source_ready(chapter) or not _has_work(chapter):
                 continue
             if stuck is not None:
                 self._no_source[chapter["n"]] = stuck
@@ -108,7 +112,7 @@ class NotebookLMEngine:
             notebook = self._state.data.get("notebookId") if self._state is not None else None
             source = chapter.get("sourceId")
             try:
-                if not source and self._state is not None:
+                if not _source_ready(chapter) and self._state is not None:
                     await self._add_again(chapter)
                 return await self.maker.make(task, chapter)
             except Exception as error:  # a stale session or a hiccup is handled here; anything else goes up
@@ -157,21 +161,60 @@ class NotebookLMEngine:
         return state.data["notebookId"]
 
     async def _add_source(self, chapter: dict) -> None:
-        """Add the chapter to the notebook (once, however many of its items ask at the same time)."""
+        """Add the chapter to the notebook (once, however many of its items ask at the same time). A source
+        NotebookLM made but hadn't finished reading is kept (`sourceReady: false`) and waited for by the
+        next run, never uploaded again: that would leave duplicates in the notebook."""
         lock = self._source_locks.setdefault(chapter["n"], asyncio.Lock())
         async with lock:
-            while not chapter.get("sourceId"):
+            while not _source_ready(chapter):
                 async with self._notebook_lock:
                     notebook = await self._ensure_notebook()
+                made = chapter.get("sourceId")
                 try:
-                    source = await self._patiently(lambda at=notebook: self._upload(at, chapter))
-                except Exception as error:  # a vanished notebook is made again once; anything else goes up
+                    if made:
+                        await self._patiently(
+                            lambda at=notebook, made=made: self._until_ready(at, made), _nothing_made
+                        )
+                    else:
+                        source = await self._patiently(
+                            lambda at=notebook: self._upload(at, chapter), _nothing_made
+                        )
+                        chapter["sourceId"] = source.id
+                except Exception as error:  # a source made but not yet read is kept; a vanished one replaced
+                    made = made or _made_source(error)
+                    if made and _source_unreadable(error):
+                        await self._drop_source(notebook, chapter, made)
+                        raise
+                    if made and not chapter.get("sourceId"):
+                        chapter["sourceId"], chapter["sourceReady"] = made, False
+                        self._state.save()
                     if _not_found(error, "Notebook") and await self._renew_notebook(notebook):
                         continue
+                    if _not_found(error, "Source") and made and chapter["n"] not in self._sources_renewed:
+                        self._sources_renewed.add(chapter["n"])
+                        self._forget_source(chapter)
+                        continue
                     raise
-                chapter["sourceId"] = source.id
+                chapter.pop("sourceReady", None)
                 self._state.save()
                 self.opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
+
+    async def _until_ready(self, notebook: str, source_id: str) -> None:
+        await self.client.sources.wait_until_ready(notebook, source_id, timeout=SOURCE_TIMEOUT)
+
+    async def _drop_source(self, notebook: str, chapter: dict, source_id: str) -> None:
+        """NotebookLM couldn't read the source it made: take it out of the notebook, so a later retry
+        starts clean, and forget it here."""
+        with contextlib.suppress(Exception):  # tidying up is best effort; the chapter fails either way
+            await self.client.sources.delete(notebook, source_id)
+        self._forget_source(chapter)
+
+    def _forget_source(self, chapter: dict) -> None:
+        chapter["sourceId"] = None
+        chapter.pop("sourceReady", None)
+        forget_requests(chapter)
+        self.maker.forget_chapter(chapter["n"])
+        self._state.save()
 
     async def _add_again(self, chapter: dict) -> None:
         """A chapter whose source went away mid-run: a limit or a hiccup leaves just this item waiting."""
@@ -180,6 +223,9 @@ class NotebookLMEngine:
         except Exception as error:  # only a limit or a hiccup is turned into waiting; the rest goes up as is
             reason = _waiting(error)
             if reason is not None:
+                if reason.waiting_message == STILL_READING:
+                    # The chapter's other items wait too, without each waiting out NotebookLM's reading.
+                    self._no_source[chapter["n"]] = reason
                 raise reason from error
             raise
 
@@ -208,6 +254,7 @@ class NotebookLMEngine:
             state.data["notebookId"] = None
             for chapter in state.chapters:
                 chapter["sourceId"] = None
+                chapter.pop("sourceReady", None)
                 forget_requests(chapter)
                 self.maker.forget_chapter(chapter["n"])
             state.save()
@@ -223,20 +270,18 @@ class NotebookLMEngine:
             if chapter["n"] in self._sources_renewed:
                 return False
             self._sources_renewed.add(chapter["n"])
-            chapter["sourceId"] = None
-            forget_requests(chapter)
-            self.maker.forget_chapter(chapter["n"])
-            self._state.save()
+            self._forget_source(chapter)
         return True  # the next attempt adds it again
 
-    async def _patiently(self, call):
-        """Run `call`, riding out hiccups the way items do; NotebookLMBusy when NotebookLM never answers."""
+    async def _patiently(self, call, retry=is_transient_error):
+        """Run `call`, riding out hiccups (the errors `retry` accepts) the way items do; NotebookLMBusy when
+        NotebookLM never answers."""
         delays = list(config.NOTEBOOKLM_RETRY_DELAYS)
         while True:
             try:
                 return await call()
             except Exception as error:  # only hiccups are retried; everything else goes up as it is
-                if not is_transient_error(error):
+                if not retry(error):
                     raise
                 if not delays:
                     tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
@@ -272,6 +317,32 @@ class NotebookLMEngine:
             return True
 
 
+def _source_ready(chapter: dict) -> bool:
+    """The chapter is in the notebook and NotebookLM has read it (a source saved before `sourceReady`
+    existed counts as read)."""
+    return bool(chapter.get("sourceId")) and chapter.get("sourceReady") is not False
+
+
+def _made_source(error: BaseException) -> str | None:
+    """The id of the source NotebookLM made before this error (notebooklm-py's SourceTimeoutError: not read
+    in time; SourceProcessingError: it couldn't read it), else None: nothing was made."""
+    names = {cls.__name__ for cls in type(error).__mro__}
+    if names & {"SourceTimeoutError", "SourceProcessingError"}:
+        source_id = getattr(error, "source_id", None)
+        return source_id if isinstance(source_id, str) and source_id else None
+    return None
+
+
+def _source_unreadable(error: BaseException) -> bool:
+    return any(cls.__name__ == "SourceProcessingError" for cls in type(error).__mro__)
+
+
+def _nothing_made(error: BaseException) -> bool:
+    """A hiccup worth trying again, but never one after NotebookLM made the source: that would add it
+    twice (and its wait already ran its whole timeout)."""
+    return is_transient_error(error) and _made_source(error) is None
+
+
 def _has_work(chapter: dict) -> bool:
     return any(entry.get("status") in (TODO, WORKING) for entry in chapter["tasks"].values())
 
@@ -291,6 +362,8 @@ def _waiting(error: BaseException) -> NoSourceYet | None:
     """A chapter NotebookLM wouldn't take because of a limit or a hiccup waits; None for anything else."""
     if is_quota_error(error):
         return NoSourceYet(_short(error), quota_message("NotebookLM"), limit=True)
+    if _made_source(error) and not _source_unreadable(error):
+        return NoSourceYet(_short(error), STILL_READING, limit=False)
     if getattr(error, "try_later", False) or is_transient_error(error):
         return NoSourceYet(_short(error), NOT_ANSWERING, limit=False)
     return None
