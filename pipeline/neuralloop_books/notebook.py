@@ -146,9 +146,8 @@ def is_auth_error(error: BaseException) -> bool:
 
 
 async def open_client(client_class):
-    """notebooklm-py 0.8+ returns an async context manager; older builds return an awaitable."""
-    client = client_class.from_storage()
-    return client if hasattr(client, "__aenter__") else await client
+    """The saved session as notebooklm-py's async context manager (entering it gives the client)."""
+    return client_class.from_storage()
 
 
 @dataclass
@@ -458,10 +457,8 @@ def _created(artifact) -> float | None:
     made = getattr(artifact, "created_at", None)
     if made is None:
         return None
-    if isinstance(made, (int, float)):
-        return float(made)
     try:
-        return made.timestamp()  # a datetime (notebooklm-py 0.8's are timezone-aware UTC)
+        return made.timestamp()  # a datetime (notebooklm-py's are timezone-aware UTC)
     except (AttributeError, ValueError, OverflowError, OSError):
         return None
 
@@ -473,12 +470,7 @@ def _finished(status) -> None:
     if outcome is None or outcome not in ("failed", "removed"):
         return
     reason = str(getattr(status, "error", None) or "").strip()
-    limited = getattr(status, "is_rate_limited", None)
-    if not isinstance(limited, bool):
-        limited = getattr(status, "error_code", None) == "USER_DISPLAYABLE_ERROR" or bool(
-            reason and _QUOTA.search(reason)
-        )
-    if limited:
+    if getattr(status, "is_rate_limited", False) is True:
         from .models import QuotaError
 
         raise QuotaError(f"NotebookLM's limit was reached ({reason or 'it said to try later'})")
@@ -493,6 +485,6 @@ def _short(error: BaseException) -> str:
 def _whole_wait_ran_out(error: BaseException, seconds: float, timeout: float) -> bool:
     """The wait for an item ran its whole timeout (not one slow status check that timed out)."""
     names = " ".join(cls.__name__ for cls in type(error).__mro__)
-    if "WaitTimeout" in names or "ArtifactTimeout" in names:
+    if "WaitTimeout" in names:  # notebooklm-py's WaitTimeoutError, and ArtifactTimeoutError (a subclass)
         return True
     return isinstance(error, TimeoutError) and seconds >= 0.9 * timeout
