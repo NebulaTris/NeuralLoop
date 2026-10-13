@@ -850,13 +850,17 @@ enum Nudger {
             h.sent(nudge, now: now, day: day ?? Activity.dayKey(now))
             history = h
         }
-        // The big Pip only when nothing else is going on; otherwise (or if its sound won't play) the notification
-        // carries the sound, keeping to Focus.
-        // A gentle nudge never asks the Mac about its windows or microphone.
+        // The big Pip only when nothing else is going on; otherwise the notification carries the sound, keeping to
+        // Focus, except for a test you pressed, which the app plays itself (`NudgeDelivery.player`). If the app's own
+        // sound won't play, the notification carries it after all. A gentle nudge never asks the Mac about its
+        // windows or microphone.
         let current = Self.settings
-        let onScreen = NudgeDelivery.needsMoment(nudge.mood, settings: current)
-            && NudgeDelivery.showsBigPip(nudge.mood, settings: current, moment: NudgeOverlay.moment())
-        let playing = onScreen && NudgeOverlay.shared.show(nudge, volume: current.volume)
+        let moment = NudgeDelivery.needsMoment(nudge.mood, settings: current) ? NudgeOverlay.moment() : NudgeMoment()
+        let playing = switch NudgeDelivery.player(nudge.mood, settings: current, moment: moment, test: test) {
+        case .bigPip: NudgeOverlay.shared.show(nudge, volume: current.volume)
+        case .app: NudgeSounds.play(nudge.mood, volume: current.volume)
+        case .notification: false
+        }
         let mood = nudge.mood
         var picture: (@MainActor () -> URL?)?
         if mood != .gentle { picture = { NudgeSounds.picture(mood) } }

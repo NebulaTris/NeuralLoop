@@ -18,10 +18,29 @@ public struct NudgeMoment: Equatable, Sendable {
     }
 }
 
+/// Who plays a nudge's sound (`NudgeDelivery.player`).
+public enum NudgeSoundPlayer: Equatable, Sendable {
+    /// The big on-screen Pip, at Settings' volume; the notification arrives silently.
+    case bigPip
+    /// The app itself, at Settings' volume, with no big Pip (a test from Settings); the notification arrives silently.
+    case app
+    /// The notification, at the Mac's alert volume.
+    case notification
+}
+
 public enum NudgeDelivery {
     /// The big Pip on screen (true), or a notification only, carrying the sound itself (false).
     public static func showsBigPip(_ mood: NudgeMood, settings: NudgeSettings, moment: NudgeMoment) -> Bool {
         mood != .gentle && settings.bigPip && !moment.screenLocked && !moment.fullScreenInFront && !moment.microphoneInUse
+    }
+
+    /// Who plays a nudge's sound. A scheduled silly nudge: the big Pip when it shows, otherwise the notification (which
+    /// keeps to Focus and the Mac's alert volume). A test pressed in Settings is always heard: when the big Pip can't
+    /// show, the app plays the sound itself, so notifications being off, their sound being off, or Focus never leave
+    /// it silent. The usual nudge's chime is always the notification's own.
+    public static func player(_ mood: NudgeMood, settings: NudgeSettings, moment: NudgeMoment, test: Bool) -> NudgeSoundPlayer {
+        if showsBigPip(mood, settings: settings, moment: moment) { return .bigPip }
+        return test && mood != .gentle ? .app : .notification
     }
 
     /// Whether it's worth asking the Mac what's going on (windows, the microphone): only for a silly nudge that may

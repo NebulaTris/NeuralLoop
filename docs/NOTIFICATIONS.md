@@ -23,7 +23,10 @@ Two more things can make a notification appear, both on request:
 
 - **Test buttons in Settings → Nudges** ("Send a test nudge", "Try" on each Silly mode step). They always go out,
   even with the master switch off, because you pressed them. They're never recorded in the history, so they don't
-  use up a real nudge.
+  use up a real nudge. A silly test is always heard: when the big Pip can't show, the app plays the sound itself
+  (`NudgeDelivery.player`), so notifications being off, their sound being off, or Focus never leave it silent.
+- **"Hear them" in Settings → Nudges** plays each silly sound right in the app (no notification), at the volume
+  slider's level. It works whatever the switches say, like the volume slider (let go of it to hear the first step).
 - **Development flags** (`-NLTestNudge sadViolin|sadMeow|shocked|gentle`). These also always go out.
 
 ## Where the code lives
@@ -35,13 +38,13 @@ to macOS.
 |---|---|
 | `apple/Sources/NeuralLoopCore/Nudges.swift` | `NudgeSettings` (every switch, quiet hours, Silly mode's steps, volume; `isQuiet(now:hour:)` for quiet hours or a pause; lenient decoding of older saved settings), `NudgeHistory` (what was sent and when, and the last visit), `SillyStep`, `NudgeMood`, `Nudge` (title, body, mood, the silly wording), and `Nudges.decide(...)`, the whole nudge policy |
 | `apple/Sources/NeuralLoopCore/ChapterReady.swift` | `ChapterReady.step(...)`: which chapter to announce, if any; `isComplete`; `current`; `message` (the alert's words) |
-| `apple/Sources/NeuralLoopCore/NudgeDelivery.swift` | `NudgeMoment` (screen locked, something full screen in front, microphone in use) `showsBigPip(...)`: whether a silly nudge also gets the big on-screen Pip; `needsMoment` (only then is the Mac asked); `fillsScreen`/`fillsAnyScreen` |
+| `apple/Sources/NeuralLoopCore/NudgeDelivery.swift` | `NudgeMoment` (screen locked, something full screen in front, microphone in use) `showsBigPip(...)`: whether a silly nudge also gets the big on-screen Pip; `player(...)`: who plays the sound (the big Pip, the app for a test, or the notification); `needsMoment` (only then is the Mac asked); `fillsScreen`/`fillsAnyScreen` |
 | `apple/App/Services/Library.swift` | `enum Nudger`: settings and history in UserDefaults, `tick` (every ~5 minutes), `send`, `engaged`/`studying` (visits), `scheduledAllowed`, `watchingChapters`, `announcedChapters`. `Library.announce` runs `ChapterReady` on every shelf refresh (every 4 s) |
 | `apple/App/Services/Notifier.swift` | The only code that talks to `UNUserNotificationCenter`: asking permission (`ask`, `permission`, `openSystemSettings`), `post` (title, body, sound, optional Pip picture), and the click handler (opens the book, or the library) |
-| `apple/App/Services/NudgeSounds.swift` | Each mood's sound file and Pip pose; draws the Pip picture attached to silly notifications |
+| `apple/App/Services/NudgeSounds.swift` | Each mood's sound file and Pip pose; `play` (the sound in the app, for Settings and tests); draws the Pip picture attached to silly notifications |
 | `apple/App/Services/NudgeOverlay.swift` | The big on-screen Pip: a floating card that plays the sound and shrinks away when it ends; `moment()` reads the system state for `NudgeDelivery` |
 | `apple/App/Services/BookSession.swift` | The study clock calls `Nudger.studying()`, so studying counts as a visit |
-| `apple/App/Views/SettingsView.swift` | `NudgesPage` (all the switches, quiet hours, the steps editor, volume, tests) and `NotificationsAllowed` (permission status, with a button that opens System Settings) |
+| `apple/App/Views/SettingsView.swift` | `NudgesPage` (all the switches, quiet hours, the steps editor, "Hear them", volume, tests) and `NotificationsAllowed` (permission status, and whether notification sounds are off, with a button that opens System Settings) |
 | `apple/App/Views/GuidedTour.swift` | The last page of the tour asks for notification permission |
 
 Tests: `NudgeTests.swift`, `ChapterReadyTests.swift`, and `NudgeDelivery`'s tests inside `NudgeTests.swift`, all in
@@ -145,12 +148,18 @@ A visit resets the hours-away clock and the ignored count.
     that list can't be read, it falls back to whether the default input device is running at all; that whole-device
     question also says yes for a headset playing music, which errs towards a quiet notification.
   - Otherwise the notification carries the sound itself, which keeps to Focus and the system's alert volume.
+    A test from Settings is the exception: the app plays the sound itself (`NudgeDelivery.player` says `.app`)
+    and the notification arrives silently.
+  - If the app's own sound won't play (the file is missing), the notification carries the sound after all.
 - **Picture:** the notification gets a picture of the sad or shocked Pip, drawn only when it will actually be used
   and deleted if attaching it fails.
 - **Sounds:**
   - Each mood's sound is `NeuralLoop-<name>.caf`, looked up first in the app's Resources and then in
     `~/Library/Sounds`, falling back to the default chime.
-  - `scripts/install-nudge-sounds.sh` makes them (tags stripped, even loudness, IMA4).
+  - `scripts/install-nudge-sounds.sh` makes them (tags stripped, even loudness, IMA4, at most 12 s; macOS plays
+    the default sound for a notification sound over 30 s).
+  - Settings → Nudges says when NeuralLoop's notifications are allowed but their sounds are off in System
+    Settings (`Notifier.soundsOn`): a silly nudge that comes as a notification would then arrive silently.
   - The bundled ones were made by NeuralLoop's author and are covered by the repository's licence (NOTICE.md).
 
 **Known limit:** macOS doesn't let an app read Focus without the Communication Notifications entitlement, which an

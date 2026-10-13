@@ -44,6 +44,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Whether macOS plays notifications' sounds for NeuralLoop (System Settings → Notifications → NeuralLoop → "Play
+    /// sound for notifications"). Off, a silly nudge that comes as a notification arrives silently.
+    func soundsOn() async -> Bool {
+        await UNUserNotificationCenter.current().notificationSettings().soundSetting != .disabled
+    }
+
     /// Asks macOS (the first time it shows its prompt); once turned off, only System Settings can turn it back on.
     func ask() async -> Permission {
         if await permission() == .off { Self.openSystemSettings(); return .off }

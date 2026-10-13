@@ -55,12 +55,14 @@ enum NudgeSounds {
 
     private static var previewing: NSSound?
 
-    /// Settings → Nudges: hear the volume without sending anything.
-    static func preview(_ mood: NudgeMood, volume: Double) {
+    /// Plays a mood's sound right here, at `volume` (Settings → Nudges, and a test nudge the big Pip can't show):
+    /// what you asked to hear, whatever the notification settings or Focus say. True when it's playing.
+    @discardableResult
+    static func play(_ mood: NudgeMood, volume: Double) -> Bool {
         previewing?.stop()
         previewing = url(mood).flatMap { NSSound(contentsOf: $0, byReference: true) }
         previewing?.volume = Float(volume)
-        previewing?.play()
+        return previewing?.play() == true
     }
 }
 #endif

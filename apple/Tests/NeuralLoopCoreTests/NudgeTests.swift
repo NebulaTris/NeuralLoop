@@ -335,6 +335,30 @@ private func with(_ steps: [SillyStep], repeatEvery: Double = 0) -> NudgeSetting
     }
 }
 
+@Test func aSillyTestFromSettingsIsAlwaysHeard() {
+    let settings = NudgeSettings()
+    let calm = NudgeMoment()
+    var noBigPip = settings
+    noBigPip.bigPip = false
+    let busy = [NudgeMoment(screenLocked: true), NudgeMoment(fullScreenInFront: true), NudgeMoment(microphoneInUse: true)]
+    // A scheduled nudge: the big Pip plays it when it shows; otherwise the notification does (it keeps to Focus).
+    #expect(NudgeDelivery.player(.sadViolin, settings: settings, moment: calm, test: false) == .bigPip)
+    #expect(NudgeDelivery.player(.sadViolin, settings: noBigPip, moment: calm, test: false) == .notification)
+    for moment in busy { #expect(NudgeDelivery.player(.shocked, settings: settings, moment: moment, test: false) == .notification) }
+    // A test you pressed: the app plays it itself when the big Pip can't, so notification settings, Focus, or a call
+    // never leave it silent.
+    #expect(NudgeDelivery.player(.sadMeow, settings: settings, moment: calm, test: true) == .bigPip)
+    #expect(NudgeDelivery.player(.sadMeow, settings: noBigPip, moment: calm, test: true) == .app)
+    for moment in busy { #expect(NudgeDelivery.player(.shocked, settings: settings, moment: moment, test: true) == .app) }
+    // Whatever the switches say: a test goes out with them off too.
+    var off = NudgeSettings()
+    (off.enabled, off.sillySounds) = (false, false)
+    #expect(NudgeDelivery.player(.sadViolin, settings: off, moment: calm, test: true) == .bigPip)
+    // The usual nudge's chime is the notification's own.
+    #expect(NudgeDelivery.player(.gentle, settings: settings, moment: calm, test: true) == .notification)
+    #expect(NudgeDelivery.player(.gentle, settings: settings, moment: calm, test: false) == .notification)
+}
+
 @Test func aWindowCoveringTheWholeScreenCountsAsFullScreen() {
     let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
     #expect(NudgeDelivery.fillsScreen([CGRect(x: 0, y: 0, width: 1512, height: 982)], screen: screen))

@@ -446,14 +446,14 @@ struct NudgesPage: View {
         SettingsCard(title: "Silly mode",
                      note: "When you’ve been away a while, Pip gets dramatic, just for laughs. Each step plays once (hours count from the last time you used NeuralLoop), only when something is waiting for you, never in quiet hours, and opening NeuralLoop cheers Pip right up.") {
             if !settings.enabled {
-                Text("Silly mode needs “Notifications from Pip”: turn it on above to use it. The Try buttons work either way.")
+                Text("Silly mode needs “Notifications from Pip”: turn it on above to use it. Try and the sounds work either way.")
                     .font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
             }
             sillyControls
         }
     }
 
-    /// The steps can be edited only while Silly mode can actually go out; the Try buttons always work (you asked).
+    /// The steps can be edited only while Silly mode can actually go out; Try, the sounds, and the volume always work (you asked).
     private var stepsEditable: Bool { settings.enabled && settings.sillySounds }
 
     @ViewBuilder private var sillyControls: some View {
@@ -468,16 +468,24 @@ struct NudgesPage: View {
             .labelsHidden().pickerStyle(.radioGroup)
         }
         .disabled(!stepsEditable)
+        // Hearing the sounds never depends on a switch, a notification setting, or Focus: you asked.
+        Field(label: "Hear them") {
+            ForEach(SillyStep.sounds, id: \.self) { mood in
+                Button { NudgeSounds.play(mood, volume: settings.volume) } label: { Label(mood.name, systemImage: "speaker.wave.2") }
+                    .help("Play this sound")
+            }
+        }
+        .controlSize(.small)
         Field(label: "Volume") {
             Slider(value: $settings.volume, in: 0.1...1) { editing in
-                if !editing { NudgeSounds.preview(settings.ladder.first?.sound ?? .sadViolin, volume: settings.volume) }
+                if !editing { NudgeSounds.play(settings.ladder.first?.sound ?? .sadViolin, volume: settings.volume) }
             }
             .frame(width: 220)
+            .accessibilityLabel("Volume")
             Text("\(Int((settings.volume * 100).rounded()))%").font(Theme.body(12)).foregroundStyle(Theme.ink2).monospacedDigit()
         }
-        .disabled(!stepsEditable || !settings.bigPip)
-        Text(settings.bigPip ? "Let go of the slider to hear it. During a call, a full-screen app, or with the screen locked, Pip comes as a notification instead, at your Mac's alert volume (System Settings → Sound)."
-                             : "Notifications play at your Mac's alert volume: System Settings → Sound.")
+        Text(settings.bigPip ? "How loud the big Pip, Try, and the sounds above play; let go of the slider to hear it. During a call, a full-screen app, or with the screen locked, Pip comes as a notification instead, at your Mac's alert volume (System Settings → Sound)."
+                             : "How loud Try and the sounds above play. Silly nudges come as notifications, at your Mac's alert volume: System Settings → Sound.")
                 .font(Theme.body(11)).foregroundStyle(Theme.ink3).fixedSize(horizontal: false, vertical: true)
     }
 
@@ -631,10 +639,16 @@ struct VoicesPage: View {
 struct NotificationsAllowed: View {
     var compact = false
     @State private var permission: Notifier.Permission?
+    @State private var soundsOn = true
 
     var body: some View {
         Group {
             switch permission {
+            case .allowed? where !soundsOn && !compact:
+                HStack {
+                    Label("Notifications are on, without their sounds", systemImage: "speaker.slash").foregroundStyle(Theme.ink2)
+                    Button("Turn sounds on in System Settings") { Notifier.openSystemSettings() }
+                }
             case .allowed?:
                 Label("Notifications are on", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.mint)
             case .off?:
@@ -652,11 +666,16 @@ struct NotificationsAllowed: View {
             }
         }
         .font(Theme.body(13))
-        .task { permission = await Notifier.shared.permission() }
+        .task { await look() }
         // Back from System Settings: look again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { permission = await Notifier.shared.permission() }
+            Task { await look() }
         }
+    }
+
+    private func look() async {
+        permission = await Notifier.shared.permission()
+        soundsOn = await Notifier.shared.soundsOn()
     }
 }
 
