@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2: steadier NotebookLM, any-language recall, and a tidy-up 🧹
+
+- **One stubborn chapter no longer holds up a book.** If NotebookLM is slow to read a chapter, only that chapter
+  waits; the rest carry on. After a few runs Pip adds it once more, and if NotebookLM still can't read it, only that
+  chapter's items stop, so your Mac's AI can make its quiz and cards while its podcast and video stay NotebookLM's.
+- **A full NotebookLM account is handled kindly:** Pip asks once, tells you to free up a notebook in NotebookLM,
+  and carries on next run. Podcasts and videos wait for NotebookLM instead of being made on your Mac.
+- **Recall checks understand every language,** Hindi, Chinese, Thai and accented words included.
+- **Your keys only go where you chose:** settings inherited from wherever NeuralLoop was opened can't send a saved
+  key somewhere else.
+- **Smaller fixes:** a broken AI settings file never stops a book, EPUB chapter titles show once, very long words
+  no longer make an empty speech clip, mind maps always come from the right chapter, "Remove all books" times
+  itself by Google Drive's clock, saving progress never stutters the app, moving into Applications can't be half
+  done, and the menus read "Add a book…" and "Take the tour".
+- **Lighter and tidier:** code and files nothing used are gone, and the docs describe today's app.
+
 ## 0.2.1: chapters that make sense, and a dramatic Pip 🎻
 
 - **Books split into the right chapters.** Guidebooks skip their "how to read this book" pages, contents, and

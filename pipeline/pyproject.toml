@@ -1,6 +1,6 @@
 [project]
 name = "neuralloop-books-pipeline"
-version = "0.2.1"
+version = "0.2.2"
 description = "Turn a PDF or EPUB into learning loops, made with any AI model (or NotebookLM)"
 requires-python = ">=3.10"
 license = { text = "PolyForm-Noncommercial-1.0.0" }
