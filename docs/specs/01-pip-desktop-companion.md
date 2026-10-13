@@ -1,6 +1,7 @@
 # Spec 01 — Pip on your desktop
 
-Status: ready to build (after spec 02) · Read first: `CLAUDE.md`, `docs/specs/03-pip-design-system.md` · Touches: `src-tauri/`, `src/`
+Status: not started (work queue item 5, after spec 02) · Read first: `CLAUDE.md`, `docs/specs/03-pip-design-system.md`,
+`docs/NOTIFICATIONS.md` · Touches: `apple/Sources/NeuralLoopCore`, `apple/App` (Mac only, behind `#if os(macOS)`)
 
 ## What the person sees
 
@@ -11,7 +12,7 @@ Status: ready to build (after spec 02) · Read first: `CLAUDE.md`, `docs/specs/0
     clicking a corner moves Pip there immediately (default bottom right)
   - **Size**: Small (96 px) · Medium (140 px, default) · Large (180 px)
   - Toggle **Keep Pip above other windows** (default on)
-- The menu-bar/tray menu gains a check item **Show Pip on desktop** that mirrors the toggle.
+- The menu-bar panel (`QuickPanel`) gains a toggle **Show Pip on desktop** that mirrors the setting.
 - When on, a small transparent window shows Pip (animated pose) in the chosen corner, 24 px from the screen edges, above the Dock
   and below the menu bar (it uses the monitor's work area). Pip is visible on every Space/desktop.
 - **Click Pip**: a speech bubble appears above Pip (or below, when Pip is in a top corner) with Pip's current line and up to two
@@ -20,13 +21,16 @@ Status: ready to build (after spec 02) · Read first: `CLAUDE.md`, `docs/specs/0
 - **Drag Pip**: moves freely; on release Pip glides to the nearest corner (200 ms), and that corner is saved.
 - **Right-click Pip**: menu with Move to top left / top right / bottom left / bottom right, Size ▸, Pause nudges until tomorrow,
   Hide Pip.
-- **Nudges**: while Pip is on the desktop, a nudge appears as Pip's speech bubble (Pip hops) for 12 s *instead of* a system
-  notification. If Pip is hidden, system notifications work as today.
+- **Nudges**: while Pip is on the desktop, a usual (gentle) nudge appears as Pip's speech bubble (Pip hops) for 12 s
+  *instead of* a system notification, but only when the moment is right by the same rules as the big on-screen Pip
+  (`NudgeDelivery`: the screen isn't locked, nothing in front fills a display, no app is recording); otherwise the system
+  notification comes as today. Silly mode's nudges keep their own big Pip and sound; the desktop Pip never takes the
+  `sad` or `shocked` pose. If Pip is hidden, notifications work as today.
 - **Drop a PDF/EPUB onto Pip**: Pip does a happy hop and the main window opens the import flow from spec 02.
 
 ## What Pip shows (pose and line)
 
-A pure Rust function decides it; priority top to bottom:
+A pure function in `NeuralLoopCore` decides it; priority top to bottom:
 
 | Situation | Pose | Line | Bubble buttons |
 |---|---|---|---|
@@ -39,131 +43,97 @@ A pure Rust function decides it; priority top to bottom:
 | Weekly goal met or all loops closed | `proud` | "All caught up. You're doing great." | Open NeuralLoop |
 | Otherwise | `read` | "Hi! I'm here when you want a small study break." | Add a book · Open NeuralLoop |
 
-Pip is never sad, angry, or disappointed (see spec 03). Buttons map to actions: `open_main`, `open_review` (main window, Review
-screen of the book with the most due cards), `open_chapter {bookId, n, stage}`, `add_book`.
+Pip is never angry or disappointed, and the desktop Pip is never sad (see spec 03; the sad poses belong to Silly mode's
+nudges only). Buttons map to actions: `.openMain`, `.openReview` (main window, Remember step of the book with the most due
+cards), `.openChapter(bookId:, n:, stage:)`, `.addBook`.
 
 ## Architecture
 
+Logic stays pure and tested in `NeuralLoopCore`; the window and its view stay thin in `apple/App` (golden rule 2).
+
 ```
-src-tauri/src/companion.rs   window lifecycle, positioning, snapping, state computation + `companion` events
-src-tauri/src/settings.rs    Settings gains `companion: CompanionSettings`
-src-tauri/src/tray.rs        CheckMenuItem "Show Pip on desktop"
-src-tauri/src/nudge.rs       tick(): if companion visible → emit to companion instead of notification
-src-tauri/capabilities/companion.json   permissions for the "pip" window only
-src-tauri/tauri.conf.json    "pip" window + "macOSPrivateApi": true (required for transparent windows on macOS)
-src/pip.html                 the companion page
-src/js/companion.js          DOM: render pose, bubble, buttons, drag start, drop target, context menu request
-src/js/companion-logic.js    pure: bubble placement, button list, timing
-src/companion.css            styles (transparent background, bubble)
-src/js/settings.js           the "Pip on your desktop" card
-src/js/main.js               handles `companion-action` events in the main window (navigate)
+apple/Sources/NeuralLoopCore/Companion.swift     pure: settings, corner geometry, snapping, what Pip shows, bubble layout
+apple/Tests/CompanionTests.swift                 Swift Testing, written first
+apple/App/Services/DesktopPip.swift              the NSPanel: show/hide, place, drag and snap, drop target, context menu
+apple/App/Views/DesktopPipView.swift             PipView + speech bubble + buttons (thin)
+apple/App/Views/SettingsView.swift               the "Pip on your desktop" card (Settings → Nudges)
+apple/App/Views/QuickPanel.swift                 the "Show Pip on desktop" toggle
+apple/App/Services/Library.swift                 Nudger: hands a gentle nudge to the desktop Pip when it's showing
 ```
 
-### Window (`src-tauri/tauri.conf.json`)
+### Core: `Companion.swift`
 
-```json
-{ "label": "pip", "url": "pip.html", "title": "Pip", "width": 260, "height": 260,
-  "transparent": true, "decorations": false, "shadow": false, "resizable": false, "skipTaskbar": true,
-  "alwaysOnTop": true, "visibleOnAllWorkspaces": true, "focus": false, "visible": false, "dragDropEnabled": true }
-```
-and `"app": { "macOSPrivateApi": true, … }`. Window size follows the Size setting: `side = pip + 120` px (room for the bubble).
-The page background must be fully transparent (`html, body { background: transparent }`), no scrollbars.
+```swift
+public enum Corner: String, Codable, CaseIterable, Sendable { case topLeft, topRight, bottomLeft, bottomRight }
 
-### Rust: `src-tauri/src/companion.rs`
+public struct CompanionSettings: Codable, Equatable, Sendable {
+    public var enabled = false
+    public var corner = Corner.bottomRight
+    public var size = 140.0          // 96 | 140 | 180
+    public var onTop = true
+    public var screen: String?       // the display's name, else the main display
+}                                    // lenient decoding: a missing or bad key keeps its default
 
-```rust
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum Corner { TopLeft, TopRight, BottomLeft, #[default] BottomRight }
+public enum Companion {
+    public static func origin(_ corner: Corner, visibleFrame: CGRect, window: CGSize, margin: CGFloat = 24) -> CGPoint
+    public static func nearestCorner(to center: CGPoint, in visibleFrame: CGRect) -> Corner   // ties → bottom right
+    public static func state(books: [(book: Book, progress: StudyProgress)], preparing: [String], now: Double, hour: Int,
+                             settings: NudgeSettings, recentNudge: (Nudge, Double)?, recentClose: (Int, Double)?) -> CompanionState
+    public static func bubbleBelow(_ corner: Corner) -> Bool       // top corners → below
+    public static func bubbleGrowsLeft(_ corner: Corner) -> Bool   // toward the screen's centre
+    public static func isDrag(from: CGPoint, to: CGPoint) -> Bool  // moved more than 4 pt
+    public static let bubbleSeconds = 12.0, hopSeconds = 3.0
+}
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-#[serde(rename_all = "camelCase", default)]
-pub struct CompanionSettings { pub enabled: bool, pub corner: Corner, pub size: u32 /* 96 | 140 | 180 */, pub on_top: bool, pub monitor: Option<String> }
-// Default: enabled false, BottomRight, 140, on_top true, monitor None
-
-pub struct Rect { pub x: f64, pub y: f64, pub width: f64, pub height: f64 }   // logical pixels
-
-pub fn corner_position(corner: Corner, work_area: &Rect, window: (f64, f64), margin: f64) -> (f64, f64);   // pure
-pub fn nearest_corner(window_center: (f64, f64), work_area: &Rect) -> Corner;                               // pure
-
-#[derive(Serialize, Debug, PartialEq)]
-pub struct CompanionState { pub pose: &'static str, pub line: String, pub actions: Vec<Action> }
-pub fn companion_state(books: &[BookProgress], running: &[String], now: i64, local_hour: u32, settings: &Settings,
-                       recent_nudge: Option<(&Nudge, i64)>, recent_close: Option<(u32, i64)>) -> CompanionState;   // pure, the table above
-
-#[tauri::command] pub fn companion_show(app: AppHandle) -> Result<(), String>
-#[tauri::command] pub fn companion_hide(app: AppHandle) -> Result<(), String>
-#[tauri::command] pub fn companion_set_corner(app: AppHandle, corner: Corner) -> Result<(), String>
-#[tauri::command] pub fn companion_set_size(app: AppHandle, size: u32) -> Result<(), String>
-#[tauri::command] pub fn companion_state_now(app: AppHandle) -> CompanionState
-#[tauri::command] pub fn companion_action(app: AppHandle, action: Action) -> Result<(), String>   // shows main window, emits `companion-action`
-#[tauri::command] pub fn companion_context_menu(app: AppHandle) -> Result<(), String>             // native popup menu
+public struct CompanionState: Equatable, Sendable { public let pose: String; public let line: String; public let actions: [CompanionAction] }
 ```
 
-- Positioning: get the window's current monitor (or the saved `monitor` by name, else primary), use `monitor.work_area()`
-  (physical pixels; divide by `scale_factor()` for logical), compute with `corner_position`, set with `LogicalPosition`.
-  Re-position on `ScaleFactorChanged` and when monitors change (listen for window `Moved`/`Resized`, and re-check every 60 s).
-- Snapping: on `WindowEvent::Moved`, debounce 250 ms (the window stops moving), compute `nearest_corner`, glide there in
-  8 steps over 200 ms, save the corner and monitor name.
-- Distinguish click vs drag in JS: `mousedown` → if the pointer moves > 4 px, call `getCurrentWindow().startDragging()`;
-  otherwise it's a click.
-- State: compute on startup, every 60 s, after `pipeline` done events, after `save_progress`, and after a nudge; emit
-  `companion` `{pose, line, actions}` to the `pip` window only (`app.emit_to("pip", …)`).
-- `nudge::tick`: if `settings.companion.enabled` and the pip window is visible, emit the nudge to the companion
-  (`companion-nudge`) and skip the system notification. Record it for `recent_nudge`.
-- Refactor so `companion_state` and `nudge::decide` share the "due cards" and "half-done chapter" helpers (no duplication).
+- `state` is the table above. It shares the "cards due" and "chapter left halfway" helpers with `Nudges.decide`
+  (`Nudges.reviewedCardsDue` and friends), and quiet hours with `NudgeSettings.isQuiet`: no duplicated rules.
+- The poses come from `PipPose` (`read`, `hop`, `nap`, `play`, `hug`, `study`, `proud`); never `sad` or `shocked`.
+- Settings live in UserDefaults next to the nudge settings, decoded leniently like them.
 
-### Capabilities (`src-tauri/capabilities/companion.json`)
+### App: the window (`DesktopPip.swift`, Mac only)
 
-```json
-{ "identifier": "companion", "windows": ["pip"],
-  "permissions": ["core:event:default", "core:window:allow-start-dragging"] }
-```
-Custom commands are callable from any window by default; keep the companion page to the `companion_*` commands only (code review
-rule, plus a test that greps `src/js/companion.js` for `invoke(` calls and checks each name starts with `companion_`).
-
-### Frontend
-
-- `src/pip.html`: `<div id="pip" aria-label="Pip" role="img"></div><div id="bubble" role="status" aria-live="polite" hidden></div>`,
-  loads `pip-poses.js`, `companion.css`, `js/companion.js` (module).
-- `src/js/companion-logic.js` (pure, tested in `src/test/companion.test.mjs`):
-  `bubblePlacement(corner) → "above" | "below"` (top corners → below), `bubbleSide(corner) → "left" | "right"` (bubble grows
-  toward the screen centre), `visibleButtons(actions) → first two`, `BUBBLE_MS = 12000`, `HOP_MS = 3000`,
-  `isDrag(start, current) → distance > 4`.
-- `src/js/companion.js`: listens for `companion` and `companion-nudge`; renders `window.PIP[pose]` into `#pip`; click toggles the
-  bubble; buttons call `companion_action`; double-click calls `companion_action({type:"open_main"})`; right-click calls
-  `companion_context_menu`; drag-drop via `getCurrentWebview().onDragDropEvent` → on a PDF/EPUB drop call
-  `companion_action({type:"import_book", path})` (main window opens spec 02's flow); other files → Pip bubble "I can read PDF and
-  EPUB books."
-- `src/companion.css`: transparent page; Pip centred at the bottom (or top, per corner); bubble uses the app's tokens
-  (surface, line, ink, radius 18 px, 14 px text, max width 220 px, tail pointing at Pip); respects
-  `prefers-reduced-motion` (no hop, no bubble slide).
-- Settings card in `src/js/settings.js`; corner picker is four `button`s with `aria-pressed` and labels "Top left" etc.
+- A borderless, non-activating `NSPanel` (like `NudgeOverlay`'s): clear background, no shadow, `hidesOnDeactivate = false`,
+  `collectionBehavior = [.canJoinAllSpaces, .stationary]`, level `.floating` when "Keep Pip above other windows" is on, else
+  `.normal`. Side = Pip's size + 120 pt (room for the bubble). It never takes focus from the app in front.
+- Placement: the chosen display's `visibleFrame` (above the Dock, below the menu bar) through `Companion.origin`. Re-place on
+  `NSApplication.didChangeScreenParametersNotification` and when the display goes away (fall back to the main display).
+- Drag: a click that moves more than 4 pt (`Companion.isDrag`) drags the panel; on release, `nearestCorner`, glide there in
+  200 ms (instantly under Reduce Motion), and save the corner and display.
+- Content: `DesktopPipView` hosts `PipView(pose:size:)` (spec 03; Reduce Motion stills it) and the bubble (`Theme` colours,
+  18 pt radius, at most 220 pt wide, a tail pointing at Pip). The bubble is announced to VoiceOver; every button is
+  keyboard-reachable with a visible focus ring.
+- Click toggles the bubble; double-click opens the main window; right-click shows the menu (`NSMenu`). Bubble buttons and
+  menu items go through `Library` (open a book's step, open the picker), then bring the main window forward.
+- Drop: the panel accepts file URLs; a PDF or EPUB goes to `Library.add` (spec 02's preview once it exists) with a happy hop;
+  anything else gets the bubble "I can read PDF and EPUB books."
+- State refresh: at launch, every 60 s, when a run ends, when progress is saved, and after a nudge. Keep idle CPU under 1 %
+  (`PipView` already draws at most 30 frames a second).
+- Nudges: in the `Nudger`, a gentle nudge goes to the desktop Pip's bubble instead of `Notifier` only when the desktop Pip is
+  showing and `NudgeOverlay.moment()` says the moment is right (the `NudgeMoment` rules in `NudgeDelivery`); otherwise
+  it's a notification as today. Silly nudges are untouched. Update `docs/NOTIFICATIONS.md` in the same commit.
 
 ## Tests to write first
 
-Rust (`companion.rs` `mod tests`):
-- `corner_position` for all four corners on a 1440×900 work area at (0, 25) with a 260×260 window and 24 px margin
-- `corner_position` on a second monitor with a negative x origin
-- `nearest_corner` for points in each quadrant and exactly at the centre (ties → bottom right)
-- `companion_state`: one test per table row, plus priority (preparing beats due cards; nudge beats everything for 15 min)
-- `CompanionSettings` defaults and deserialising old settings files without a `companion` key
+Swift Testing (`apple/Tests/CompanionTests.swift`):
+- `origin` for all four corners on a 1440×875 visible frame at (0, 0) with a 260×260 window and a 24 pt margin
+- `origin` on a second display with a negative x origin
+- `nearestCorner` for points in each quadrant and exactly at the centre (ties → bottom right)
+- `state`: one test per table row, plus priority (preparing beats due cards; a nudge beats everything for 15 min), and never
+  a `sad` or `shocked` pose
+- bubble placement and side for each corner, the two-button limit, the drag threshold
+- `CompanionSettings` defaults, and decoding settings saved before the companion existed
 
-JavaScript (`src/test/companion.test.mjs`): placement and side for each corner, two-button limit, drag threshold.
-
-Browser (`tests/test_desktop_ui.py`, new `pip.html` fixture with a fake Tauri that records calls and can emit events):
-- `test_companion_shows_pose_from_state_event`
-- `test_click_opens_bubble_with_buttons_and_closes_after_timeout` (use a short timeout override for tests)
-- `test_bubble_button_invokes_companion_action`
-- `test_settings_corner_picker_calls_set_corner_and_highlights`
-- `test_dropping_a_book_on_pip_requests_import`
+The window, drag, and drop are checked by hand (below); the views stay thin enough not to need tests.
 
 ## Definition of done
 
 - Tests above written first and passing; `make check` green.
 - Manual on macOS (record a 20-second screen capture in the PR):
-  transparent (no grey box or shadow), stays above other windows, visible on every Space, each corner option moves Pip at once,
+  transparent (no grey box or shadow), stays above other windows when asked, visible on every Space, each corner option moves Pip at once,
   the choice survives a restart, dragging snaps to the nearest corner, a nudge shows in the bubble with a hop, dropping a PDF
   opens the import preview, reduced motion stops the animations, idle CPU under 1 %.
-- `CLAUDE.md` "Contracts" and "File map" updated (new commands, events `companion`, `companion-nudge`, `companion-action`,
-  settings `companion`).
+- `CLAUDE.md` "File map" updated (`Companion.swift`, `DesktopPip.swift`, `DesktopPipView.swift`) and the companion
+  settings noted under "Contracts" (UserDefaults); `docs/NOTIFICATIONS.md` says when a nudge becomes Pip's bubble.
