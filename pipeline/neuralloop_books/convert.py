@@ -11,10 +11,11 @@ from typing import Any
 
 # A NotebookLM citation ("… speed [1].", "Fast. [2, 3] Next", "end.[4]") follows prose and ends a clause.
 # Never one right after a name or bracket (matrix[i][0], sorted([3, 1, 2])), after JSON punctuation
-# ("ids": [1, 2]), or one going on into lower-case words ("x [1] times"), and never [0].
+# ("ids": [1, 2]), or one going on into lower-case words ("x [1] times"), and never [0]. A language name
+# ("C++ [1]", "C# [2]") is prose too; an operator ("list + [1, 2]") isn't.
 _CITE = r"\[(?!0\b)\d+(?:\s*[,\-–]\s*\d+)*\]"
 _CITATION = re.compile(
-    r"(?:(?<=[\w.!?;\"'”’*)])\s+|(?<=[.!?\"'”’]))"
+    r"(?:(?:(?<=[\w.!?;\"'”’*)])|(?<=[^\W_]\+)|(?<=[^\W_]\+\+)|(?<=[^\W\d_]#))\s+|(?<=[.!?\"'”’]))"
     + rf"{_CITE}(?:\s*{_CITE})*"
     + r"(?=\s*(?:$|[.,;:!?)\"”’}\]])|\s+[^\sa-z])"
 )

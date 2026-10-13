@@ -11,6 +11,18 @@ class TestLooseJson:
     def test_citation_markers_are_removed(self):
         assert convert.loose_json('{"a": "x" [1], "b": "y" [2, 3]}') == {"a": "x", "b": "y"}
 
+    def test_citations_after_language_names_are_removed(self):
+        assert convert.strip_citations("Use C++ [1].") == "Use C++."
+        assert convert.strip_citations("In C# [2], done.") == "In C#, done."
+        built = convert.strip_citations("Build it with g++ [3] Then run it.")
+        assert built == "Build it with g++ Then run it."
+
+    def test_brackets_after_operators_and_headings_stay(self):
+        for text in ("Concatenate with list + [1, 2].", "x = y + [3]", "Count # [4]", "a ++ [1]"):
+            assert convert.strip_citations(text) == text
+        code = "```cpp\nint x = v[1];\n```\n"
+        assert convert.strip_citations(f"{code}C++ [2].") == f"{code}C++."
+
     def test_valid_json_with_number_lists_is_kept(self):
         answer = '{"tour": [{"title": "Start", "nodeIds": [1, 2]}], "n": [3]}'
         assert convert.loose_json(answer) == {"tour": [{"title": "Start", "nodeIds": [1, 2]}], "n": [3]}
