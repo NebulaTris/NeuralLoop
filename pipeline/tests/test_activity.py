@@ -39,7 +39,7 @@ def test_steps_are_reported_from_inside_the_item_even_on_another_thread(tmp_path
         activity.report("Writing the podcast script")
         await asyncio.to_thread(activity.report, "Voicing the podcast", done=3, total=12)
         assert read(tmp_path)["items"][0]["step"] == "Voicing the podcast"
-        feed.end(1, "audio", seconds=90, ok=True, token=token)
+        feed.end(1, "audio", ok=True, token=token)
 
     asyncio.run(make())
     item_after = read(tmp_path)["items"]
@@ -73,7 +73,7 @@ def test_a_fallback_times_only_the_maker_that_made_the_item(tmp_path):
     async def make():
         token = feed.begin(1, "quiz", "NotebookLM")
         activity.report("NotebookLM couldn't; making it with Ollama", by="Ollama", restart=True)
-        feed.end(1, "quiz", seconds=1200, ok=True, token=token)
+        feed.end(1, "quiz", ok=True, token=token)
 
     asyncio.run(make())
     assert feed.timings == {"Ollama:quiz": [300]}
@@ -90,7 +90,7 @@ def test_estimates_come_from_recent_runs_then_sensible_defaults(tmp_path):
 def test_failed_items_dont_skew_the_estimates_and_closing_clears_the_feed(tmp_path):
     feed = Activity(tmp_path, timings={})
     token = feed.begin(2, "video", "NotebookLM")
-    feed.end(2, "video", seconds=5, ok=False, token=token)
+    feed.end(2, "video", ok=False, token=token)
     assert "NotebookLM:video" not in feed.timings
     feed.close()
     data = read(tmp_path)
@@ -107,7 +107,7 @@ def test_an_item_can_report_its_overall_fraction_across_stages(tmp_path):
         assert item["fraction"] == 0.69 and (item["done"], item["total"]) == (50, 100)
         activity.report("Finishing the video", fraction=1.7)  # never more than all of it
         assert read(tmp_path)["items"][0]["fraction"] == 1.0
-        feed.end(1, "video", seconds=10, ok=True, token=token)
+        feed.end(1, "video", ok=True, token=token)
 
     asyncio.run(make())
 

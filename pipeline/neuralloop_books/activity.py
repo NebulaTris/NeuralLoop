@@ -101,11 +101,9 @@ class Activity:
                 if self._items.pop((n, item), None) is not None:
                     self._write(self._ms(), force=True)
 
-    def end(
-        self, n: int, item: str, seconds: float | None = None, ok: bool = True, token: Token | None = None
-    ) -> None:
+    def end(self, n: int, item: str, ok: bool = True, token: Token | None = None) -> None:
         """The item is done. Its timing runs from its own `started`, which a fallback's restart resets, so
-        only the maker that made it is timed (`seconds` is ignored; kept for older callers)."""
+        only the maker that made it is timed."""
         now = self._ms()
         with self._lock:
             entry = self._items.pop((n, item), None)
