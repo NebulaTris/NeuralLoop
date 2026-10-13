@@ -102,8 +102,10 @@ public enum PrepProgress {
             // Reaches 90 % at the usual time, then creeps towards 99 % without ever claiming done.
             let fraction = ratio < 1 ? 0.9 * ratio : 0.9 + 0.09 * (1 - exp(-(ratio - 1)))
             let slow = ratio > 1.3
+            // Only NotebookLM's own work is put down to NotebookLM being busy.
+            let why = item.by == "NotebookLM" ? ": NotebookLM can be slow when it's busy." : "."
             let detail = slow
-                ? soFar(elapsed) + ", longer than usual. It's still going: NotebookLM can be slow when it's busy."
+                ? soFar(elapsed) + ", longer than usual. It's still going" + why
                 : soFar(elapsed) + " · " + left(expected - elapsed).lowercased()
             return ItemProgress(fraction: max(0.02, fraction), step: item.step, by: item.by, detail: detail, slow: slow, estimated: true)
         }
