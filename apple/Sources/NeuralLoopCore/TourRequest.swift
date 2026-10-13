@@ -1,4 +1,4 @@
-// The guided tour, asked for from Help → Take the Tour (Mac) or Settings (iPad). A request never lowers and raises the
+// The guided tour, asked for from Help → Take the tour (Mac) or Settings (iPad). A request never lowers and raises the
 // flag (a sheet still closing can miss that and leave the flag up with nothing shown): it stays up, and its number
 // changes, so a tour already on screen starts over in place. On the Mac only one window shows it.
 

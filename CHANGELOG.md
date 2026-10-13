@@ -18,7 +18,7 @@
   Pip's drop zone, and Pip hops when it lands) with three numbered steps.
 - **A guided tour** when you first open NeuralLoop: seven short pages with little animations (bring a book, how Pip
   prepares it, the five steps, chapters unlocking, Pip in the menu bar), ending with sign-in and notifications. Help →
-  Take the Tour shows it again.
+  Take the tour shows it again.
 - **One Google sign-in** in Settings → Account for NotebookLM and your library, with your name and email, which account
   each uses, and a list of your devices with when each last synced.
 - Settings → Nudges shows whether notifications are on, with a button to System Settings if they're off.

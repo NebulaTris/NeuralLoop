@@ -1,5 +1,5 @@
 // The guided tour: a few short pages, each with a little animated scene, that show how NeuralLoop works before the
-// first book. New installs see it instead of a plain welcome; Help → Take the Tour (iPad: Settings) shows it again.
+// first book. New installs see it instead of a plain welcome; Help → Take the tour (iPad: Settings) shows it again.
 // Back/Next, the arrow keys, or the dots move between pages; Skip is always there. Reduce Motion rests every scene.
 
 import NeuralLoopCore
@@ -308,7 +308,7 @@ private struct CompanyScene: View {
     }
 }
 
-/// The very first launch: Google sign-in first (the login opens by itself), then the tour. Help → Take the Tour
+/// The very first launch: Google sign-in first (the login opens by itself), then the tour. Help → Take the tour
 /// shows only the tour.
 struct FirstLaunch: View {
     let done: () -> Void
