@@ -44,6 +44,14 @@ private let sample = #"""
     let slow = PrepProgress.of(item, now: 1_000_000 + 15 * minute)
     #expect(slow.slow && (slow.fraction ?? 1) < 0.99 && (slow.fraction ?? 0) > (nearly.fraction ?? 1))
     #expect(slow.detail.contains("longer than usual") && slow.detail.hasPrefix("15 min so far"))
+    #expect(slow.detail.contains("NotebookLM can be slow when it's busy"))
+}
+
+@Test func aSlowItemMadeOnThisMacDoesntBlameNotebookLM() throws {
+    let a = try feed(#"{"items": [{"n": 1, "item": "study", "by": "Ollama", "step": "Writing the study guide", "started": 0, "expected": 60}]}"#)
+    let slow = PrepProgress.of(try #require(a.item(1, "study")), now: 10 * minute)
+    #expect(slow.slow && slow.detail == "10 min so far, longer than usual. It's still going.")
+    #expect(!slow.detail.contains("NotebookLM"))
 }
 
 @Test func withNoCountAndNoEstimateTheBarJustMovesAndSaysWhenItStarted() throws {

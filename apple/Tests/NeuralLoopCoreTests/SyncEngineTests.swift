@@ -945,3 +945,78 @@ private actor RefusesSidecars: DriveStore {
     let arrived = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync().arrived
     #expect(arrived.map(\.lastPathComponent) == ["u1.pdf"] && read(mac, "inbox/u1.json") == #"{"title":"Clean Code"}"#)
 }
+
+/// A Drive that runs something once, while the first delete is on its way (another call reaching the engine then).
+private actor DuringDelete: DriveStore {
+    let inner: MemoryDrive
+    private var hook: (@Sendable () async -> Void)?
+    init(_ inner: MemoryDrive) { self.inner = inner }
+    func onNextDelete(_ hook: @escaping @Sendable () async -> Void) { self.hook = hook }
+    func list() async throws -> [SyncFile] { try await inner.list() }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        try await inner.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws {
+        let run = hook
+        hook = nil
+        await run?()
+        try await inner.delete(file)
+    }
+}
+
+@Test func removingEveryBookWhileASyncIsTidyingTheInboxIsntForgotten() async throws {
+    let inner = MemoryDrive()
+    let drive = DuringDelete(inner)
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"One"}"#, pad, "inbox/u1.json")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    await padSync.forgetInbox(now: Date(timeIntervalSince1970: 500_000))
+    try FileManager.default.removeItem(at: pad.appendingPathComponent("inbox"))  // what the caller does
+    // While that sync deletes u1, another book reaches the Drive and the person removes every book again.
+    await drive.onNextDelete {
+        await inner.insert(Data("%PDF".utf8), as: "inbox/u2.pdf", modified: Date(timeIntervalSince1970: 1_500_000))
+        await padSync.forgetInbox(now: Date(timeIntervalSince1970: 2_000_000))
+    }
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u1.pdf") == nil)
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u2.pdf") == nil)  // the second removal still stands
+}
+
+/// After a clash, the time counted under the old id is only taken off while that id's file is really there: in
+/// another Google account's library (where the old id never wrote) this device's whole history counts and goes up.
+@Test func timeCountedUnderAnOldIDIsOnlyLeftOutWhereThatIDsFileIs() async throws {
+    let accounts = TwoAccounts()
+    let a = try temporaryRoot(), b = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+    try write(#"{"title":"MCP"}"#, a, "books/mcp/book.json")
+    try write(#"{"log":{"d1":100}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com")
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)  // a restored copy, same id
+    try write(#"{"log":{"d1":100,"d2":10}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com")
+    try write(#"{"log":{"d1":100,"d2":20}}"#, b, "books/mcp/progress.json")
+    #expect(try await SyncEngine(root: b, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com").deviceClash)
+    // Right after the clash, before the old id's file has come down: nothing is taken off yet.
+    #expect(studied(b, "mcp") == 120)
+    let copy = SyncEngine(root: b, device: "mac-2", role: .mac, store: accounts)
+    _ = try await copy.sync(account: "sam@example.com")
+    #expect(studied(b, "mcp") == 130)  // the shared history once (in mac1's file), each copy's own time once
+    #expect(await accounts.a.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d2":20}}"#.utf8))
+    // Another Google account: mac1 never wrote there, so none of this device's time is counted elsewhere.
+    await accounts.use(b: true)
+    _ = try await copy.sync(account: "work@example.com")
+    #expect(read(b, "books/mcp/devices/mac1.json") == nil)
+    #expect(studied(b, "mcp") == 120)
+    #expect(await accounts.b.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d1":100,"d2":20}}"#.utf8))
+    // And back: the shared history is counted once again.
+    await accounts.use(b: false)
+    _ = try await copy.sync(account: "sam@example.com")
+    #expect(studied(b, "mcp") == 130)
+    #expect(await accounts.a.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d2":20}}"#.utf8))
+}
