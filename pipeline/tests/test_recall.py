@@ -104,3 +104,41 @@ def test_feedback_is_warm_and_names_the_next_thing_to_add():
         FakeModel(), "The world keeps changing, software is a snapshot, and you need monitoring."
     )
     assert everything["covered"] == [True, True, True] and "every key point" in everything["feedback"]
+
+
+class TrustingGrader(FakeModel):
+    """Says every idea is covered and quotes the whole answer as its evidence."""
+
+    async def complete(self, kind, system, source, prompt, schema=None):
+        answer = prompt.split("<<<", 1)[1].split(">>>", 1)[0]
+        return json.dumps({"covered": True, "evidence": answer})
+
+
+def test_word_matching_keeps_english_behaviour():
+    answer = "Software is a snapshot and you need monitoring."
+    assert recall.word_match(POINTS, answer) == [False, True, True]
+    assert recall.word_match(["this with that"], "this with that") == [False]  # only stop words
+
+
+def test_word_matching_reads_hindi():
+    points = ["दुनिया हमेशा बदलती रहती है", "सॉफ़्टवेयर एक तस्वीर है"]
+    assert recall.word_match(points, "दुनिया हमेशा बदलती रहती है") == [True, False]
+
+
+def test_word_matching_reads_accented_latin_words_whole():
+    points = ["a résumé at the café", "naïve caching"]
+    assert recall.word_match(points, "I left my résumé at the café") == [True, False]
+    assert recall.word_match(points, "a resume at the cafe") == [True, False]  # accents are optional
+    assert recall.word_match(["naïve"], "so naïve") == [True]  # one word, not "na" and "ve"
+
+
+def test_word_matching_reads_scripts_without_spaces():
+    points = ["缓存提高速度", "数据库需要索引"]
+    assert recall.word_match(points, "缓存可以提高速度") == [True, False]
+    assert recall.word_match(["ระบบแคชช่วยให้เร็วขึ้น"], "ระบบแคชช่วยให้เร็วขึ้นมาก") == [True]
+
+
+def test_a_model_verdict_in_hindi_or_chinese_stands_when_its_evidence_is_in_the_answer():
+    for point in ("दुनिया हमेशा बदलती रहती है", "缓存提高速度"):
+        result = asyncio.run(recall.grade(TrustingGrader(), "?", [point], point))
+        assert result["covered"] == [True]

@@ -83,7 +83,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/models/` | Text models: `make_model(provider, model)`, `SetupError`, `QuotaError`, `communicate` (kills a timed-out child); `anthropic`, `openai_compat` (OpenAI, OpenRouter, any compatible `custom` URL), `hermes`, `ollama` (native API, JSON schemas), `opencode`, `fake` |
 | `neuralloop_books/speech/` | Speech: `make_speech(name, voices)`; `rumik` (Rumik OSS-1 via mlx-audio, 8-bit or 4-bit; CC-BY-NC) is the only voice; `fake` for tests |
 | `neuralloop_books/video.py` | Explainer → MP4: deterministic HTML/JS scene (`renderAt(t)`), frames from headless Chromium, PyAV H.264 (h264_videotoolbox first, libx264 only as a last resort) + narration (`NEURALLOOP_VIDEO=0` turns it off) |
-| `neuralloop_books/recall.py` | `grade(model, question, keyPoints, answer)`: one check per key point in parallel, evidence must be in the answer and about the idea; `word_match` fallback |
+| `neuralloop_books/recall.py` | `grade(model, question, keyPoints, answer)`: one check per key point in parallel, evidence must be in the answer and about the idea; `word_match` fallback (words in any script: accents optional, character pairs for scripts without spaces) |
 | `neuralloop_books/aiconfig.py` | `load(path)` → `AIConfig` (engine, make, per-item `tasks`, recall model, voices, voice quality, podcast length) from the person's `ai.json` |
 | `neuralloop_books/setup.py` | First run: `ensure_ollama` (bundled or installed; started with a filtered environment, no provider keys), `ensure_model` (default by memory: `qwen3:8b`/`qwen3:4b`; runs on a run's first local item too, `any_will_do` when no model is named (any installed chat model will do; embedding models like `nomic-embed-text` never count, and Ollama never picks one), step "Downloading your Mac's AI (first time only)"), `ensure_rumik` |
 | `neuralloop_books/account.py` | Google sign-in via `notebooklm login` (Chrome when installed, else Chromium downloaded once into the person's `browsers/` folder, never inside the signed app; the login runs in its own process group, so stopping a sign-in (SIGTERM, "Not now") closes its browser too and exits 130), `status()`, `sign_out()`, `usage()` (NotebookLM's five-hour and weekly allowance) |
@@ -98,7 +98,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `FakeStaleSessionClient`, `ENUMS`) |
 | `neuralloop_books/selection.py`, `prompts.py`, `config.py`, `testing.py` | `parse_selection`; prompts (sent verbatim); task names, enums, timeouts, copy, `audio_length`; test book builders |
 | `neuralloop_books/assets/` | Fonts and Pip's artwork for explainer videos |
-| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account); `test_providers_e2e.py` runs every provider end to end against local stand-in services (`model_mocks.py`) · the sample book the dry run and tests use is `pipeline/sample/sample-book.{epub,pdf}` |
+| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account); `test_providers_e2e.py` runs every provider end to end against local stand-in services (`model_mocks.py`) · the sample book the dry run and tests use is `pipeline/sample/sample-book.epub` |
 
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |

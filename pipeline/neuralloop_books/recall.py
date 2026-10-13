@@ -8,13 +8,18 @@ so the Recall step never gets stuck.
 
 import asyncio
 import re
+import unicodedata
 
 from . import convert, prompts
 from .schemas import SCHEMAS
 
 ATTEMPTS = 2
 
-_WORD = re.compile(r"[a-z0-9']+")
+# Scripts written without spaces between words: Han, kana, Thai, Lao, Khmer, Myanmar.
+_UNSPACED_RUN = re.compile(
+    r"([\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+    r"\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff\U00020000-\U0002fa1f]+)"
+)
 _STOP = {
     "that",
     "this",
@@ -49,7 +54,27 @@ EMPTY_FEEDBACK = (
 
 
 def _stems(text: str) -> set[str]:
-    return {w[:5] for w in _WORD.findall(text.lower()) if len(w) > 3 and w not in _STOP}
+    """What an idea is made of, in any script. Latin words longer than three letters (accents optional) and
+    other spaced scripts' words longer than one character give their first five characters; scripts written
+    without spaces (Chinese, Japanese, Thai…) give pairs of neighbouring characters."""
+    stems = set()
+    for word in convert.plain_words(text).split():
+        for run in _UNSPACED_RUN.split(word):
+            if not run:
+                continue
+            if _UNSPACED_RUN.fullmatch(run):
+                stems |= {run[i : i + 2] for i in range(max(1, len(run) - 1))}
+            elif all(_latin(c) for c in run):
+                plain = "".join(c for c in unicodedata.normalize("NFKD", run) if not unicodedata.combining(c))
+                if len(plain) > 3 and plain not in _STOP:
+                    stems.add(plain[:5])
+            elif len(run) > 1:
+                stems.add(run[:5])
+    return stems
+
+
+def _latin(char: str) -> bool:
+    return char.isascii() or unicodedata.name(char, "").startswith("LATIN")
 
 
 def word_match(key_points: list[str], answer: str) -> list[bool]:

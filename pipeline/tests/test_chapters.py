@@ -410,7 +410,18 @@ def test_table_of_contents_links_with_fragments_to_separate_files_work_as_before
     out = tmp_path / "out"
     made = split_book(book, out)
     assert [c["title"] for c in made] == ["One", "Two"]
-    assert (out / "01.md").read_text().startswith("# One\n\n# One")
+    text = (out / "01.md").read_text()
+    assert text.startswith("# One\n\n") and text.count("# One") == 1  # the chapter's own heading, once
+
+
+def test_an_epub_chapter_gets_its_title_as_a_heading_only_when_it_has_none_like_it(tmp_path):
+    toc = [("Caching basics", 0, []), ("QUEUES", 1, [])]
+    book = write_epub(tmp_path / "b.epub", [("Caching", LONG), ("Queues", LONG)], toc=toc)
+    out = tmp_path / "out"
+    split_book(book, out)
+    assert (out / "01.md").read_text().startswith("# Caching basics\n\n# Caching\n\n")
+    queues = (out / "02.md").read_text()
+    assert queues.startswith("# Queues\n\n") and "QUEUES" not in queues
 
 
 def _epub_with(tmp_path, entries: dict[str, str]):

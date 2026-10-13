@@ -194,8 +194,6 @@ async def _run(opts: Options, engine) -> BookState:
             await asyncio.gather(*tasks, return_exceptions=True)
             # Items stopped half-way go back to the queue, so the app never shows them as being made.
             state.reset_interrupted()
-            state.data["timings"] = feed.timings
-            state.save()
             bookdata.write(opts.out, state, book_options(opts))
             raise
         finally:
@@ -231,7 +229,7 @@ class _Lane:
         return False
 
 
-async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity | None = None) -> None:
+async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Activity) -> None:
     entry = chapter["tasks"][task]
 
     def wait_behind_limit() -> bool:
@@ -239,8 +237,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             return False
         entry.update(status=WAITING, error=quota_hit[engine.name, task])
         state.save()
-        if feed:
-            feed.skip(chapter["n"], task)
+        feed.skip(chapter["n"], task)
         return True
 
     if wait_behind_limit():
@@ -252,7 +249,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
         state.save()
         await bookdata.write_async(opts.out, state, book_options(opts))
         started = time.monotonic()
-        token = feed.begin(chapter["n"], task, engine.name) if feed else None
+        token = feed.begin(chapter["n"], task, engine.name)
         ok = False
         try:
             result = await engine.make(task, chapter)
@@ -289,7 +286,6 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
                 entry.update(status=FAILED, error=f"{type(error).__name__}: {safe_message(error)}")
                 opts.log(f"  ✗ chapter {chapter['n']} {task}: {entry['error']}")
         finally:
-            if feed:
-                feed.end(chapter["n"], task, time.monotonic() - started, ok, token)
+            feed.end(chapter["n"], task, ok, token)
         state.save()
         await bookdata.write_async(opts.out, state, book_options(opts))

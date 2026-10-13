@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from neuralloop_books import aiconfig
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.models.fake import FakeModel
@@ -94,3 +96,44 @@ def test_a_choice_never_borrows_another_providers_model(tmp_path):
     assert config.task("cards") == aiconfig.ModelChoice("anthropic", "claude-opus-5-5")
     assert config.task("audio").model is None and config.recall.model is None
     assert config.recall.base_url == "http://localhost:1234/v1"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"tasks": ["quiz"]},
+        {"tasks": "x"},
+        {"tasks": {"quiz": "anthropic", "cards": None}},
+        {"voices": [1, 2]},
+        {"voices": "Ira,Zoya"},
+        {"voices": ["Ira", "Zoya", "Mira"]},
+        {"make": {"provider": "ollama", "model": 7, "baseUrl": ["x"]}},
+        {"make": {"provider": {"x": 1}}},
+        {"engine": ["local"], "voiceQuality": [], "audioLength": {}},
+    ],
+)
+def test_a_malformed_file_never_stops_a_book(tmp_path, data):
+    path = tmp_path / "ai.json"
+    path.write_text(json.dumps(data))
+    config = aiconfig.load(path)
+    assert len(config.voices) == 2 and all(isinstance(v, str) for v in config.voices)
+    assert all(isinstance(v, aiconfig.ModelChoice) for v in config.tasks.values())
+    for choice in (config.make, config.recall, *config.tasks.values()):
+        assert isinstance(choice.provider, str)
+        assert choice.model is None or isinstance(choice.model, str)
+        assert choice.base_url is None or isinstance(choice.base_url, str)
+    assert isinstance(config.engine, str) and config.audio_length == "auto"
+
+
+def test_the_good_parts_of_a_malformed_file_are_kept(tmp_path):
+    path = tmp_path / "ai.json"
+    data = {
+        "make": {"provider": "ollama", "model": 7},
+        "tasks": {"quiz": {"provider": "anthropic"}, "cards": "nope"},
+        "voices": ["Ira", 2],
+    }
+    path.write_text(json.dumps(data))
+    config = aiconfig.load(path)
+    assert config.make == aiconfig.ModelChoice("ollama")
+    assert config.tasks == {"quiz": aiconfig.ModelChoice("anthropic")}
+    assert config.voices == ("Ira", "Zoya")

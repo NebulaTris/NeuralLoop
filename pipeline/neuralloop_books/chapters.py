@@ -10,6 +10,7 @@ from typing import ClassVar
 from urllib.parse import unquote, urldefrag
 
 from .config import APPENDIX, FRONT_MATTER, MAX_BOOK_IMAGE_BYTES
+from .convert import plain_words
 
 MIN_PDF_PAGES = 2
 MIN_EPUB_CHARS = 1500
@@ -324,9 +325,15 @@ def split_epub(path: Path, out_dir: Path) -> list[dict]:
             number = len(chapters) + 1
             file = out_dir / f"{number:02d}.md"
             text = images.save(text, number)
-            file.write_text(f"# {title}\n\n{text}", encoding="utf-8")
+            file.write_text(text if _starts_with_heading(text, title) else f"# {title}\n\n{text}", "utf-8")
             chapters.append({"n": number, "title": title, "file": file.name})
         return chapters
+
+
+def _starts_with_heading(text: str, title: str) -> bool:
+    """Whether a chapter's Markdown already opens with a heading saying its title (any level, any case)."""
+    first = re.match(r"#{1,6}[ \t]+([^\n]*)", text)
+    return bool(first) and plain_words(first.group(1)) == plain_words(title)
 
 
 def _grouped(body: list[tuple[str, str]]) -> list[tuple[str, str]]:

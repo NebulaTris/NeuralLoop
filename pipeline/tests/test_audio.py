@@ -1,5 +1,7 @@
 import wave
 
+import pytest
+
 from neuralloop_books import audio
 
 
@@ -28,6 +30,17 @@ def test_a_single_huge_sentence_is_split_on_words():
     text = "word " * 100
     pieces = audio.split_for_speech(text.strip(), limit=50)
     assert all(len(p) <= 50 for p in pieces) and " ".join(pieces) == text.strip()
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["x" * 120 + " then a short tail.", "Start here. " + "y" * 120 + " end.", "z" * 120],
+    ids=["first", "middle", "alone"],
+)
+def test_a_word_longer_than_the_limit_is_cut_and_no_piece_is_empty(text):
+    pieces = audio.split_for_speech(text, limit=50)
+    assert all(0 < len(p) <= 50 for p in pieces)
+    assert "".join(pieces).replace(" ", "") == text.replace(" ", "")
 
 
 def test_join_adds_pauses_and_reports_durations(tmp_path):
