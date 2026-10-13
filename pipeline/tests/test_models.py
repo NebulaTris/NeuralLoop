@@ -745,6 +745,17 @@ def test_the_local_engine_never_strips_citations_its_models_do_not_write():
         "paraphrase-multilingual",
         "mxbai-embed-large",
         "snowflake-arctic-embed2",
+        "sentence-transformers/paraphrase-MiniLM-L3-v2",
+        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        "e5-large-v2",
+        "intfloat/multilingual-e5-small",
+        "nomic-ai/nomic-bert-2048",
+        "bert-base-uncased",
+        "google-bert/bert-large-cased",
+        "kokoro-tts",
+        "openai/tts-1-hd",
+        "gpt-4o-mini-tts",
+        "tts-1",
     ],
 )
 def test_embedding_models_are_never_taken_for_writing(name):
@@ -753,7 +764,21 @@ def test_embedding_models_are_never_taken_for_writing(name):
     assert not is_chat_model(name)
 
 
-@pytest.mark.parametrize("name", ["qwen3:8b", "llama3.2:3b", "gemma3:4b", "gpt-oss:20b", "mistral-small"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "qwen3:8b",
+        "llama3.2:3b",
+        "gemma3:4b",
+        "gpt-oss:20b",
+        "mistral-small",
+        "deepseek-r1:8b",
+        "phi4:14b",
+        "mattshumer/reflection-llama-3.1-70b",
+        "qwen/qwen3-8b",
+        "gemma3n:e4b",
+    ],
+)
 def test_writing_models_still_count_as_chat_models(name):
     from neuralloop_books.models import is_chat_model
 
