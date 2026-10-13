@@ -88,7 +88,8 @@ enum GoogleSignIn {
         if !settings.account.signedIn, !refreshed { await settings.refreshAccount() }
         if !settings.account.signedIn { await settings.signIn() }
         let drive = DriveAccount.shared
-        guard settings.account.signedIn, drive.isConfigured, !drive.isSignedIn else { return }
+        // Cancelled ("Not now" on the first launch): the library's sign-in never opens afterwards.
+        guard !Task.isCancelled, settings.account.signedIn, drive.isConfigured, !drive.isSignedIn else { return }
         await drive.signIn(loginHint: settings.account.email)
     }
 

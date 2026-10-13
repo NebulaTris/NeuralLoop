@@ -86,7 +86,9 @@ final class PipelineRunner: @unchecked Sendable {
 
     /// Run a quick pipeline command (sign in, account, usage, check AI, grade recall) and collect its output.
     /// Output is read while it runs (so a chatty command never blocks), and a command that runs past `timeout` is stopped.
-    static func once(_ arguments: [String], input: String? = nil, timeout: Duration = .seconds(120)) async -> (code: Int32, lines: [String]) {
+    /// `stopsWhenCancelled`: cancelling the calling task stops the command (exit 130, no output); otherwise it runs on.
+    static func once(_ arguments: [String], input: String? = nil, timeout: Duration = .seconds(120),
+                     stopsWhenCancelled: Bool = false) async -> (code: Int32, lines: [String]) {
         guard let (executable, prefix) = command() else { return (3, [Failure.notFound.errorDescription ?? ""]) }
         let process = Process()
         process.executableURL = executable
@@ -99,34 +101,71 @@ final class PipelineRunner: @unchecked Sendable {
         process.standardInput = stdin
         let collected = OutputBuffer()
         out.fileHandleForReading.readabilityHandler = { handle in collected.append(handle.availableData) }
-        let code: Int32 = await withCheckedContinuation { continuation in
-            process.terminationHandler = { finished in continuation.resume(returning: finished.terminationStatus) }
-            do {
-                try process.run()
-            } catch {
-                process.terminationHandler = nil
-                continuation.resume(returning: -1)
-                return
+        let running = UncheckedProcess(process)
+        // A cancel stops the command only when asked (the first launch's "Not now" during a sign-in).
+        let code: Int32 = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                process.terminationHandler = { finished in continuation.resume(returning: finished.terminationStatus) }
+                let started: Bool
+                do {
+                    started = try running.start()
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(returning: -1)
+                    return
+                }
+                guard started else {  // cancelled before it began
+                    process.terminationHandler = nil
+                    continuation.resume(returning: -2)
+                    return
+                }
+                if let input { try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8)) }
+                try? stdin.fileHandleForWriting.close()
+                Task.detached {
+                    try? await Task.sleep(for: timeout)
+                    running.stop()
+                }
             }
-            if let input { try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8)) }
-            try? stdin.fileHandleForWriting.close()
-            let running = UncheckedProcess(process)
-            Task.detached {
-                try? await Task.sleep(for: timeout)
-                if running.process.isRunning { running.process.terminate() }
-            }
+        } onCancel: {
+            if stopsWhenCancelled { running.cancel() }
         }
         out.fileHandleForReading.readabilityHandler = nil
         collected.append((try? out.fileHandleForReading.readToEnd()) ?? Data())
         if code == -1 { return (3, [Failure.notFound.errorDescription ?? ""]) }
+        if code == -2 { return (130, []) }
         return (code, collected.text.split(separator: "\n").map(String.init))
     }
 }
 
-/// A process handed to the timeout task (Process isn't Sendable; only isRunning and terminate are used).
-private struct UncheckedProcess: @unchecked Sendable {
+/// A process shared with the timeout and cancellation (Process isn't Sendable). Starting and cancelling take a lock,
+/// so a cancel that comes before the start means it never starts, and one after stops it.
+private final class UncheckedProcess: @unchecked Sendable {
     let process: Process
+    private let lock = NSLock()
+    private var cancelled = false
     init(_ process: Process) { self.process = process }
+
+    /// False when it was cancelled before it could start.
+    func start() throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if cancelled { return false }
+        try process.run()
+        return true
+    }
+
+    func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        if process.isRunning { process.terminate() }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+        stop()
+    }
 }
 
 /// The keys, shared between the main thread (AISettings) and whichever thread starts a run.
