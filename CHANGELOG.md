@@ -56,6 +56,15 @@
   counts the microphone as busy when an app is recording; the Try buttons always work; signing out keeps your device
   off the list; a device with a wrong clock can't hide the others; device names keep their emoji; and Help → Take the
   Tour reuses a minimized window.
+- **Google sign-in works again:** NotebookLM recently started showing signed-out visitors a welcome page, which the
+  sign-in took for a finished sign-in and closed after two seconds. Sign-in now opens Google's real sign-in page and
+  waits for you, never saves a half-finished session, and "Not now" closes its browser window.
+- **Fixes from a third review:** a chapter NotebookLM is slow to read is added once, not again on every try; a finished
+  podcast, video or quiz that couldn't be downloaded is downloaded on the next run instead of made again; NotebookLM
+  keeps working while your Mac's AI downloads for the first time; search-only models are never used for writing;
+  study time stays right after switching Google accounts; moving NeuralLoop into Applications never leaves you
+  without the app; the last seconds of study are saved when you quit; and the app no longer carries the build
+  machine's folders or Windows-only audio files.
 
 ## 0.2.0: the first public preview 🐾
 
