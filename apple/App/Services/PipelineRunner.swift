@@ -67,7 +67,7 @@ final class PipelineRunner: @unchecked Sendable {
     static let aiConfigURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("app.neuralloop.books/ai.json")
 
-    static let keyNames = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "NEURALLOOP_API_KEY"]
+    static let keyNames = PipelineEnvironment.keyNames
 
     /// The person's keys as AISettings last read or saved them, so starting a run never waits on the Keychain (which
     /// can be slow, or ask) on the main thread.
@@ -77,15 +77,11 @@ final class PipelineRunner: @unchecked Sendable {
     static func remember(keys: [String: String]) { keyCache.set(keys) }
 
     /// The pipeline's environment: the person's ai.json and their keys from the Keychain (never on the command line).
+    /// Keys the app was started with (a shell's exports, say) are dropped, so only the saved ones are used.
     static func environment() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["PYTHONUNBUFFERED"] = "1"
-        if FileManager.default.fileExists(atPath: aiConfigURL.path) { env["NEURALLOOP_AI_CONFIG"] = aiConfigURL.path }
         let keys = keyCache.get() ?? Dictionary(uniqueKeysWithValues: keyNames.map { ($0, Keychain.read($0) ?? "") })
-        for name in keyNames {
-            if let key = keys[name], !key.isEmpty { env[name] = key }
-        }
-        return env
+        let aiConfig = FileManager.default.fileExists(atPath: aiConfigURL.path) ? aiConfigURL.path : nil
+        return PipelineEnvironment.make(inherited: ProcessInfo.processInfo.environment, keys: keys, aiConfig: aiConfig)
     }
 
     /// Run a quick pipeline command (sign in, account, usage, check AI, grade recall) and collect its output.
