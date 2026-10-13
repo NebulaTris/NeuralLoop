@@ -269,6 +269,22 @@ def test_ollama_prefers_the_default_model_and_can_be_started(monkeypatch):
     assert model.model == "qwen3:8b"
 
 
+def test_ollama_never_picks_a_model_that_cant_chat(monkeypatch):
+    from neuralloop_books.models import ollama
+
+    monkeypatch.setattr(ollama, "default_local_model", lambda: "qwen3:8b")
+    installed = {"models": [{"name": "nomic-embed-text:latest"}, {"name": "gemma3:4b"}]}
+    monkeypatch.setattr(ollama, "_get_json", lambda url, timeout: installed)
+    model = ollama.OllamaModel(None)
+    asyncio.run(model.check())
+    assert model.model == "gemma3:4b"
+
+    only_embeddings = {"models": [{"name": "nomic-embed-text:latest"}]}
+    monkeypatch.setattr(ollama, "_get_json", lambda url, timeout: only_embeddings)
+    with pytest.raises(SetupError, match="no model yet"):
+        asyncio.run(ollama.OllamaModel(None).check())
+
+
 def test_opencode_uses_the_persons_own_default_model(monkeypatch):
     seen = {}
 

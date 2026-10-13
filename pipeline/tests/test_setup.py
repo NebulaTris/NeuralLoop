@@ -130,6 +130,19 @@ def test_a_download_inside_a_book_run_shows_as_the_waiting_items_step(monkeypatc
     assert seen[0]["step"] == "Downloading your Mac's AI (first time only)"
 
 
+def test_with_no_model_named_an_embedding_model_alone_doesnt_count(monkeypatch):
+    """`nomic-embed-text` can't write anything: with only models like it installed, the default is fetched."""
+    pulled = []
+    monkeypatch.setattr(
+        setup, "_installed_models", lambda host: ["nomic-embed-text:latest", "mxbai-embed-large:latest"]
+    )
+    monkeypatch.setattr(setup, "_stream_pull", lambda host, name: pulled.append(name) or iter(()))
+    asyncio.run(
+        setup.ensure_model("http://localhost:11434", "qwen3:8b", log=lambda _: None, any_will_do=True)
+    )
+    assert pulled == ["qwen3:8b"]
+
+
 def test_with_no_model_named_any_model_ollama_has_will_do(monkeypatch):
     monkeypatch.setattr(setup, "_installed_models", lambda host: ["llama3:8b"])
     monkeypatch.setattr(setup, "_stream_pull", lambda host, name: pytest.fail("should not pull"))
