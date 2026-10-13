@@ -29,6 +29,22 @@ MAX_RELOADS_PER_RUN = 6
 STILL_READING = "NotebookLM is still reading this chapter; Pip will look again next run."
 
 
+# The account owns as many notebooks as NotebookLM allows: say what to do about it.
+NOTEBOOK_FULL = (
+    "NotebookLM has no room for another notebook. Delete one you don't need in NotebookLM, "
+    "and Pip will carry on next run."
+)
+
+
+class NotebookFull(RuntimeError):
+    """NotebookLM won't make the book's notebook (the account is at its notebook limit): NotebookLM can't
+    make anything for this book this run. Every item waits for the next run; auto makes the text items
+    another way, and podcasts and videos wait for NotebookLM."""
+
+    try_later = True
+    waiting_message = NOTEBOOK_FULL
+
+
 class NoSourceYet(RuntimeError):
     """NotebookLM wouldn't take this chapter this run (a limit, or it didn't answer): its items wait for the
     next run, which adds it again. Other chapters' items of the same kind carry on, and auto never makes them
@@ -64,6 +80,7 @@ class NotebookLMEngine:
         self._notebook_lock = asyncio.Lock()
         self._source_locks: dict[int, asyncio.Lock] = {}
         self._notebook_renewed = False  # a vanished notebook is made again once per run
+        self._notebook_full: str | None = None  # why NotebookLM wouldn't make a notebook (asked once a run)
         self._sources_renewed: set[int] = set()  # a vanished source is added again once per chapter per run
         self._no_source: dict[int, BaseException] = {}  # chapters NotebookLM wouldn't take this run, and why
         self._read_counted: set[int] = set()  # chapters whose unread source was counted this run (readTries)
@@ -109,6 +126,9 @@ class NotebookLMEngine:
                     raise
                 reason = _waiting(error)
                 self._no_source[chapter["n"]] = reason or error
+                if isinstance(error, NotebookFull):
+                    stuck = error  # no notebook, so no chapter can be added this run
+                    opts.log(f"  chapter {chapter['n']} waits: {NOTEBOOK_FULL}")
                 if reason is not None:
                     if reason.waiting_message != STILL_READING:
                         stuck = reason
@@ -165,8 +185,16 @@ class NotebookLMEngine:
         """The book's notebook, made now if it has none. Call with `_notebook_lock` held."""
         state = self._state
         if not state.data.get("notebookId"):
+            if self._notebook_full is not None:  # asked once this run already: don't ask again
+                raise NotebookFull(self._notebook_full)
             title = f"NeuralLoop: {state.data['title']}"[:90]
-            notebook = await self._patiently(lambda: self.client.notebooks.create(title))
+            try:
+                notebook = await self._patiently(lambda: self.client.notebooks.create(title))
+            except Exception as error:  # only a full account is turned into waiting; the rest goes up
+                if not _named(error, "NotebookLimitError"):
+                    raise
+                self._notebook_full = f"NotebookLM wouldn't make a notebook ({short_error(error)})"
+                raise NotebookFull(self._notebook_full) from error
             state.data["notebookId"] = notebook.id
             state.save()
         self.maker.notebook_id = state.data["notebookId"]
@@ -385,7 +413,12 @@ def _has_work(chapter: dict) -> bool:
 
 def _not_found(error: BaseException, what: str) -> bool:
     """notebooklm-py's NotebookNotFoundError / SourceNotFoundError (by name, as for its other errors)."""
-    return any(cls.__name__ == f"{what}NotFoundError" for cls in type(error).__mro__)
+    return _named(error, f"{what}NotFoundError")
+
+
+def _named(error: BaseException, name: str) -> bool:
+    """The error is notebooklm-py's `name` (matched by name, so the library stays optional)."""
+    return any(cls.__name__ == name for cls in type(error).__mro__)
 
 
 def _is_setup_error(error: BaseException) -> bool:
@@ -396,6 +429,8 @@ def _is_setup_error(error: BaseException) -> bool:
 
 def _waiting(error: BaseException) -> NoSourceYet | None:
     """A chapter NotebookLM wouldn't take because of a limit or a hiccup waits; None for anything else."""
+    if isinstance(error, NotebookFull):
+        return None  # goes up as it is: auto makes the text items another way
     if is_quota_error(error):
         return NoSourceYet(short_error(error), quota_message("NotebookLM"), limit=True)
     if _made_source(error) and not _source_unreadable(error):
@@ -409,6 +444,6 @@ def _again(error: BaseException) -> BaseException:
     """A fresh copy of the reason a chapter has no source, for each of its items."""
     if isinstance(error, NoSourceYet):
         return NoSourceYet(str(error), error.waiting_message, error.limit)
-    if isinstance(error, GenerationFailed):  # a podcast or video fails as NotebookLM's, never made locally
+    if isinstance(error, (GenerationFailed, NotebookFull)):  # auto treats each copy as the original
         return type(error)(str(error))
     return RuntimeError(f"NotebookLM wouldn't take this chapter ({short_error(error)})")

@@ -10,7 +10,7 @@ import pytest
 
 from neuralloop_books import config
 from neuralloop_books.engines.auto import AutoEngine
-from neuralloop_books.engines.notebooklm import STILL_READING, NotebookLMEngine
+from neuralloop_books.engines.notebooklm import NOTEBOOK_FULL, STILL_READING, NotebookLMEngine
 from neuralloop_books.pipeline import Options, run
 from neuralloop_books.state import DONE, FAILED, WAITING
 from neuralloop_books.testing import LONG, write_epub
@@ -20,6 +20,7 @@ from .fake_client import (
     FakeClient,
     FakeDownloadFailsClient,
     FakeLostReplyClient,
+    FakeNotebookFullClient,
     FakeQuotaClient,
     FakeSlowSourceClient,
     FakeStaleTwiceWhileWaitingClient,
@@ -576,3 +577,29 @@ def test_a_lost_request_is_not_matched_to_an_item_that_does_not_say_its_source(o
     state = run_with(options, client)
     assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and len(asked) == 1
     assert "someone-else|quiz" not in waited
+
+
+# ---- 10. no room for another notebook ----
+
+
+def test_a_full_notebooklm_is_asked_for_a_notebook_once_and_every_item_waits(options):
+    client = FakeNotebookFullClient()
+    state = run_with(options, client)
+    assert client.creates == 1
+    entries = [e for chapter in state.chapters for e in chapter["tasks"].values() if e["status"] != "skipped"]
+    assert {e["status"] for e in entries} == {WAITING}
+    assert {e["error"] for e in entries} == {NOTEBOOK_FULL}
+    assert "notebook" in NOTEBOOK_FULL and "Delete" in NOTEBOOK_FULL
+
+
+def test_with_a_full_notebooklm_auto_makes_the_text_here_and_the_podcast_waits(options):
+    client = FakeNotebookFullClient()
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    assert client.creates == 1
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (WAITING, WAITING)
+    assert first["audio"]["error"] == NOTEBOOK_FULL
+    assert not any(task in ("audio", "video") for _, task in fallback.made)
+    assert {(1, "study"), (2, "study"), (1, "quiz"), (2, "mindmap")} <= set(fallback.made)
+    assert all(first[t]["status"] == DONE for t in ("study", "graph", "quiz", "cards", "mindmap"))

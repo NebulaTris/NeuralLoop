@@ -425,6 +425,25 @@ class FakeDownloadFailsClient(FakeClient):
         return await super()._download_video(notebook_id, path, task_id, **kwargs)
 
 
+class NotebookLimitError(Exception):
+    """notebooklm-py's name: the account can't own another notebook."""
+
+
+class FakeNotebookFullClient(FakeClient):
+    """The account already owns as many notebooks as NotebookLM allows: creating one always fails."""
+
+    def __init__(self):
+        super().__init__(delay=0)
+        self.creates = 0
+
+    async def _create_notebook(self, title):
+        self.creates += 1
+        raise NotebookLimitError(
+            "Cannot create notebook: account appears to be at or very near the NotebookLM notebook limit "
+            "(100/100 owned notebooks reported). Delete old notebooks at https://notebooklm.google.com"
+        )
+
+
 class FakeQuotaClient(FakeClient):
     """Like FakeClient, but every media request hits NotebookLM's daily limit."""
 
