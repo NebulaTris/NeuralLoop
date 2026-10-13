@@ -17,7 +17,9 @@ from urllib.parse import urlparse
 from ..config import DEFAULT_MODELS, PROVIDER_KEYS
 
 # Listed models that can't write text (embedding, reranking, speech, image): never picked as the one to use.
-_NOT_CHAT = re.compile(r"embed|rerank|whisper|tts|transcribe|moderation|dall-e", re.IGNORECASE)
+_NOT_CHAT = re.compile(
+    r"embed|rerank|whisper|tts|transcribe|moderation|dall-e|\bbge\b|minilm|\bgte-|^paraphrase-", re.IGNORECASE
+)
 
 
 def is_chat_model(name: str) -> bool:

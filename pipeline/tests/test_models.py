@@ -732,3 +732,29 @@ def test_the_local_engine_never_strips_citations_its_models_do_not_write():
     from neuralloop_books.engines import local
 
     assert "citations=False" in inspect.getsource(local)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "nomic-embed-text:latest",
+        "bge-m3:latest",
+        "bge-large",
+        "all-minilm:l6-v2",
+        "gte-qwen2:1.5b",
+        "paraphrase-multilingual",
+        "mxbai-embed-large",
+        "snowflake-arctic-embed2",
+    ],
+)
+def test_embedding_models_are_never_taken_for_writing(name):
+    from neuralloop_books.models import is_chat_model
+
+    assert not is_chat_model(name)
+
+
+@pytest.mark.parametrize("name", ["qwen3:8b", "llama3.2:3b", "gemma3:4b", "gpt-oss:20b", "mistral-small"])
+def test_writing_models_still_count_as_chat_models(name):
+    from neuralloop_books.models import is_chat_model
+
+    assert is_chat_model(name)
