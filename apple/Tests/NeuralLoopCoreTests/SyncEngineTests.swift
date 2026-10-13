@@ -945,3 +945,37 @@ private actor RefusesSidecars: DriveStore {
     let arrived = try await SyncEngine(root: mac, device: "mac1", role: .mac, store: drive).sync().arrived
     #expect(arrived.map(\.lastPathComponent) == ["u1.pdf"] && read(mac, "inbox/u1.json") == #"{"title":"Clean Code"}"#)
 }
+
+/// After a clash, the time counted under the old id is only taken off while that id's file is really there: in
+/// another Google account's library (where the old id never wrote) this device's whole history counts and goes up.
+@Test func timeCountedUnderAnOldIDIsOnlyLeftOutWhereThatIDsFileIs() async throws {
+    let accounts = TwoAccounts()
+    let a = try temporaryRoot(), b = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+    try write(#"{"title":"MCP"}"#, a, "books/mcp/book.json")
+    try write(#"{"log":{"d1":100}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com")
+    try FileManager.default.removeItem(at: b)
+    try FileManager.default.copyItem(at: a, to: b)  // a restored copy, same id
+    try write(#"{"log":{"d1":100,"d2":10}}"#, a, "books/mcp/progress.json")
+    _ = try await SyncEngine(root: a, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com")
+    try write(#"{"log":{"d1":100,"d2":20}}"#, b, "books/mcp/progress.json")
+    #expect(try await SyncEngine(root: b, device: "mac1", role: .mac, store: accounts).sync(account: "sam@example.com").deviceClash)
+    // Right after the clash, before the old id's file has come down: nothing is taken off yet.
+    #expect(studied(b, "mcp") == 120)
+    let copy = SyncEngine(root: b, device: "mac-2", role: .mac, store: accounts)
+    _ = try await copy.sync(account: "sam@example.com")
+    #expect(studied(b, "mcp") == 130)  // the shared history once (in mac1's file), each copy's own time once
+    #expect(await accounts.a.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d2":20}}"#.utf8))
+    // Another Google account: mac1 never wrote there, so none of this device's time is counted elsewhere.
+    await accounts.use(b: true)
+    _ = try await copy.sync(account: "work@example.com")
+    #expect(read(b, "books/mcp/devices/mac1.json") == nil)
+    #expect(studied(b, "mcp") == 120)
+    #expect(await accounts.b.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d1":100,"d2":20}}"#.utf8))
+    // And back: the shared history is counted once again.
+    await accounts.use(b: false)
+    _ = try await copy.sync(account: "sam@example.com")
+    #expect(studied(b, "mcp") == 130)
+    #expect(await accounts.a.data(at: "books/mcp/progress/mac-2.json") == Data(#"{"log":{"d2":20}}"#.utf8))
+}

@@ -348,7 +348,10 @@ public actor SyncEngine {
         var remote = try await store.list()
         var report = SyncReport()
         await settleRetired(&remote, report: &report)
-        let local = scan()
+        // Per book, the devices whose progress is in this Drive: time counted under an id given up is left out of what
+        // goes up only where that id's file is (another account's library never had it).
+        let owners = Self.progressOwners(remote)
+        let local = scan(owners: owners)
         let localByPath = Dictionary(local.map { ($0.path, $0.md5) }, uniquingKeysWith: { a, _ in a })
         // Someone else writes our progress files (a copied device id): touch nothing, so we never overwrite theirs. Only
         // the copy of each file the plan keeps (the newest) counts: an older duplicate of our own file (a listing that
@@ -426,10 +429,11 @@ public actor SyncEngine {
                 if SyncLayout.progressDevice(file.path) == device {
                     // What's sent is noted (and saved) before it goes, from a copy that a study tick can't change on the
                     // way: if the answer never comes back, the Drive's copy is still known to be ours. With time counted
-                    // under an id given up, only the time beyond it goes (`CountedElsewhere`).
+                    // under an id given up whose file is in this Drive, only the time beyond it goes (`CountedElsewhere`).
                     let copy = root.appendingPathComponent(".sending-\(UUID().uuidString).json")
-                    if let counted = SyncLayout.book(file.path).flatMap({ CountedElsewhere.load(from: books.appendingPathComponent($0)) }),
-                       let adjusted = counted.uploadable(try Data(contentsOf: source)) {
+                    let book = SyncLayout.book(file.path)
+                    if let counted = book.flatMap({ CountedElsewhere.load(from: books.appendingPathComponent($0)) }),
+                       let adjusted = counted.uploadable(try Data(contentsOf: source), present: book.flatMap { owners[$0] } ?? []) {
                         try adjusted.write(to: copy)
                     } else {
                         try FileManager.default.copyItem(at: source, to: copy)
@@ -625,6 +629,7 @@ public actor SyncEngine {
     /// counts all of this device's time so far. A clash found again for the same id adds nothing.
     private func recordClash(remote: [SyncFile]) {
         let there = Dictionary(remote.map { ($0.path, $0.md5) }, uniquingKeysWith: { a, _ in a })
+        let owners = Self.progressOwners(remote)
         for folder in (try? FileManager.default.contentsOfDirectory(at: books, includingPropertiesForKeys: nil)) ?? []
         where BookID.isValid(folder.lastPathComponent) {
             let path = SyncLayout.progressPath(book: folder.lastPathComponent, device: device)
@@ -638,7 +643,7 @@ public actor SyncEngine {
             else {
                 let own = (try? Data(contentsOf: folder.appendingPathComponent("progress.json")))
                     .flatMap { try? JSONDecoder().decode(StudyProgress.self, from: $0) }?.log ?? [:]
-                sent = counted.beyond(own)
+                sent = counted.beyond(own, present: owners[folder.lastPathComponent] ?? [])
             }
             counted.add(id: device, sent: sent)
             counted.save(to: folder)
@@ -685,8 +690,16 @@ public actor SyncEngine {
 
     // MARK: local side
 
-    /// This device's files in Drive layout.
-    func scan() -> [SyncFile] {
+    /// Per book id, the devices whose progress files are in a listing.
+    static func progressOwners(_ remote: [SyncFile]) -> [String: Set<String>] {
+        remote.reduce(into: [:]) { out, file in
+            if let book = SyncLayout.book(file.path), let owner = SyncLayout.progressDevice(file.path) { out[book, default: []].insert(owner) }
+        }
+    }
+
+    /// This device's files in Drive layout. `owners`: per book, the devices whose progress is in the Drive being synced
+    /// to (what goes up of our own progress depends on it, `CountedElsewhere`).
+    func scan(owners: [String: Set<String>] = [:]) -> [SyncFile] {
         seen = []
         defer { state.hashes = state.hashes.filter { seen.contains($0.key) } }  // forget files that are gone
         var files: [SyncFile] = []
@@ -698,7 +711,7 @@ public actor SyncEngine {
             let ownPath = SyncLayout.progressPath(book: id, device: device)
             // With time counted under an id given up, what goes up (and is compared) is the file without it.
             if let counted = CountedElsewhere.load(from: folder), let data = try? Data(contentsOf: own),
-               let adjusted = counted.uploadable(data) {
+               let adjusted = counted.uploadable(data, present: owners[id] ?? []) {
                 files.append(SyncFile(path: ownPath, md5: FileHash.md5(adjusted), size: Int64(adjusted.count)))
             } else if let file = hashed(own, as: ownPath) { files.append(file) }
             let devices = folder.appendingPathComponent("devices", isDirectory: true)
