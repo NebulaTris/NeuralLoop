@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Callable
@@ -76,12 +77,10 @@ def sign_in(log: Callable[[str], None]) -> int:
             log("  setup: Getting a browser for Google sign-in (the first time only, about 150 MB)…")
     log("  setup: A browser window is opening. Sign in to Google there, then come back.")
     with contextlib.suppress(subprocess.TimeoutExpired):  # the status check below says it didn't finish
-        subprocess.run(
+        _run_login(
             [*cli, "login", "--browser", browser, "--browser-timeout", str(SIGN_IN_TIMEOUT)],
-            capture_output=True,
-            text=True,
-            timeout=SIGN_IN_TIMEOUT + 60,  # never wait forever on a browser that hangs
-            env=env,
+            env,
+            SIGN_IN_TIMEOUT + 60,  # never wait forever on a browser that hangs
         )
 
     now = status()
@@ -90,6 +89,50 @@ def sign_in(log: Callable[[str], None]) -> int:
         return 3
     log("Account: " + json.dumps(now))
     return 0
+
+
+class _Stopped(Exception):
+    """The app stopped the sign-in (SIGTERM, when the person chose "Not now")."""
+
+
+def _run_login(cmd: list[str], env: dict[str, str] | None, timeout: float) -> None:
+    """Run the login in its own process group, so stopping it closes the browser window it opened too: on
+    SIGTERM (or a login that outlives `timeout`) the whole group ends; a stopped sign-in exits with 130."""
+    login = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, start_new_session=True
+    )
+
+    def stop(signum: int, frame: object) -> None:
+        raise _Stopped
+
+    try:
+        previous = signal.signal(signal.SIGTERM, stop)
+    except ValueError:  # not the main thread: nobody can deliver the app's SIGTERM here anyway
+        previous = None
+    try:
+        login.wait(timeout)
+    except (_Stopped, subprocess.TimeoutExpired) as error:
+        _end_group(login)
+        if isinstance(error, _Stopped):
+            raise SystemExit(130) from None
+        raise
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+
+
+def _end_group(process: subprocess.Popen) -> None:
+    """End a process and everything it started (its group): politely, then for good after a few seconds."""
+    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, sig)
+        try:
+            process.wait(wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    with contextlib.suppress(ProcessLookupError, PermissionError):  # anything the group left behind
+        os.killpg(process.pid, signal.SIGKILL)
 
 
 def sign_out() -> int:

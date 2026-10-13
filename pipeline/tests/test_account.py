@@ -7,6 +7,17 @@ import pytest
 from neuralloop_books import account
 
 
+@pytest.fixture(autouse=True)
+def login_through_run(monkeypatch, request):
+    """Sign-in's login runs through `subprocess.run` fakes here; the real process handling has a test of its
+    own."""
+    if request.node.name.startswith("test_stopping_sign_in"):
+        return
+    monkeypatch.setattr(
+        account, "_run_login", lambda cmd, env, timeout: account.subprocess.run(cmd, env=env, timeout=timeout)
+    )
+
+
 def fake_run(responses, calls):
     def run(argv, **kwargs):
         calls.append(argv)
@@ -210,3 +221,46 @@ def test_sign_in_says_it_is_getting_a_browser_only_the_first_time(monkeypatch, t
     later: list[str] = []
     assert account.sign_in(later.append) == 0
     assert not any("150 MB" in line for line in later)
+
+
+def test_stopping_sign_in_closes_the_login_and_everything_it_opened(tmp_path):
+    """The app stops a sign-in with SIGTERM ("Not now"); the login and the browser it started go too, not just
+    Python."""
+    import os
+    import signal
+    import sys
+    import threading
+    import time
+
+    pid_file = tmp_path / "browser.pid"
+    login = (
+        "import subprocess, sys, time\n"
+        "browser = subprocess.Popen(['sleep', '60'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(browser.pid))\n"
+        "time.sleep(60)\n"
+    )
+
+    def stop_when_the_browser_is_up():
+        for _ in range(200):
+            if pid_file.exists() and pid_file.read_text():
+                break
+            time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=stop_when_the_browser_is_up, daemon=True).start()
+    before = signal.getsignal(signal.SIGTERM)
+    started = time.monotonic()
+    with pytest.raises(SystemExit) as stopped:
+        account._run_login([sys.executable, "-c", login], None, 60)
+    assert stopped.value.code == 130 and time.monotonic() - started < 20
+    browser = int(pid_file.read_text())
+    for _ in range(100):  # the browser is gone (killed, then reaped by init)
+        try:
+            os.kill(browser, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(browser, signal.SIGKILL)
+        pytest.fail("the browser the login opened kept running")
+    assert signal.getsignal(signal.SIGTERM) == before
