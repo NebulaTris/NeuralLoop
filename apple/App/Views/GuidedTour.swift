@@ -1,5 +1,5 @@
 // The guided tour: a few short pages, each with a little animated scene, that show how NeuralLoop works before the
-// first book. New installs see it instead of a plain welcome; Help → Take the Tour (iPad: Settings) shows it again.
+// first book. New installs see it instead of a plain welcome; Help → Take the tour (iPad: Settings) shows it again.
 // Back/Next, the arrow keys, or the dots move between pages; Skip is always there. Reduce Motion rests every scene.
 
 import NeuralLoopCore
@@ -299,8 +299,9 @@ private struct CompanyScene: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.75), value: showing)
                 }
                 HStack(spacing: 10) {
-                    PipView(pose: .sad, size: 90, interactive: false)
-                    Text("…and a tiny sad violin if you vanish 🎻").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                    // A warm pose: only Silly mode's own nudges use the sad and shocked ones (golden rule 8).
+                    PipView(pose: .play, size: 90, interactive: false)
+                    Text("…and a tiny violin tune if you've been away a while 🎻").font(Theme.body(13)).foregroundStyle(Theme.ink2)
                 }
             }
             .padding(.horizontal, 40)
@@ -308,7 +309,7 @@ private struct CompanyScene: View {
     }
 }
 
-/// The very first launch: Google sign-in first (the login opens by itself), then the tour. Help → Take the Tour
+/// The very first launch: Google sign-in first (the login opens by itself), then the tour. Help → Take the tour
 /// shows only the tour.
 struct FirstLaunch: View {
     let done: () -> Void

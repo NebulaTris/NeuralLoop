@@ -13,6 +13,7 @@ struct NeuralLoopApp: App {
         let library = Library()
         _library = State(initialValue: library)
         library.start()  // the shelf loop lives as long as the app, window or not
+        AppMover.sweepLeftoversAtLaunch()  // a half-made copy from an interrupted move into Applications
         // Your library on every device: upload what the Mac prepares, prepare books added on the iPad.
         DriveSync.shared.onArrived = { file, title in library.addFromInbox(file, title: title) }
         DriveSync.shared.onChanged = { library.reload() }
@@ -34,7 +35,7 @@ struct NeuralLoopApp: App {
         .defaultSize(width: 1240, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Add a Book…") { library.isPicking = true }.keyboardShortcut("o")
+                Button("Add a book…") { library.isPicking = true }.keyboardShortcut("o")
             }
             CommandGroup(replacing: .help) {
                 TourCommand(library: library)
@@ -73,14 +74,14 @@ struct NeuralLoopApp: App {
     }
 }
 
-/// Help → Take the Tour: the tour shows on the main window, so that window comes forward first (out of the Dock if
+/// Help → Take the tour: the tour shows on the main window, so that window comes forward first (out of the Dock if
 /// it's minimized, opened if it's closed), and only one window shows it.
 struct TourCommand: View {
     let library: Library
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Take the Tour") {
+        Button("Take the tour") {
             if Notifier.shared.openMainWindow == nil { Notifier.shared.openMainWindow = { openWindow(id: "main") } }
             Notifier.shared.showLibrary()
             library.requestTour()

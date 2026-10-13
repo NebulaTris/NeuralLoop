@@ -86,7 +86,8 @@ final class PlayRecorder {
         Self.writer.sync {}  // the closed books' writes, queued just now
     }
 
-    private static let writer = DispatchQueue(label: "app.neuralloop.play-recorder")
+    /// The same queue as an open book's writes (`ProgressWriter`), so the two never write one file at once.
+    private static var writer: DispatchQueue { ProgressWriter.queue }
 
     nonisolated private static func write(_ chapters: [Int: WatchProgress], lengths: [Int: [WatchKind: Double]], to folder: URL) {
         let loaded = ProgressFile.loadMerged(from: folder)  // other devices' steps count toward what's open

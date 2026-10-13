@@ -19,9 +19,8 @@ final class BookSession {
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
     /// What other devices' files looked like when they were last merged in (see `catchUp`).
     @ObservationIgnored private var devicesSeen = ""
-    /// When this device's progress.json was last read or written here: a different date means something else saved
-    /// it (another window on this book, the menu bar's player), so `save` merges that in rather than writing over it.
-    @ObservationIgnored private var ownSeen: Date?
+    /// Writes progress.json off the main thread, merging in what something else saved there first.
+    @ObservationIgnored private let writer: ProgressWriter
     @ObservationIgnored nonisolated(unsafe) private var observer: NSObjectProtocol?
 
     /// Posted after sync brings in another device's progress.
@@ -32,8 +31,8 @@ final class BookSession {
         self.book = entry.book ?? Library.loadBook(entry.folder) ?? BookSession.emptyBook
         // An unreadable file is kept aside rather than overwritten by the first save.
         devicesSeen = ProgressFile.devicesSignature(in: entry.folder)
+        writer = ProgressWriter(folder: entry.folder)
         let loaded = ProgressFile.loadMerged(from: entry.folder)
-        ownSeen = BookSession.ownModified(entry.folder)
         self.progress = loaded.merged
         self.ownLog = loaded.own.log
         PlayRecorder.shared.attach(self)  // what plays from the menu bar or shelf now comes here
@@ -127,8 +126,8 @@ final class BookSession {
 
     func complete(_ n: Int, _ stage: Stage) -> Bool {
         let closed = Loop.complete(&progress, n, stage, now: now)
-        save()
-        Library.studyMoved(in: entry.id)  // the chapters Pip prepares just ahead may move (spec 08)
+        let id = entry.id
+        save { Library.studyMoved(in: id) }  // once it's on disk: the chapters Pip prepares just ahead may move (spec 08)
         return closed
     }
 
@@ -147,29 +146,31 @@ final class BookSession {
         save()
     }
 
-    /// Saves this device's file. Changes you made (a review, a step, a quiz answer) reach your other devices a few
-    /// seconds later (`syncSoon`); the study clock's ticks just ride along with the next sync.
-    func save(syncSoon: Bool = true) {
-        if Self.ownModified(entry.folder) != ownSeen { mergeOwnFileFromDisk() }
-        ProgressFile.save(progress, ownLog: ownLog, to: entry.folder)
-        ownSeen = Self.ownModified(entry.folder)
-        if syncSoon { DriveSync.shared.soon() }
+    /// Saves this device's file (off the main thread, in order). Changes you made (a review, a step, a quiz answer)
+    /// reach your other devices a few seconds later (`syncSoon`); the study clock's ticks ride along with the next sync.
+    /// `written` runs on the main thread once the file is on disk.
+    func save(syncSoon: Bool = true, written: (@MainActor @Sendable () -> Void)? = nil) {
+        writer.save(progress, ownLog: ownLog) { [weak self] found in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if let found { self?.takeIn(found) }
+                    if syncSoon { DriveSync.shared.soon() }
+                    written?()
+                }
+            }
+        }
     }
 
-    /// This device's file changed under us: keep what was saved there (reviews, steps) along with what's here.
-    private func mergeOwnFileFromDisk() {
+    /// This device's file had changed under us (another window on this book, the menu bar's player): keep what was
+    /// saved there (reviews, steps) along with what's here, which may have changed again since that save.
+    private func takeIn(_ found: ProgressWriter.FromDisk) {
         var mine = progress
         mine.log = ownLog
-        let own = StudyProgress.mergedSameDevice(mine, ProgressFile.load(from: entry.folder))
+        let own = StudyProgress.mergedSameDevice(mine, found.own)
         ownLog = own.log
-        let others = ProgressFile.others(in: entry.folder)
-        let fresh = others.isEmpty ? own : StudyProgress.merged([own] + others)
+        let fresh = found.others.isEmpty ? own : StudyProgress.merged([own] + found.others)
         if fresh != progress { progress = fresh }
-    }
-
-    private static func ownModified(_ folder: URL) -> Date? {
-        let file = folder.appendingPathComponent("progress.json")
-        return (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+        writer.absorbed(found.generation)
     }
 
     /// Counts study time in 15-second ticks while the book is open and in front (`isActive`, kept current by the view).
@@ -233,6 +234,7 @@ final class BookSession {
         }
         flushTracking()
         savePendingDraft()
+        writer.wait()  // on disk before the app goes
     }
 
     // MARK: steps that complete themselves (spec 09)
@@ -329,5 +331,67 @@ final class BookSession {
         #else
         true
         #endif
+    }
+}
+
+/// Writes one open book's progress.json off the main thread. Every progress write (these, and `PlayRecorder`'s for
+/// closed books) goes through one serial queue, so they happen one at a time and in order.
+final class ProgressWriter: @unchecked Sendable {
+    static let queue = DispatchQueue(label: "app.neuralloop.progress-writer", qos: .utility)
+
+    /// What was on disk when something else had saved this device's file since our last write.
+    struct FromDisk: Sendable {
+        let own: StudyProgress
+        let others: [StudyProgress]
+        let generation: Int
+    }
+
+    private let folder: URL
+    // Touched only on `queue` (and in `init`, before any write is queued):
+    /// When this device's progress.json was last read or written here: a different date means something else saved it.
+    private var seen: Date?
+    /// What was found on disk and isn't in the session yet: merged into every write until `absorbed`, so a write
+    /// queued before the session took it in never drops it from the file.
+    private var carry: StudyProgress?
+    private var generation = 0
+
+    init(folder: URL) {
+        self.folder = folder
+        seen = Self.modified(folder)
+    }
+
+    /// Writes `progress` with this device's own study time (`ownLog`), merging in first anything else saved there
+    /// since our last write; `then` gets that (nil when nothing else wrote), on the writer's queue.
+    func save(_ progress: StudyProgress, ownLog: [String: Double], then: @escaping @Sendable (FromDisk?) -> Void) {
+        Self.queue.async { [self] in
+            var mine = progress
+            mine.log = ownLog
+            var found: FromDisk?
+            if Self.modified(folder) != seen {
+                let disk = ProgressFile.load(from: folder)
+                carry = carry.map { StudyProgress.mergedSameDevice($0, disk) } ?? disk
+                generation += 1
+                found = FromDisk(own: disk, others: ProgressFile.others(in: folder), generation: generation)
+            }
+            if let carry { mine = StudyProgress.mergedSameDevice(mine, carry) }
+            ProgressFile.save(mine, to: folder)
+            seen = Self.modified(folder)
+            then(found)
+        }
+    }
+
+    /// The session has taken in what `save` found (up to `upTo`): later writes needn't carry it.
+    func absorbed(_ upTo: Int) {
+        Self.queue.async { [self] in
+            if generation == upTo { carry = nil }
+        }
+    }
+
+    /// Waits for every queued write (the app quitting).
+    func wait() { Self.queue.sync {} }
+
+    private static func modified(_ folder: URL) -> Date? {
+        let file = folder.appendingPathComponent("progress.json")
+        return (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
     }
 }
