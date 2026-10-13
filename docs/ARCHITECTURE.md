@@ -102,7 +102,7 @@ Entry point `nl_book.py` → `neuralloop_books.cli.main()`. Everything else is t
 | `notebook.py` | One item through notebooklm-py; recognising quota and auth errors |
 | `engines/local.py` | Your own AI writes each item (checked and retried once with the reason); Rumik voices podcasts and explainers; `video.py` films explainers |
 | `engines/auto.py` | NotebookLM first, the local engine for anything it can't do; records who made each item |
-| `models/` | One adapter per AI: `anthropic`, `openai_compat` (OpenAI, OpenRouter, LM Studio, any compatible URL), `ollama` (with JSON schemas for small models), `opencode`, `hermes` (subprocesses, killed on timeout), `fake` (tests) |
+| `models/` | One adapter per AI: `anthropic`, `openai_compat` (OpenAI, OpenRouter, LM Studio, any compatible URL; the official providers always get their own address, never an inherited `*_BASE_URL`), `ollama` (with JSON schemas for small models), `opencode`, `hermes` (subprocesses, killed on timeout), `fake` (tests) |
 | `speech/` | `rumik` (Rumik OSS-1 through mlx-audio, 4-bit "fast" or 8-bit "best") and `fake` |
 | `prompts.py`, `schemas.py`, `convert.py` | What we ask for, the JSON shapes we require, and turning answers (from any model or NotebookLM) into our formats — tolerant of messy output |
 | `video.py` | Explainer → MP4: a deterministic HTML scene rendered frame by frame in headless Chromium, encoded with PyAV |

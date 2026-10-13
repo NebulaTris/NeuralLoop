@@ -783,3 +783,27 @@ def test_writing_models_still_count_as_chat_models(name):
     from neuralloop_books.models import is_chat_model
 
     assert is_chat_model(name)
+
+
+@pytest.mark.parametrize(
+    ("provider", "variable", "official"),
+    [
+        ("anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+        ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1"),
+        ("openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+    ],
+)
+def test_a_saved_key_only_ever_goes_to_its_official_service(provider, variable, official, monkeypatch):
+    """An inherited ANTHROPIC_BASE_URL / OPENAI_BASE_URL (another tool's setting) never redirects the key."""
+    pytest.importorskip("anthropic" if provider == "anthropic" else "openai")
+    for name in ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENROUTER_BASE_URL"):
+        monkeypatch.setenv(name, "https://somewhere-else.example/v1")
+    model = models.make_model(provider, None, env={variable: "k"})
+    assert str(model.client.base_url).rstrip("/") == official
+
+
+def test_a_custom_service_keeps_its_own_address(monkeypatch):
+    pytest.importorskip("openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://somewhere-else.example/v1")
+    model = models.make_model("custom", "m", env={"NEURALLOOP_BASE_URL": "https://api.example.ai/v1"})
+    assert str(model.client.base_url).rstrip("/") == "https://api.example.ai/v1"

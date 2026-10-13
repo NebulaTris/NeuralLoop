@@ -136,7 +136,7 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
   `--no-open` does nothing (kept for older callers). `auto` (default) = NotebookLM when signed in, the local engine (Ollama unless
   a key is set) for the whole run when not, and per item when NotebookLM fails or hits its limit, except that a podcast or video at NotebookLM's limit, or that NotebookLM didn't answer after patient retries, waits for it (people want NotebookLM's own; `waiting`, retried when live usage says it can) (a refused NotebookLM session is
   reopened from the saved one and the item retried with NotebookLM once first). Keys only from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  `OPENROUTER_API_KEY`, `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files. Other commands: `--setup`
+  `OPENROUTER_API_KEY`, `NEURALLOOP_API_KEY` + `NEURALLOOP_BASE_URL` (custom), never argv or files; Anthropic, OpenAI and OpenRouter keys go only to their official addresses (an inherited `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` is ignored). Other commands: `--setup`
   (start Ollama, download the local model and Rumik; prints `  setup: …` lines, then `Setup: ready`), `--signin` (Google sign-in
   in a real browser; the session is NotebookLM's), `--account` (both print `Account: {"signedIn", "email"}`), `--signout`,
   `--usage` (`NotebookLM usage: {known, available, fiveHour:{remaining, resetsAt}, weekly:{…}, podcast, video}`), `--check-ai`
