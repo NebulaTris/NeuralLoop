@@ -3,7 +3,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-.venv/
+.venv
 
 # generated books and media: never commit someone's book
 neuralloop-*/

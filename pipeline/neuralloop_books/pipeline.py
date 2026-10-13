@@ -274,7 +274,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
                 what = (
                     f"{made_by(error, engine.name)} limit reached; will continue next run"
                     if getattr(error, "limit", False)
-                    else "NotebookLM didn't answer; will try again next run"
+                    else why  # the reason it waits (no answer, no room for a notebook, still reading…)
                 )
                 opts.log(f"  … chapter {chapter['n']} {task}: {what}")
             elif is_quota_error(error):

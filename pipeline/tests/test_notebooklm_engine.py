@@ -460,6 +460,17 @@ def test_a_chapter_notebooklm_could_not_read_is_not_uploaded_again_and_its_broke
     assert statuses(second) == {FAILED}
 
 
+def test_a_podcast_for_a_chapter_notebooklm_could_not_read_fails_as_notebooklms(four_chapters):
+    """A chapter NotebookLM couldn't read at all is NotebookLM's failure: under auto its text items may be
+    made another way, but its podcast and video are never made on the Mac."""
+    four_chapters.media = "1"
+    fallback = LocalStandIn()
+    state = run_auto(four_chapters, FakeSlowSourceClient(only=1, broken=True), fallback)
+    first = state.chapters[0]["tasks"]
+    assert (first["audio"]["status"], first["video"]["status"]) == (FAILED, FAILED)
+    assert not any(task in ("audio", "video") for _, task in fallback.made)
+
+
 @pytest.fixture
 def four_chapters(tmp_path):
     chapters = [("Caching", LONG), ("Queues", LONG), ("Logs", LONG), ("Locks", LONG)]

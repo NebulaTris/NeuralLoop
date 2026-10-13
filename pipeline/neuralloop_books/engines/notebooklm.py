@@ -60,8 +60,9 @@ class NoSourceYet(RuntimeError):
 
 
 class SourceNotRead(GenerationFailed):
-    """NotebookLM took the chapter but never finished reading it, over several runs and one fresh upload: its
-    items fail (auto may make the text items another way; a podcast or video fails as NotebookLM's)."""
+    """NotebookLM took the chapter but couldn't read it, or never finished reading it over several runs and
+    one fresh upload: its items fail (auto may make the text items another way; a podcast or video fails as
+    NotebookLM's)."""
 
 
 class NotebookLMEngine:
@@ -224,7 +225,10 @@ class NotebookLMEngine:
                     made = made or _made_source(error)
                     if made and _source_unreadable(error):
                         await self._drop_source(notebook, chapter, made)
-                        raise
+                        # NotebookLM's own failure: a podcast or video fails as NotebookLM's, never made here.
+                        raise SourceNotRead(
+                            f"NotebookLM couldn't read this chapter ({short_error(error)})"
+                        ) from error
                     if made and _made_source(error):  # made, but NotebookLM hasn't finished reading it
                         if not chapter.get("sourceId"):
                             chapter["sourceId"], chapter["sourceReady"] = made, False
