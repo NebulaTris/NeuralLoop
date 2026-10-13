@@ -637,3 +637,32 @@ def test_items_waiting_for_a_slow_local_fallback_never_hold_notebooklms_lanes(op
     first_local = next(i for i, (who, _, _) in enumerate(finished) if who == "Ollama")
     assert all(who == "Ollama" for who, _, _ in finished[first_local:])  # NotebookLM never waited behind it
     assert primary.most == 2  # and kept both lanes
+
+
+class SlowToGetReady(Timed):
+    """A fallback that takes a while to get ready (e.g. downloading the Mac's AI) before it makes anything."""
+
+    def __init__(self, name, seconds, ready_after, log):
+        super().__init__(name, seconds, log=log)
+        self.ready_after = ready_after
+
+    async def prepare(self, state):
+        await asyncio.sleep(self.ready_after)
+
+
+def test_items_waiting_for_the_local_fallback_to_get_ready_never_hold_notebooklms_lanes(options):
+    """The first item NotebookLM couldn't make gets the Mac's AI ready (a download of a few GB); it and every
+    item queued behind it wait without the run's lanes, so NotebookLM's own items carry on meanwhile."""
+    from neuralloop_books.engines.auto import AutoEngine
+
+    options.media, options.parallel = "none", 2
+    finished: list = []
+    primary = Timed("NotebookLM", 0.01, fails={"study", "quiz"}, log=finished)
+    fallback = SlowToGetReady("Ollama", 0.01, ready_after=0.5, log=finished)
+    engine = AutoEngine(lambda: primary, lambda: fallback, options.log, fallback_parallel=1)
+    state = asyncio.run(run(options, engine))
+    made = [e for c in state.chapters for e in c["tasks"].values() if e["status"] != SKIPPED]
+    assert all(e["status"] == DONE for e in made)
+    first_local = next(i for i, (who, _, _) in enumerate(finished) if who == "Ollama")
+    assert all(who == "Ollama" for who, _, _ in finished[first_local:])  # NotebookLM never waited for it
+    assert primary.most == 2

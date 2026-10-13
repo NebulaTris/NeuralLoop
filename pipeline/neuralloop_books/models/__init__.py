@@ -16,6 +16,14 @@ from urllib.parse import urlparse
 
 from ..config import DEFAULT_MODELS, PROVIDER_KEYS
 
+# Listed models that can't write text (embedding, reranking, speech, image): never picked as the one to use.
+_NOT_CHAT = re.compile(r"embed|rerank|whisper|tts|transcribe|moderation|dall-e", re.IGNORECASE)
+
+
+def is_chat_model(name: str) -> bool:
+    """Whether a listed model's name looks like one that writes text (`nomic-embed-text` doesn't)."""
+    return not _NOT_CHAT.search(name)
+
 
 class SetupError(Exception):
     """Something to fix before any work can start (missing key, model not found, Ollama not running)."""

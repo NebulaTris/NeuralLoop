@@ -103,6 +103,16 @@ def test_later_config_files_win_like_in_opencode(tmp_path):
     assert config["model"] == "b/new" and set(config["provider"]) == {"lmstudio", "deepseek"}
 
 
+def test_a_config_saved_with_a_byte_order_mark_still_counts(tmp_path):
+    """Some Windows-born editors start a UTF-8 file with a BOM; opencode reads it, so we do too."""
+    home = tmp_path / "home"
+    path = home / ".config/opencode/opencode.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"model": "b/new", "provider": PROVIDER}).encode())
+    config, _ = _config({"HOME": str(home)})
+    assert config["model"] == "b/new" and set(config["provider"]) == {"lmstudio"}
+
+
 def test_a_hostile_config_never_gets_anything_but_providers_and_models_through(tmp_path):
     home = tmp_path / "home"
     _write(home / ".config/opencode/opencode.json", json.dumps(HOSTILE))

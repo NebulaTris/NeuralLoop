@@ -11,7 +11,15 @@ import openai
 
 from ..prompts import wrap_chapter
 from ..schemas import SCHEMAS
-from . import QuotaError, SetupError, is_local_url, normalize_base_url, output_cap_from_error, safe_message
+from . import (
+    QuotaError,
+    SetupError,
+    is_chat_model,
+    is_local_url,
+    normalize_base_url,
+    output_cap_from_error,
+    safe_message,
+)
 
 # A "thinking" model behind an OpenAI-compatible server can't be told to skip thinking; don't let one request
 # hang for half an hour (the SDK's default is 10 minutes, retried twice).
@@ -29,8 +37,6 @@ _KNOWN_CAPS = (
     (re.compile(r"^gpt-4(?:-\d{4}|-32k.*)?$"), 8_192),
     (re.compile(r"^gpt-3\.5-turbo"), 4_096),
 )
-# Listed models that can't write text: never picked as the one to use.
-_NOT_CHAT = re.compile(r"embed|rerank|whisper|tts|transcribe|moderation|dall-e", re.IGNORECASE)
 _CHAT_TYPES = frozenset({"llm", "vlm", "chat"})
 NATIVE_TIMEOUT = 3.0
 
@@ -62,7 +68,7 @@ def pick_chat_model(models: list[dict]) -> str | None:
     chat = [
         m
         for m in models
-        if not _NOT_CHAT.search(m["id"]) and (not m.get("type") or str(m["type"]).lower() in _CHAT_TYPES)
+        if is_chat_model(m["id"]) and (not m.get("type") or str(m["type"]).lower() in _CHAT_TYPES)
     ]
     loaded = [m for m in chat if m.get("state") == "loaded" or m.get("loaded") is True]
     return (loaded or chat or [{"id": None}])[0]["id"]

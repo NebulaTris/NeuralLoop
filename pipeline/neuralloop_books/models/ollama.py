@@ -12,7 +12,7 @@ import urllib.request
 from ..prompts import wrap_chapter
 from ..schemas import SCHEMAS
 from ..setup import local_model_for_memory, ollama_host, total_memory
-from . import QuotaError, SetupError
+from . import QuotaError, SetupError, is_chat_model
 
 CONTEXT_TOKENS = 16_384
 # Small models in JSON mode can loop until the context is full; a long podcast script fits well within this.
@@ -57,14 +57,15 @@ class OllamaModel:
                 "or open the Ollama app if you installed it yourself."
             ) from error
         installed = [m["name"] for m in tags.get("models", [])]
-        if not installed:
+        chat = [name for name in installed if is_chat_model(name)]
+        if not chat:
             raise SetupError(
                 "Your Mac's AI has no model yet. NeuralLoop downloads one the next time it prepares a "
                 "book; check your internet connection, or pick a model in Settings → Your AI."
             )
         if not self.model:
             preferred = default_local_model()
-            self.model = preferred if preferred in installed else installed[0]
+            self.model = preferred if preferred in chat else chat[0]
         elif self.model not in installed and f"{self.model}:latest" not in installed:
             raise SetupError(
                 f"Your Mac's AI doesn't have {self.model} yet. NeuralLoop downloads it the next time "

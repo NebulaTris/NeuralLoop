@@ -36,6 +36,14 @@ def _chrome_installed() -> bool:
     return CHROME.exists()
 
 
+def _chromium_downloaded() -> bool:
+    """Whether an earlier sign-in already downloaded Chromium (Playwright keeps it in `chromium-<build>`)."""
+    try:
+        return any(entry.is_dir() and entry.name.startswith("chromium") for entry in BROWSERS.iterdir())
+    except OSError:
+        return False
+
+
 def status() -> dict:
     """{"signedIn": bool, "email": str}, from the saved session (quick, no network)."""
     cli = _cli()
@@ -64,7 +72,8 @@ def sign_in(log: Callable[[str], None]) -> int:
     if browser == "chromium":
         BROWSERS.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": str(BROWSERS)}
-        log("  setup: Getting a browser for Google sign-in (the first time only, about 150 MB)…")
+        if not _chromium_downloaded():
+            log("  setup: Getting a browser for Google sign-in (the first time only, about 150 MB)…")
     log("  setup: A browser window is opening. Sign in to Google there, then come back.")
     with contextlib.suppress(subprocess.TimeoutExpired):  # the status check below says it didn't finish
         subprocess.run(
@@ -103,10 +112,18 @@ def usage() -> dict:
         report = json.loads(result.stdout or "{}") if result.returncode == 0 else {}
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
         report = {}
-    if not report.get("windows"):
+    try:
+        return _usage_summary(report)
+    except (KeyError, TypeError, ValueError):  # a report in a shape we don't know: say we don't know
         return {"known": False}
-    windows = {w.get("kind"): w for w in report["windows"]}
-    actions = {a.get("kind"): a for a in report.get("actions", [])}
+
+
+def _usage_summary(report) -> dict:
+    """The app's summary of `notebooklm usage --json`; raises on a report it doesn't understand."""
+    if not isinstance(report, dict) or not report.get("windows"):
+        return {"known": False}
+    windows = {w.get("kind"): w for w in _dicts(report["windows"])}
+    actions = {a.get("kind"): a for a in _dicts(report.get("actions") or [])}
 
     def window(kind: str) -> dict:
         w = windows.get(kind, {})
@@ -123,3 +140,10 @@ def usage() -> dict:
         "podcast": bool(actions.get("audio_overview", {}).get("has_sufficient_quota")),
         "video": bool(actions.get("video_overview", {}).get("has_sufficient_quota")),
     }
+
+
+def _dicts(value) -> list:
+    """`value` when it is a list of objects (as the report's windows and actions are); TypeError otherwise."""
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise TypeError("expected a list of objects")
+    return value

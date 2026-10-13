@@ -20,5 +20,5 @@ def parse_selection(spec: str, chapter_count: int) -> set[int]:
         low, high = int(start), int(end or start)
         if low > high:
             raise ValueError(f'Invalid range "{part}": the first number must not be larger than the second.')
-        chosen.update(range(low, high + 1))
-    return {n for n in chosen if 1 <= n <= chapter_count}
+        chosen.update(range(max(low, 1), min(high, chapter_count) + 1))  # never more than the book
+    return chosen

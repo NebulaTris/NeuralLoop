@@ -2,6 +2,8 @@ import json
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from neuralloop_books import account
 
 
@@ -42,11 +44,12 @@ def test_sign_in_uses_chrome_when_installed_and_reports_the_account(monkeypatch)
     assert json.loads(lines[-1].removeprefix("Account: ")) == {"signedIn": True, "email": "pip@example.com"}
 
 
-def test_sign_in_that_does_not_finish_says_how_to_retry(monkeypatch):
+def test_sign_in_that_does_not_finish_says_how_to_retry(monkeypatch, tmp_path):
     lines = []
     monkeypatch.setattr(account.subprocess, "run", fake_run([(1, ""), (1, "{}")], []))
     monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
     monkeypatch.setattr(account, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(account, "BROWSERS", tmp_path / "browsers")
     assert account.sign_in(lines.append) == 3
     assert "didn't finish" in lines[-1]
 
@@ -129,7 +132,26 @@ def test_usage_when_signed_out_or_unknown(monkeypatch):
     assert account.usage() == {"known": False}
 
 
-def test_a_sign_in_browser_that_hangs_is_given_up_on(monkeypatch):
+@pytest.mark.parametrize(
+    "report",
+    [
+        [1, 2],
+        "ready",
+        {"windows": "five_hour"},
+        {"windows": [{"kind": "five_hour", "remaining_percent": None}]},
+        {"windows": [{"kind": "five_hour", "remaining_percent": "lots"}]},
+        {"windows": ["five_hour"]},
+        {"windows": [{"kind": "weekly", "remaining_percent": 50}], "actions": "audio_overview"},
+        {"windows": [{"kind": "weekly", "remaining_percent": 50}], "actions": ["audio_overview"]},
+    ],
+)
+def test_usage_that_cant_be_read_is_unknown(monkeypatch, report):
+    monkeypatch.setattr(account.subprocess, "run", fake_run([(0, json.dumps(report))], []))
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.usage() == {"known": False}
+
+
+def test_a_sign_in_browser_that_hangs_is_given_up_on(monkeypatch, tmp_path):
     import subprocess
 
     lines, seen = [], {}
@@ -143,6 +165,7 @@ def test_a_sign_in_browser_that_hangs_is_given_up_on(monkeypatch):
     monkeypatch.setattr(account.subprocess, "run", run)
     monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
     monkeypatch.setattr(account, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(account, "BROWSERS", tmp_path / "browsers")
     assert account.sign_in(lines.append) == 3
     assert seen["timeout"] and seen["timeout"] > account.SIGN_IN_TIMEOUT
 
@@ -169,3 +192,21 @@ def test_sign_in_without_chrome_gets_its_browser_outside_the_signed_app(monkeypa
     assert "chromium" in seen["cmd"]
     assert seen["env"]["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "browsers")
     assert (tmp_path / "browsers").is_dir()
+
+
+def test_sign_in_says_it_is_getting_a_browser_only_the_first_time(monkeypatch, tmp_path):
+    def run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, '{"status": "ok", "account": {"email": "a@b.c"}}', "")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    monkeypatch.setattr(account, "_chrome_installed", lambda: False)
+    monkeypatch.setattr(account, "BROWSERS", tmp_path / "browsers")
+    first: list[str] = []
+    assert account.sign_in(first.append) == 0
+    assert any("150 MB" in line for line in first)
+
+    (tmp_path / "browsers" / "chromium-1187").mkdir()  # where Playwright put Chromium the first time
+    later: list[str] = []
+    assert account.sign_in(later.append) == 0
+    assert not any("150 MB" in line for line in later)

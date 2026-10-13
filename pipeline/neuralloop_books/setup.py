@@ -12,7 +12,7 @@ import urllib.request
 from collections.abc import Callable, Iterator
 
 from . import activity
-from .models import SetupError, agent_env
+from .models import SetupError, agent_env, is_chat_model
 
 _GB = 1024**3
 DEFAULT_HOST = "http://127.0.0.1:11434"
@@ -86,10 +86,15 @@ DOWNLOADING = "Downloading your Mac's AI (first time only)"
 
 
 async def ensure_model(host: str, name: str, log: Callable[[str], None], any_will_do: bool = False) -> None:
-    """Download `name` into Ollama unless it's there (with `any_will_do`, unless Ollama has any model). Inside
+    """Download `name` into Ollama unless it's there (with `any_will_do`, unless Ollama has any model that
+    writes text; an embedding model alone doesn't count). Inside
     a book run the item waiting for it shows the download as its step."""
     installed = await asyncio.to_thread(_installed_models, host)
-    if name in installed or f"{name}:latest" in installed or (any_will_do and installed):
+    if (
+        name in installed
+        or f"{name}:latest" in installed
+        or (any_will_do and any(map(is_chat_model, installed)))
+    ):
         return
 
     def pull() -> None:
