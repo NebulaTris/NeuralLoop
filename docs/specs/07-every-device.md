@@ -1,6 +1,7 @@
 # Spec 07 — Your library on every device
 
-Status: next (with spec 04) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: the Swift app (`apple/`), `pipeline/`
+Status: done (built; Drive sync and the iPad need the owner's OAuth client ID in `apple/Config/Google.xcconfig`, see
+`docs/DEVELOPMENT.md`) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: the Swift app (`apple/`), `pipeline/`
 
 ## What the person experiences
 
@@ -99,6 +100,9 @@ Mac packaging (`scripts/package-mac.sh`):
 - Updates come from our website through Sparkle (appcast signed with our own EdDSA key; no Apple account needed).
   Updates installed by Sparkle don't trigger "Open Anyway" again.
 - The website's download page shows the one-time "Open Anyway" step with a screenshot.
+
+As built today, `make package` puts the runtime inside the DMG (no first-launch download yet), and updates are a new DMG
+(Sparkle isn't wired up yet). The one-time "Open Anyway" step is the same.
 
 ## Tests (write first)
 
