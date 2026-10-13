@@ -13,6 +13,7 @@ struct NeuralLoopApp: App {
         let library = Library()
         _library = State(initialValue: library)
         library.start()  // the shelf loop lives as long as the app, window or not
+        AppMover.sweepLeftoversAtLaunch()  // a half-made copy from an interrupted move into Applications
         // Your library on every device: upload what the Mac prepares, prepare books added on the iPad.
         DriveSync.shared.onArrived = { file, title in library.addFromInbox(file, title: title) }
         DriveSync.shared.onChanged = { library.reload() }

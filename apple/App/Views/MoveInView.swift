@@ -3,6 +3,7 @@
 
 import AppKit
 import NeuralLoopCore
+import os
 import SwiftUI
 
 enum AppMover {
@@ -32,7 +33,10 @@ enum AppMover {
     /// This copy quits only once the new one has opened. Says how it went.
     /// The copy (over a gigabyte, with the runtime) happens off the main thread, so Pip keeps carrying yarn meanwhile.
     @MainActor static func moveIn() async -> MoveOutcome {
-        switch await Task.detached(operation: { copyIn() }).value {
+        while !claim() { try? await Task.sleep(for: .milliseconds(200)) }  // the launch's sweep finishes first
+        let copied = await Task.detached(operation: { copyIn() }).value
+        release()
+        switch copied {
         case .alreadyThere: return .alreadyHome
         case .failed(let problem): return .problem(problem)
         case .copied(let destination):
@@ -53,13 +57,58 @@ enum AppMover {
 
     enum CopyOutcome: Sendable { case alreadyThere, copied(URL), failed(String) }
 
+    /// One move (or sweep) at a time: true while this app is moving in or sweeping leftovers.
+    nonisolated private static let busy = OSAllocatedUnfairLock(initialState: false)
+
+    nonisolated private static func claim() -> Bool {
+        busy.withLock { running in
+            if running { return false }
+            running = true
+            return true
+        }
+    }
+
+    nonisolated private static func release() { busy.withLock { $0 = false } }
+
+    nonisolated private static var folders: [URL] {
+        [URL(fileURLWithPath: "/Applications", isDirectory: true),
+         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)]
+    }
+
+    /// At launch: a move that was interrupted (the Mac slept, the app was quit mid-copy) can leave a hidden, half-made
+    /// copy (`.moving-<UUID>-NeuralLoop.app`, over a gigabyte) in Applications. Removes those, off the main thread,
+    /// unless a move is running here or another copy of NeuralLoop is open (it may be moving in right now).
+    @MainActor static func sweepLeftoversAtLaunch() {
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            .contains { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        Task.detached(priority: .background) {
+            guard claim() else { return }
+            defer { release() }
+            sweepLeftovers(anotherMoveRunning: others)
+        }
+    }
+
+    /// Removes this app's half-made copies from the Applications folders (only names `MoveInPlan.isLeftover` matches,
+    /// only directly in those folders). The caller holds `busy`.
+    nonisolated private static func sweepLeftovers(anotherMoveRunning: Bool) {
+        let fm = FileManager.default
+        let name = Bundle.main.bundleURL.lastPathComponent
+        for folder in folders {
+            let names = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
+            for leftover in MoveInPlan.leftovers(in: names, appName: name, anotherMoveRunning: anotherMoveRunning) {
+                try? fm.removeItem(at: folder.appendingPathComponent(leftover, isDirectory: true))
+            }
+        }
+    }
+
+    /// The caller holds `busy`.
     nonisolated private static func copyIn() -> CopyOutcome {
         let fm = FileManager.default
         let name = Bundle.main.bundleURL.lastPathComponent
-        let personal = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         var lastProblem = ""
         let here = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
-        for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), personal] {
+        sweepLeftovers(anotherMoveRunning: false)  // an earlier, interrupted move's copy goes first (it's ours: we hold `busy`)
+        for folder in folders {
             let destination = folder.appendingPathComponent(name)
             let found: MoveInPlan.Destination =
                 destination.standardizedFileURL.resolvingSymlinksInPath() == here ? .thisCopy
@@ -81,7 +130,7 @@ enum AppMover {
     /// Does the steps in order; when one fails, undoes what was done and says why.
     nonisolated private static func carryOut(_ steps: [MoveInPlan.Step], into folder: URL, destination: URL) -> String? {
         let fm = FileManager.default
-        let staging = folder.appendingPathComponent(".moving-\(UUID().uuidString)-\(destination.lastPathComponent)")
+        let staging = folder.appendingPathComponent(MoveInPlan.stagingName(for: destination.lastPathComponent))
         var trashed: URL?
         for step in steps {
             do {
@@ -208,15 +257,18 @@ struct MoveInView: View {
         .padding(32)
         .frame(width: 520)
         .background(Theme.paper)
+        .interactiveDismissDisabled(moving)  // nothing closes the sheet mid-move
     }
 
     private var moveButtons: some View {
         HStack(spacing: 12) {
+            // Not while the copy is underway: it would carry on, and this copy would still quit and reopen.
             Button("Maybe later") {
                 AppMover.later()
                 dismiss()
             }
             .controlSize(.large)
+            .disabled(moving)
             Button {
                 moving = true
                 problem = nil
