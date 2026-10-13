@@ -152,9 +152,7 @@ def _notebooklm_engine(opts: Options):
     from .engines.notebooklm import NotebookLMEngine
     from .notebook import open_client
 
-    return NotebookLMEngine(
-        None, notebooklm, opts, open_client=lambda: open_client(notebooklm.NotebookLMClient)
-    )
+    return NotebookLMEngine(notebooklm, opts, lambda: open_client(notebooklm.NotebookLMClient))
 
 
 def _local_engine(opts: Options):

@@ -17,8 +17,14 @@ from urllib.parse import urlparse
 from ..config import DEFAULT_MODELS, PROVIDER_KEYS
 
 # Listed models that can't write text (embedding, reranking, speech, image): never picked as the one to use.
+# Short names (tts, e5, bert) count only as a whole part of the name ("kokoro-tts", "intfloat/e5-large"),
+# never inside a word ("mattshumer/reflection-llama"); an "org/" prefix is fine ("sentence-transformers/…").
 _NOT_CHAT = re.compile(
-    r"embed|rerank|whisper|tts|transcribe|moderation|dall-e|\bbge\b|minilm|\bgte-|^paraphrase-", re.IGNORECASE
+    r"embed|rerank|whisper|transcribe|moderation|dall-e|\bbge\b|minilm|\bgte-"
+    r"|(?:^|/)paraphrase-"
+    r"|(?:^|[-_/])(?:tts|e5)(?=$|[-_:./])"
+    r"|bert(?=$|[-_:./])",
+    re.IGNORECASE,
 )
 
 
@@ -73,6 +79,12 @@ def safe_message(text: object, limit: int = 200, env: Mapping[str, str] | None =
         if len(key) >= 8:
             line = line.replace(key, "[key hidden]")
     return _KEY_SHAPES.sub("[key hidden]", line)[:limit]
+
+
+def short_error(error: BaseException, limit: int = 120) -> str:
+    """An error's first line (its type's name when it says nothing), safe to print and save."""
+    text = str(error).strip()
+    return safe_message(text.splitlines()[0] if text else type(error).__name__, limit)
 
 
 _TOKEN_PARAMETER = re.compile(r"max_(?:completion_|output_)?tokens", re.IGNORECASE)

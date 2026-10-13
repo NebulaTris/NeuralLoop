@@ -6,7 +6,13 @@ import pytest
 
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import (
+from neuralloop_books.models import QuotaError, SetupError
+from neuralloop_books.models.fake import FakeModel
+from neuralloop_books.pipeline import Options, run
+from neuralloop_books.speech.fake import FakeSpeech
+from neuralloop_books.state import DONE, SKIPPED, WAITING
+
+from .fake_client import (
     ENUMS,
     FakeClient,
     FakeDownClient,
@@ -17,12 +23,8 @@ from neuralloop_books.fake_client import (
     FakeStaleSessionClient,
     FakeStaleTwiceWhileWaitingClient,
     FakeStaleWhileWaitingClient,
+    opening,
 )
-from neuralloop_books.models import QuotaError, SetupError
-from neuralloop_books.models.fake import FakeModel
-from neuralloop_books.pipeline import Options, run
-from neuralloop_books.speech.fake import FakeSpeech
-from neuralloop_books.state import DONE, SKIPPED, WAITING
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ def options(epub, tmp_path):
 
 
 def run_with(opts, client):
-    return asyncio.run(run(opts, NotebookLMEngine(client, ENUMS, opts)))
+    return asyncio.run(run(opts, NotebookLMEngine(ENUMS, opts, opening(client))))
 
 
 def run_local(opts, model=None):
@@ -148,7 +150,7 @@ def test_auto_engine_opens_notebooklm_inside_the_running_loop(options):
     async def open_fake():
         return FakeClient(delay=0)
 
-    notebooklm = lambda: NotebookLMEngine(None, ENUMS, options, open_client=open_fake)  # noqa: E731
+    notebooklm = lambda: NotebookLMEngine(ENUMS, options, open_fake)  # noqa: E731
     local = lambda: LocalEngine.from_options(options, FakeModel(), FakeSpeech())  # noqa: E731
     state = asyncio.run(run(options, AutoEngine(notebooklm, local, options.log)))
     assert {entry["by"] for entry in state.chapters[0]["tasks"].values() if entry["status"] == DONE} == {
@@ -397,7 +399,7 @@ class OpenedLikeTheRealLibrary:
 
 def test_notebooklm_uses_the_client_its_context_opens(options):
     context = OpenedLikeTheRealLibrary()
-    state = asyncio.run(run(options, NotebookLMEngine(context, ENUMS, options)))
+    state = asyncio.run(run(options, NotebookLMEngine(ENUMS, options, opening(context))))
     assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and context.closed
 
 
@@ -431,7 +433,7 @@ def test_a_session_another_process_rotated_is_reloaded_from_disk_and_notebooklm_
     async def reopen():
         return FakeRotatedSessionClient(shared)
 
-    engine = NotebookLMEngine(None, ENUMS, options, open_client=reopen)
+    engine = NotebookLMEngine(ENUMS, options, reopen)
     state = asyncio.run(run(options, engine))
     first = state.chapters[0]["tasks"]
     assert first["audio"]["status"] == DONE and first["video"]["status"] == DONE

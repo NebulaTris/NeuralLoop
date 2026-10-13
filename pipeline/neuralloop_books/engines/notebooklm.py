@@ -6,9 +6,11 @@ from types import ModuleType
 
 from .. import activity, config
 from ..config import SOURCE_TIMEOUT, quota_message
+from ..models import short_error
 from ..notebook import (
     NOT_ANSWERING,
     ChapterMaker,
+    GenerationFailed,
     MediaOptions,
     NotebookLMBusy,
     forget_requests,
@@ -27,6 +29,22 @@ MAX_RELOADS_PER_RUN = 6
 STILL_READING = "NotebookLM is still reading this chapter; Pip will look again next run."
 
 
+# The account owns as many notebooks as NotebookLM allows: say what to do about it.
+NOTEBOOK_FULL = (
+    "NotebookLM has no room for another notebook. Delete one you don't need in NotebookLM, "
+    "and Pip will carry on next run."
+)
+
+
+class NotebookFull(RuntimeError):
+    """NotebookLM won't make the book's notebook (the account is at its notebook limit): NotebookLM can't
+    make anything for this book this run. Every item waits for the next run; auto makes the text items
+    another way, and podcasts and videos wait for NotebookLM."""
+
+    try_later = True
+    waiting_message = NOTEBOOK_FULL
+
+
 class NoSourceYet(RuntimeError):
     """NotebookLM wouldn't take this chapter this run (a limit, or it didn't answer): its items wait for the
     next run, which adds it again. Other chapters' items of the same kind carry on, and auto never makes them
@@ -41,12 +59,18 @@ class NoSourceYet(RuntimeError):
         self.waiting_message, self.limit = waiting_message, limit
 
 
+class SourceNotRead(GenerationFailed):
+    """NotebookLM took the chapter but never finished reading it, over several runs and one fresh upload: its
+    items fail (auto may make the text items another way; a podcast or video fails as NotebookLM's)."""
+
+
 class NotebookLMEngine:
     name = "NotebookLM"
 
-    def __init__(self, client, enums: ModuleType, opts, open_client=None):
-        """Pass a ready `client`, or `open_client`: a coroutine function that opens one in the run loop."""
-        self.client, self.enums, self.opts, self._open_client = client, enums, opts, open_client
+    def __init__(self, enums: ModuleType, opts, open_client):
+        """`open_client`: a coroutine function that opens the saved session in the run loop (again whenever
+        the session goes stale)."""
+        self.client, self.enums, self.opts, self._open_client = None, enums, opts, open_client
         self.maker: ChapterMaker | None = None
         self._reload = asyncio.Lock()
         self._session = 0  # bumped each time the session is reloaded
@@ -56,12 +80,14 @@ class NotebookLMEngine:
         self._notebook_lock = asyncio.Lock()
         self._source_locks: dict[int, asyncio.Lock] = {}
         self._notebook_renewed = False  # a vanished notebook is made again once per run
+        self._notebook_full: str | None = None  # why NotebookLM wouldn't make a notebook (asked once a run)
         self._sources_renewed: set[int] = set()  # a vanished source is added again once per chapter per run
         self._no_source: dict[int, BaseException] = {}  # chapters NotebookLM wouldn't take this run, and why
+        self._read_counted: set[int] = set()  # chapters whose unread source was counted this run (readTries)
 
     async def __aenter__(self):
         # notebooklm-py hands back a context manager: the client is what entering it returns.
-        self._context = self.client if self.client is not None else await self._open_client()
+        self._context = await self._open_client()
         self.client = await self._context.__aenter__()
         return self
 
@@ -84,7 +110,9 @@ class NotebookLMEngine:
         self.maker = ChapterMaker(
             self.client, self.enums, state.data.get("notebookId"), opts.out, media, save=state.save
         )
-        stuck: BaseException | None = None  # once NotebookLM won't take one chapter, don't ask for more
+        # Once NotebookLM is at its limit or doesn't answer, don't ask it to take more chapters this run. A
+        # chapter it's still reading waits on its own: the chapters after it are still added.
+        stuck: BaseException | None = None
         for chapter in state.chapters:
             if _source_ready(chapter) or not _has_work(chapter):
                 continue
@@ -98,8 +126,12 @@ class NotebookLMEngine:
                     raise
                 reason = _waiting(error)
                 self._no_source[chapter["n"]] = reason or error
+                if isinstance(error, NotebookFull):
+                    stuck = error  # no notebook, so no chapter can be added this run
+                    opts.log(f"  chapter {chapter['n']} waits: {NOTEBOOK_FULL}")
                 if reason is not None:
-                    stuck = reason
+                    if reason.waiting_message != STILL_READING:
+                        stuck = reason
                     opts.log(f"  chapter {chapter['n']} waits: {reason.waiting_message}")
 
     async def make(self, task: str, chapter: dict) -> dict:
@@ -133,7 +165,7 @@ class NotebookLMEngine:
                     if task in config.MEDIA_TASKS:
                         # A podcast or video waits for NotebookLM (next run), never made on the Mac instead.
                         raise NotebookLMBusy(
-                            f"NotebookLM kept refusing the session ({_short(error)})"
+                            f"NotebookLM kept refusing the session ({short_error(error)})"
                         ) from error
                     raise
                 if not is_transient_error(error):
@@ -141,7 +173,7 @@ class NotebookLMEngine:
                 if not delays:
                     tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
                     raise NotebookLMBusy(
-                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                        f"NotebookLM didn't answer ({short_error(error)}) after {tries} tries"
                     ) from error
                 pause = delays.pop(0)
                 activity.report(f"NotebookLM is slow right now, trying again in {pause} s")
@@ -153,8 +185,16 @@ class NotebookLMEngine:
         """The book's notebook, made now if it has none. Call with `_notebook_lock` held."""
         state = self._state
         if not state.data.get("notebookId"):
+            if self._notebook_full is not None:  # asked once this run already: don't ask again
+                raise NotebookFull(self._notebook_full)
             title = f"NeuralLoop: {state.data['title']}"[:90]
-            notebook = await self._patiently(lambda: self.client.notebooks.create(title))
+            try:
+                notebook = await self._patiently(lambda: self.client.notebooks.create(title))
+            except Exception as error:  # only a full account is turned into waiting; the rest goes up
+                if not _named(error, "NotebookLimitError"):
+                    raise
+                self._notebook_full = f"NotebookLM wouldn't make a notebook ({short_error(error)})"
+                raise NotebookFull(self._notebook_full) from error
             state.data["notebookId"] = notebook.id
             state.save()
         self.maker.notebook_id = state.data["notebookId"]
@@ -185,8 +225,24 @@ class NotebookLMEngine:
                     if made and _source_unreadable(error):
                         await self._drop_source(notebook, chapter, made)
                         raise
-                    if made and not chapter.get("sourceId"):
-                        chapter["sourceId"], chapter["sourceReady"] = made, False
+                    if made and _made_source(error):  # made, but NotebookLM hasn't finished reading it
+                        if not chapter.get("sourceId"):
+                            chapter["sourceId"], chapter["sourceReady"] = made, False
+                        if self._unread_too_long(chapter):
+                            again = not chapter.get("readAgain")
+                            await self._drop_source(notebook, chapter, made)
+                            if again:
+                                # Once more from the start: a fresh upload may be read where this one wasn't.
+                                chapter.update(readAgain=True, readTries=config.NOTEBOOKLM_READ_TRIES)
+                                self._state.save()
+                                self.opts.log(
+                                    f"  chapter {chapter['n']}: NotebookLM never finished reading it; "
+                                    "adding it once more"
+                                )
+                                continue
+                            raise SourceNotRead(
+                                "NotebookLM never finished reading this chapter, even when it was added again"
+                            ) from error
                         self._state.save()
                     if _not_found(error, "Notebook") and await self._renew_notebook(notebook):
                         continue
@@ -195,9 +251,20 @@ class NotebookLMEngine:
                         self._forget_source(chapter)
                         continue
                     raise
-                chapter.pop("sourceReady", None)
+                for key in ("sourceReady", "readTries", "readAgain"):
+                    chapter.pop(key, None)
                 self._state.save()
                 self.opts.log(f"  added chapter {chapter['n']}: {chapter['title']}")
+
+    def _unread_too_long(self, chapter: dict) -> bool:
+        """Count this run (once) among those the chapter's source stayed unread; True once that's
+        NOTEBOOKLM_READ_TRIES runs."""
+        if chapter["n"] not in self._read_counted:
+            self._read_counted.add(chapter["n"])
+            tries = chapter.get("readTries")
+            tries = tries if isinstance(tries, int) and not isinstance(tries, bool) else 0
+            chapter["readTries"] = tries + 1
+        return chapter["readTries"] >= config.NOTEBOOKLM_READ_TRIES
 
     async def _until_ready(self, notebook: str, source_id: str) -> None:
         await self.client.sources.wait_until_ready(notebook, source_id, timeout=SOURCE_TIMEOUT)
@@ -211,7 +278,8 @@ class NotebookLMEngine:
 
     def _forget_source(self, chapter: dict) -> None:
         chapter["sourceId"] = None
-        chapter.pop("sourceReady", None)
+        for key in ("sourceReady", "readTries", "readAgain"):
+            chapter.pop(key, None)
         forget_requests(chapter)
         self.maker.forget_chapter(chapter["n"])
         self._state.save()
@@ -286,7 +354,7 @@ class NotebookLMEngine:
                 if not delays:
                     tries = len(config.NOTEBOOKLM_RETRY_DELAYS) + 1
                     raise NotebookLMBusy(
-                        f"NotebookLM didn't answer ({_short(error)}) after {tries} tries"
+                        f"NotebookLM didn't answer ({short_error(error)}) after {tries} tries"
                     ) from error
                 await asyncio.sleep(delays.pop(0))
 
@@ -303,16 +371,12 @@ class NotebookLMEngine:
             if self._reloads >= MAX_RELOADS_PER_RUN:
                 return False
             self._reloads += 1
-            if self._open_client is None:
-                if hasattr(self.client, "refresh_auth"):
-                    await self.client.refresh_auth()
-            else:
-                context = await self._open_client()
-                client = await context.__aenter__()
-                self._retired.append(self._context)
-                self._context, self.client = context, client
-                if self.maker is not None:
-                    self.maker.client = client
+            context = await self._open_client()
+            client = await context.__aenter__()
+            self._retired.append(self._context)
+            self._context, self.client = context, client
+            if self.maker is not None:
+                self.maker.client = client
             self._session += 1
             return True
 
@@ -349,7 +413,12 @@ def _has_work(chapter: dict) -> bool:
 
 def _not_found(error: BaseException, what: str) -> bool:
     """notebooklm-py's NotebookNotFoundError / SourceNotFoundError (by name, as for its other errors)."""
-    return any(cls.__name__ == f"{what}NotFoundError" for cls in type(error).__mro__)
+    return _named(error, f"{what}NotFoundError")
+
+
+def _named(error: BaseException, name: str) -> bool:
+    """The error is notebooklm-py's `name` (matched by name, so the library stays optional)."""
+    return any(cls.__name__ == name for cls in type(error).__mro__)
 
 
 def _is_setup_error(error: BaseException) -> bool:
@@ -360,12 +429,14 @@ def _is_setup_error(error: BaseException) -> bool:
 
 def _waiting(error: BaseException) -> NoSourceYet | None:
     """A chapter NotebookLM wouldn't take because of a limit or a hiccup waits; None for anything else."""
+    if isinstance(error, NotebookFull):
+        return None  # goes up as it is: auto makes the text items another way
     if is_quota_error(error):
-        return NoSourceYet(_short(error), quota_message("NotebookLM"), limit=True)
+        return NoSourceYet(short_error(error), quota_message("NotebookLM"), limit=True)
     if _made_source(error) and not _source_unreadable(error):
-        return NoSourceYet(_short(error), STILL_READING, limit=False)
+        return NoSourceYet(short_error(error), STILL_READING, limit=False)
     if getattr(error, "try_later", False) or is_transient_error(error):
-        return NoSourceYet(_short(error), NOT_ANSWERING, limit=False)
+        return NoSourceYet(short_error(error), NOT_ANSWERING, limit=False)
     return None
 
 
@@ -373,9 +444,6 @@ def _again(error: BaseException) -> BaseException:
     """A fresh copy of the reason a chapter has no source, for each of its items."""
     if isinstance(error, NoSourceYet):
         return NoSourceYet(str(error), error.waiting_message, error.limit)
-    return RuntimeError(f"NotebookLM wouldn't take this chapter ({_short(error)})")
-
-
-def _short(error: BaseException) -> str:
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return text[:100]
+    if isinstance(error, (GenerationFailed, NotebookFull)):  # auto treats each copy as the original
+        return type(error)(str(error))
+    return RuntimeError(f"NotebookLM wouldn't take this chapter ({short_error(error)})")

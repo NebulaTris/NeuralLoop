@@ -1,7 +1,7 @@
 """Making one item (quiz, video, ...) for one chapter with a NotebookLM client.
 
 The client and its enums are passed in, so the real notebooklm-py library and the offline
-fake (fake_client.py) run exactly the same code.
+fake in the tests (tests/fake_client.py) run exactly the same code.
 """
 
 import asyncio
@@ -24,6 +24,7 @@ from .config import (
     VIDEO_TIMEOUT,
     audio_length,
 )
+from .models import short_error
 
 # Word boundaries, so "page 429" or "after 1429s" never read as a limit.
 _QUOTA = re.compile(
@@ -146,9 +147,8 @@ def is_auth_error(error: BaseException) -> bool:
 
 
 async def open_client(client_class):
-    """notebooklm-py 0.8+ returns an async context manager; older builds return an awaitable."""
-    client = client_class.from_storage()
-    return client if hasattr(client, "__aenter__") else await client
+    """The saved session as notebooklm-py's async context manager (entering it gives the client)."""
+    return client_class.from_storage()
 
 
 @dataclass
@@ -253,6 +253,14 @@ class ChapterMaker:
             language=self.media.language,
         )
         raw = self._raw(chapter, "mindmap")
+        tree = getattr(mind_map, "tree", None)
+        if isinstance(tree, dict):  # a note-backed map comes with its tree: nothing to download
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_text(json.dumps(tree, ensure_ascii=False), encoding="utf-8")
+            return {"mindmap": tree}
+        if not getattr(mind_map, "id", None):
+            # Downloading without an id fetches whichever mind map NotebookLM has (another chapter's).
+            raise UnusableAnswer("NotebookLM made no mind map it could hand over")
         await self.client.artifacts.download_mind_map(self.notebook_id, str(raw), mind_map.id)
         return {"mindmap": json.loads(raw.read_text(encoding="utf-8"))}
 
@@ -341,13 +349,16 @@ class ChapterMaker:
             tries = (_number(entry.get("downloadTries")) or 0) + 1
             if tries >= config.NOTEBOOKLM_DOWNLOAD_TRIES:
                 _forget(entry)
+                why = short_error(error)
                 raise NotDownloaded(
-                    f"NotebookLM made it, but it couldn't be downloaded after {tries} tries ({_short(error)})"
+                    f"NotebookLM made it, but it couldn't be downloaded after {tries} tries ({why})"
                 ) from error
             entry["downloadTries"] = int(tries)
             with contextlib.suppress(OSError):  # the pipeline saves again as the item waits
                 self._save()
-            raise DownloadLater(f"NotebookLM made it, but downloading it failed ({_short(error)})") from error
+            raise DownloadLater(
+                f"NotebookLM made it, but downloading it failed ({short_error(error)})"
+            ) from error
         self.pending.pop(key, None)
         _forget(entry)
         return result
@@ -379,7 +390,7 @@ class ChapterMaker:
             task_id = await self._find(kind, chapter, requested, look_again=True)
             if not task_id:
                 raise NotebookLMBusy(
-                    f"NotebookLM didn't confirm it got the request ({_short(error)}); "
+                    f"NotebookLM didn't confirm it got the request ({short_error(error)}); "
                     "Pip will look for it next run"
                 ) from error
         self._remember(entry, task_id, requested)
@@ -458,10 +469,8 @@ def _created(artifact) -> float | None:
     made = getattr(artifact, "created_at", None)
     if made is None:
         return None
-    if isinstance(made, (int, float)):
-        return float(made)
     try:
-        return made.timestamp()  # a datetime (notebooklm-py 0.8's are timezone-aware UTC)
+        return made.timestamp()  # a datetime (notebooklm-py's are timezone-aware UTC)
     except (AttributeError, ValueError, OverflowError, OSError):
         return None
 
@@ -473,26 +482,16 @@ def _finished(status) -> None:
     if outcome is None or outcome not in ("failed", "removed"):
         return
     reason = str(getattr(status, "error", None) or "").strip()
-    limited = getattr(status, "is_rate_limited", None)
-    if not isinstance(limited, bool):
-        limited = getattr(status, "error_code", None) == "USER_DISPLAYABLE_ERROR" or bool(
-            reason and _QUOTA.search(reason)
-        )
-    if limited:
+    if getattr(status, "is_rate_limited", False) is True:
         from .models import QuotaError
 
         raise QuotaError(f"NotebookLM's limit was reached ({reason or 'it said to try later'})")
     raise GenerationFailed(f"NotebookLM couldn't make it ({reason or 'it gave no reason'})")
 
 
-def _short(error: BaseException) -> str:
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return text[:100]
-
-
 def _whole_wait_ran_out(error: BaseException, seconds: float, timeout: float) -> bool:
     """The wait for an item ran its whole timeout (not one slow status check that timed out)."""
     names = " ".join(cls.__name__ for cls in type(error).__mro__)
-    if "WaitTimeout" in names or "ArtifactTimeout" in names:
+    if "WaitTimeout" in names:  # notebooklm-py's WaitTimeoutError, and ArtifactTimeoutError (a subclass)
         return True
     return isinstance(error, TimeoutError) and seconds >= 0.9 * timeout

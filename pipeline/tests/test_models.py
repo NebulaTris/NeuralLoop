@@ -745,6 +745,17 @@ def test_the_local_engine_never_strips_citations_its_models_do_not_write():
         "paraphrase-multilingual",
         "mxbai-embed-large",
         "snowflake-arctic-embed2",
+        "sentence-transformers/paraphrase-MiniLM-L3-v2",
+        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+        "e5-large-v2",
+        "intfloat/multilingual-e5-small",
+        "nomic-ai/nomic-bert-2048",
+        "bert-base-uncased",
+        "google-bert/bert-large-cased",
+        "kokoro-tts",
+        "openai/tts-1-hd",
+        "gpt-4o-mini-tts",
+        "tts-1",
     ],
 )
 def test_embedding_models_are_never_taken_for_writing(name):
@@ -753,8 +764,53 @@ def test_embedding_models_are_never_taken_for_writing(name):
     assert not is_chat_model(name)
 
 
-@pytest.mark.parametrize("name", ["qwen3:8b", "llama3.2:3b", "gemma3:4b", "gpt-oss:20b", "mistral-small"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "qwen3:8b",
+        "llama3.2:3b",
+        "gemma3:4b",
+        "gpt-oss:20b",
+        "mistral-small",
+        "deepseek-r1:8b",
+        "phi4:14b",
+        "mattshumer/reflection-llama-3.1-70b",
+        "qwen/qwen3-8b",
+        "gemma3n:e4b",
+    ],
+)
 def test_writing_models_still_count_as_chat_models(name):
     from neuralloop_books.models import is_chat_model
 
     assert is_chat_model(name)
+
+
+@pytest.mark.parametrize(
+    ("provider", "variable", "official"),
+    [
+        ("anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+        ("openai", "OPENAI_API_KEY", "https://api.openai.com/v1"),
+        ("openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+    ],
+)
+def test_a_saved_key_only_ever_goes_to_its_official_service(provider, variable, official, monkeypatch):
+    """An inherited ANTHROPIC_BASE_URL / OPENAI_BASE_URL (another tool's setting) never redirects the key."""
+    pytest.importorskip("anthropic" if provider == "anthropic" else "openai")
+    for name in ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENROUTER_BASE_URL"):
+        monkeypatch.setenv(name, "https://somewhere-else.example/v1")
+    model = models.make_model(provider, None, env={variable: "k"})
+    assert str(model.client.base_url).rstrip("/") == official
+
+
+def test_an_error_is_cut_to_its_first_line_with_keys_hidden():
+    key = "sk-ant-api03-" + "x" * 40
+    assert models.short_error(RuntimeError(f"  refused {key}\nTraceback …")) == "refused [key hidden]"
+    assert models.short_error(TimeoutError()) == "TimeoutError"
+    assert models.short_error(RuntimeError("y" * 500)) == "y" * 120
+
+
+def test_a_custom_service_keeps_its_own_address(monkeypatch):
+    pytest.importorskip("openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://somewhere-else.example/v1")
+    model = models.make_model("custom", "m", env={"NEURALLOOP_BASE_URL": "https://api.example.ai/v1"})
+    assert str(model.client.base_url).rstrip("/") == "https://api.example.ai/v1"

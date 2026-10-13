@@ -1,4 +1,4 @@
-"""An offline stand-in for notebooklm-py with the same method names, used for --dry-run and tests."""
+"""An offline stand-in for notebooklm-py with the same method names, for tests (never shipped)."""
 
 import asyncio
 import json
@@ -10,7 +10,12 @@ from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
-from .config import AUDIO_FORMATS, VIDEO_FORMATS, VIDEO_STYLES
+from neuralloop_books.config import AUDIO_FORMATS, VIDEO_FORMATS, VIDEO_STYLES
+from neuralloop_books.models.fake import cards as _cards
+from neuralloop_books.models.fake import graph as _graph
+from neuralloop_books.models.fake import mind_map as _mind_map
+from neuralloop_books.models.fake import quiz as _quiz
+from neuralloop_books.models.fake import study as _study
 
 ENUMS = SimpleNamespace(
     AudioFormat=Enum("AudioFormat", list(AUDIO_FORMATS.values())),
@@ -60,10 +65,13 @@ class FakeClient:
         )
 
     async def __aenter__(self):
+        self.opens = getattr(self, "opens", 0) + 1
         return self
 
-    async def refresh_auth(self, **kwargs):
-        self.refreshes = getattr(self, "refreshes", 0) + 1
+    @property
+    def refreshes(self) -> int:
+        """How many times the run opened the session again after its first open."""
+        return max(0, getattr(self, "opens", 0) - 1)
 
     async def __aexit__(self, *exc):
         return False
@@ -135,7 +143,9 @@ class FakeClient:
 
     async def _generate_mind_map(self, notebook_id, source_ids=None, **kwargs):
         await self._pause()
-        return SimpleNamespace(id=f"{source_ids[0]}|mindmap")
+        # Like notebooklm-py's note-backed MindMap: the note's id and the tree itself.
+        tree = _mind_map(self.source_titles.get(source_ids[0], "this chapter"))
+        return SimpleNamespace(id=f"{source_ids[0]}|mindmap", tree=tree)
 
     async def _download_quiz(self, notebook_id, path, task_id=None, **kwargs):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +184,7 @@ class FakeClient:
 
 
 class FakeStaleSessionClient(FakeClient):
-    """Like FakeClient, but its session goes stale after the first item until `refresh_auth` is called,
+    """Like FakeClient, but its session goes stale after the first item until the run opens it again,
     the way NotebookLM's does during a long podcast."""
 
     async def _generate(self, notebook_id, source_ids=None, **kwargs):
@@ -186,8 +196,8 @@ class FakeStaleSessionClient(FakeClient):
 
 
 class FakeRotatedSessionClient(FakeClient):
-    """A session another process rotated: every media request is refused, and refreshing this copy doesn't
-    help; only a client opened afresh from the saved session works. `shared` counts across the copies."""
+    """A session another process rotated: every media request is refused until a client is opened afresh
+    from the saved session. `shared` counts across the copies."""
 
     def __init__(self, shared: dict, delay: float = 0.0):
         super().__init__(delay)
@@ -230,7 +240,7 @@ class FakeStaleWhileWaitingClient(FakeClient):
 
 class FakeStaleTwiceWhileWaitingClient(FakeClient):
     """A long video sees Google's cookie rotate twice: the first `stale` status checks are refused, each after
-    the session was refreshed, and the item must keep refreshing (a few times) rather than give up."""
+    the session was opened again, and the item must keep refreshing (a few times) rather than give up."""
 
     def __init__(self, stale: int = 2, delay: float = 0.0):
         super().__init__(delay)
@@ -415,6 +425,25 @@ class FakeDownloadFailsClient(FakeClient):
         return await super()._download_video(notebook_id, path, task_id, **kwargs)
 
 
+class NotebookLimitError(Exception):
+    """notebooklm-py's name: the account can't own another notebook."""
+
+
+class FakeNotebookFullClient(FakeClient):
+    """The account already owns as many notebooks as NotebookLM allows: creating one always fails."""
+
+    def __init__(self):
+        super().__init__(delay=0)
+        self.creates = 0
+
+    async def _create_notebook(self, title):
+        self.creates += 1
+        raise NotebookLimitError(
+            "Cannot create notebook: account appears to be at or very near the NotebookLM notebook limit "
+            "(100/100 owned notebooks reported). Delete old notebooks at https://notebooklm.google.com"
+        )
+
+
 class FakeQuotaClient(FakeClient):
     """Like FakeClient, but every media request hits NotebookLM's daily limit."""
 
@@ -424,116 +453,10 @@ class FakeQuotaClient(FakeClient):
         return await super()._generate(notebook_id, source_ids, **kwargs)
 
 
-def _study(title):
-    return {
-        "guide": [
-            {"section": "Part one", "level": "deep", "why": "The core idea; everything later builds on it."}
-        ],
-        "recall": [
-            {
-                "prompt": f'In your own words, what is the main idea of "{title}"?',
-                "keyPoints": ["Names the core trade-off", "Says when it matters", "Gives a concrete example"],
-            },
-            {
-                "prompt": "Something breaks in production. What would you check first, and why?",
-                "keyPoints": [
-                    "Rule out simple bugs first",
-                    "Look at monitoring signals",
-                    "Change one thing at a time",
-                ],
-            },
-            {
-                "prompt": "How would you explain this chapter to a new teammate in two minutes?",
-                "keyPoints": [
-                    "Starts with the problem",
-                    "Explains the key idea",
-                    "Ends with one practical tip",
-                ],
-            },
-        ],
-    }
+def opening(client):
+    """`open_client` for a ready fake: every (re)open hands back the same client (counted in `opens`)."""
 
+    async def open_client():
+        return client
 
-def _graph(title):
-    names = [
-        "Basics",
-        "Core trade-off",
-        "Failure modes",
-        "Monitoring",
-        "Design patterns",
-        "Keep it simple",
-        "Testing",
-    ]
-    concepts = [
-        {
-            "id": f"k{i}",
-            "name": name,
-            "type": "claim" if i == 5 else "concept",
-            "summary": f"What '{name}' means in {title}.",
-            "detail": f"A longer note about {name}.",
-            "complexity": ("simple", "moderate", "complex")[i % 3],
-            "layer": "l1" if i < 4 else "l2",
-        }
-        for i, name in enumerate(names)
-    ]
-    edges = [
-        ("k1", "k0", "builds_on"),
-        ("k2", "k1", "depends_on"),
-        ("k3", "k2", "related"),
-        ("k4", "k1", "builds_on"),
-        ("k5", "k4", "contradicts"),
-        ("k6", "k3", "exemplifies"),
-    ]
-    return {
-        "concepts": concepts,
-        "layers": [{"id": "l1", "name": "Foundations"}, {"id": "l2", "name": "In practice"}],
-        "edges": [
-            {"source": s, "target": t, "type": kind, "description": kind.replace("_", " ")}
-            for s, t, kind in edges
-        ],
-        "tour": [
-            {"title": "Start here", "description": "The basic idea.", "nodeIds": ["k0"]},
-            {"title": "Where it breaks", "description": "Trade-offs and failures.", "nodeIds": ["k1", "k2"]},
-        ],
-    }
-
-
-def _quiz(title):
-    def question(text, right, wrong):
-        options = [{"text": right, "isCorrect": True, "rationale": "That's the chapter's central point."}]
-        options += [
-            {"text": w, "isCorrect": False, "rationale": "Not what the chapter argues."} for w in wrong
-        ]
-        return {"question": text, "answerOptions": options, "hint": "Think about the trade-off."}
-
-    return [
-        question(
-            f'What is the main idea of "{title}"?',
-            "A core trade-off and when it matters",
-            ["A list of unrelated facts", "Only history", "Nothing matters"],
-        ),
-        question(
-            "What should you check first when something breaks?",
-            "Simple engineering bugs",
-            ["Rewrite everything", "Ignore it", "Blame the users"],
-        ),
-    ]
-
-
-def _cards(title):
-    return [
-        {"front": f"Main idea of {title}", "back": "A core trade-off and when it matters."},
-        {"front": "First thing to check when it breaks", "back": "Simple engineering bugs."},
-        {"front": "Why monitor?", "back": "Problems show up before users complain."},
-    ]
-
-
-def _mind_map(title):
-    return {
-        "name": title,
-        "children": [
-            {"name": "Foundations", "children": [{"name": "Key terms"}, {"name": "Core trade-off"}]},
-            {"name": "In practice", "children": [{"name": "Patterns"}, {"name": "Failure modes"}]},
-            {"name": "Takeaways"},
-        ],
-    }
+    return open_client

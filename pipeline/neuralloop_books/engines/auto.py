@@ -10,7 +10,7 @@ from contextvars import ContextVar
 
 from .. import activity
 from ..config import MEDIA_TASKS
-from ..models import SetupError, safe_message
+from ..models import SetupError, short_error
 from ..notebook import GenerationFailed, is_auth_error, is_quota_error
 
 # Set by the pipeline for each item: gives the item's place in the run's lane back (once). Without it (e.g.
@@ -42,7 +42,7 @@ class AutoEngine:
             self.primary = self._primary_factory()
             await self.primary.__aenter__()
         except Exception as error:  # any failure to open NotebookLM means: use the local engine
-            self.primary, self._why = None, _short(error)
+            self.primary, self._why = None, short_error(error)
         return self
 
     async def __aexit__(self, *exc):
@@ -102,7 +102,7 @@ class AutoEngine:
                     # No local engine to hand it to: this item fails on its own; the rest carry on.
                     raise _tagged(error, self.primary.name) from None
                 self._log(
-                    f"  ↪ chapter {chapter['n']} {task}: NotebookLM couldn't ({_short(error)}); "
+                    f"  ↪ chapter {chapter['n']} {task}: NotebookLM couldn't ({short_error(error)}); "
                     f"making it with {fallback.name}"
                 )
                 primary_error = error
@@ -132,7 +132,7 @@ class AutoEngine:
             raise
 
     async def _drop_primary(self, error: BaseException) -> None:
-        self._why = _short(error)
+        self._why = short_error(error)
         await self.primary.__aexit__(None, None, None)
         self.primary = None
 
@@ -168,8 +168,3 @@ def made_by(error: BaseException, default: str) -> str:
 def _tagged(error: BaseException, name: str) -> BaseException:
     error.engine_name = name
     return error
-
-
-def _short(error: BaseException) -> str:
-    text = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    return safe_message(text, 120)

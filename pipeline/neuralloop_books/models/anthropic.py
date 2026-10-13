@@ -7,6 +7,7 @@ import anthropic
 from ..prompts import wrap_chapter
 from . import QuotaError, SetupError, output_cap_from_error
 
+BASE_URL = "https://api.anthropic.com"
 MAX_TOKENS = 64_000  # streamed, so a long podcast script never hits an HTTP timeout
 # Older models allow less output; asking for more is a 400 on every item.
 _OLDER_CAPS = (
@@ -49,7 +50,8 @@ class AnthropicModel:
     def __init__(self, model: str, api_key: str):
         self.model = model
         self.max_tokens = max_output_tokens(model)  # lowered for the run if the model says it allows less
-        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        # Always Anthropic's own address: an inherited ANTHROPIC_BASE_URL must never redirect the saved key.
+        self.client = anthropic.AsyncAnthropic(api_key=api_key, base_url=BASE_URL)
 
     async def check(self) -> None:
         try:

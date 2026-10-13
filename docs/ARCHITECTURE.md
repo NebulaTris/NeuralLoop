@@ -98,11 +98,11 @@ Entry point `nl_book.py` → `neuralloop_books.cli.main()`. Everything else is t
 
 | Module | What it's for |
 |---|---|
-| `engines/notebooklm.py` | Adds chapters as NotebookLM sources, then `notebook.ChapterMaker` makes each item; reopens a refused session from the saved one (other NotebookLM processes rotate Google's cookie) and retries, waiting for a podcast or video it already asked for |
+| `engines/notebooklm.py` | Adds chapters as NotebookLM sources (a chapter NotebookLM is slow to read waits on its own for a few runs, is added once more, then fails; only a limit or no answer stops adding the rest; an account with no room for another notebook is asked once a run, and the book waits for the person to delete one), then `notebook.ChapterMaker` makes each item; reopens a refused session from the saved one (other NotebookLM processes rotate Google's cookie) and retries, waiting for a podcast or video it already asked for |
 | `notebook.py` | One item through notebooklm-py; recognising quota and auth errors |
 | `engines/local.py` | Your own AI writes each item (checked and retried once with the reason); Rumik voices podcasts and explainers; `video.py` films explainers |
 | `engines/auto.py` | NotebookLM first, the local engine for anything it can't do; records who made each item |
-| `models/` | One adapter per AI: `anthropic`, `openai_compat` (OpenAI, OpenRouter, LM Studio, any compatible URL), `ollama` (with JSON schemas for small models), `opencode`, `hermes` (subprocesses, killed on timeout), `fake` (tests) |
+| `models/` | One adapter per AI: `anthropic`, `openai_compat` (OpenAI, OpenRouter, LM Studio, any compatible URL; the official providers always get their own address, never an inherited `*_BASE_URL`), `ollama` (with JSON schemas for small models), `opencode`, `hermes` (subprocesses, killed on timeout), `fake` (tests) |
 | `speech/` | `rumik` (Rumik OSS-1 through mlx-audio, 4-bit "fast" or 8-bit "best") and `fake` |
 | `prompts.py`, `schemas.py`, `convert.py` | What we ask for, the JSON shapes we require, and turning answers (from any model or NotebookLM) into our formats — tolerant of messy output |
 | `video.py` | Explainer → MP4: a deterministic HTML scene rendered frame by frame in headless Chromium, encoded with PyAV |
@@ -113,7 +113,7 @@ Entry point `nl_book.py` → `neuralloop_books.cli.main()`. Everything else is t
 **Accounts and setup**: `account.py` (NotebookLM sign-in, account status, usage allowance), `aiconfig.py`
 (`ai.json`: your engine, models, voices, podcast length), `setup.py` (first run: start Ollama, download models and Rumik).
 
-**Testing helpers**: `fake_client.py` (an offline NotebookLM with the real method names), `testing.py` (builds test
+**Testing helpers**: `tests/fake_client.py` (an offline NotebookLM with the real method names; it lives with the tests and is never shipped, and its canned answers are the dry run's, from `models/fake.py`), `testing.py` (builds test
 books). `pipeline/tests/` has 217 tests; `conftest.py` makes sure no test can ever reach the real NotebookLM account.
 
 ### `apple/` — the Swift core and the apps

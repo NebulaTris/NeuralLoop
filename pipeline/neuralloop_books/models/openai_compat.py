@@ -74,7 +74,9 @@ def pick_chat_model(models: list[dict]) -> str | None:
     return (loaded or chat or [{"id": None}])[0]["id"]
 
 
-BASE_URLS = {"openai": None, "openrouter": "https://openrouter.ai/api/v1"}
+# The official services' own addresses, always passed explicitly: an inherited OPENAI_BASE_URL must never
+# redirect a saved key. Only `custom` uses an address the person gave.
+BASE_URLS = {"openai": "https://api.openai.com/v1", "openrouter": "https://openrouter.ai/api/v1"}
 NAMES = {"openai": "OpenAI", "openrouter": "OpenRouter"}
 # OpenRouter's optional attribution header (shown on its activity page); never anything about the person.
 HEADERS = {"openrouter": {"X-Title": "NeuralLoop"}}
@@ -84,7 +86,7 @@ LM_STUDIO_PORT = 1234
 class OpenAICompatModel:
     def __init__(self, provider: str, model: str | None, api_key: str, base_url: str | None = None):
         self.provider, self.model = provider, model
-        self.base_url = normalize_base_url(base_url or BASE_URLS.get(provider))
+        self.base_url = normalize_base_url(BASE_URLS.get(provider) or base_url)
         address = urlparse(self.base_url or "")
         if provider in NAMES:
             self.name = NAMES[provider]
@@ -104,7 +106,8 @@ class OpenAICompatModel:
 
     @property
     def local(self) -> bool:
-        return is_local_url(self.base_url)
+        """A server on this Mac: only ever a `custom` address (OpenAI and OpenRouter are never local)."""
+        return self.provider not in BASE_URLS and is_local_url(self.base_url)
 
     def _unreachable(self) -> str:
         if self.local:

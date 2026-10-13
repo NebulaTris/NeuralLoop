@@ -12,6 +12,7 @@ import pytest
 
 from neuralloop_books.cli import main
 from neuralloop_books.config import DEFAULT_MODELS
+from neuralloop_books.models import anthropic as anthropic_model
 from neuralloop_books.models import openai_compat, opencode
 
 from .model_mocks import MockServer, fake_cli
@@ -95,11 +96,11 @@ def provider(request, clean_env, tmp_path):
     with MockServer(flavor, models=models) as server:
         if kind == "anthropic":
             env.setenv("ANTHROPIC_API_KEY", ANTHROPIC_KEY)
-            env.setenv("ANTHROPIC_BASE_URL", server.url)
+            env.setattr(anthropic_model, "BASE_URL", server.url)
             setup = Setup({"provider": "anthropic"}, "Claude", server)
         elif kind == "openai":
             env.setenv("OPENAI_API_KEY", OPENAI_KEY)
-            env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+            env.setitem(openai_compat.BASE_URLS, "openai", f"{server.url}/v1")
             setup = Setup({"provider": "openai"}, "OpenAI", server)
         elif kind == "openrouter":
             env.setenv("OPENROUTER_API_KEY", OPENROUTER_KEY)
@@ -219,10 +220,10 @@ def test_a_rate_limit_or_empty_credit_makes_items_wait(flavor, status, clean_env
 def _point_at(env, flavor: str, server: MockServer, key: str) -> None:
     if flavor == "anthropic":
         env.setenv("ANTHROPIC_API_KEY", key)
-        env.setenv("ANTHROPIC_BASE_URL", server.url)
+        env.setattr(anthropic_model, "BASE_URL", server.url)
     elif flavor == "openai":
         env.setenv("OPENAI_API_KEY", key)
-        env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        env.setitem(openai_compat.BASE_URLS, "openai", f"{server.url}/v1")
     else:
         env.setenv("OPENROUTER_API_KEY", key)
         env.setitem(openai_compat.BASE_URLS, "openrouter", f"{server.url}/v1")
@@ -266,7 +267,7 @@ def test_openai_asks_with_max_completion_tokens(clean_env):
     from neuralloop_books.models import make_model
 
     with MockServer("openai", models=(DEFAULT_MODELS["openai"],)) as server:
-        clean_env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        clean_env.setitem(openai_compat.BASE_URLS, "openai", f"{server.url}/v1")
         model = make_model("openai", None, env={"OPENAI_API_KEY": OPENAI_KEY})
         asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
         body = server.posts("/chat/completions")[0]["body"]
@@ -299,7 +300,7 @@ def test_claude_models_get_only_the_features_they_support(model_id, clean_env, t
     from neuralloop_books.models import make_model
 
     with MockServer("anthropic", models=(model_id,)) as server:
-        clean_env.setenv("ANTHROPIC_BASE_URL", server.url)
+        clean_env.setattr(anthropic_model, "BASE_URL", server.url)
         model = make_model("anthropic", model_id, env={"ANTHROPIC_API_KEY": ANTHROPIC_KEY})
         asyncio.run(model.check())
         reply = asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
@@ -473,7 +474,7 @@ def test_an_openai_model_with_a_smaller_output_limit_is_asked_again_within_it(cl
     from neuralloop_books.models import make_model
 
     with MockServer("openai", models=("gpt-capped",), output_caps={"gpt-capped": 12_000}) as server:
-        clean_env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        clean_env.setitem(openai_compat.BASE_URLS, "openai", f"{server.url}/v1")
         model = make_model("openai", "gpt-capped", env={"OPENAI_API_KEY": OPENAI_KEY})
         for _ in range(2):
             reply = asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
@@ -489,7 +490,7 @@ def test_gpt_4o_is_never_asked_for_more_than_it_allows(clean_env):
     from neuralloop_books.models import make_model
 
     with MockServer("openai", models=("gpt-4o-mini",), output_caps={"gpt-4o-mini": 16_384}) as server:
-        clean_env.setenv("OPENAI_BASE_URL", f"{server.url}/v1")
+        clean_env.setitem(openai_compat.BASE_URLS, "openai", f"{server.url}/v1")
         model = make_model("openai", "gpt-4o-mini", env={"OPENAI_API_KEY": OPENAI_KEY})
         asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
         assert [p["body"]["max_completion_tokens"] for p in server.posts("/chat/completions")] == [16_384]
@@ -519,7 +520,7 @@ def test_claude_is_asked_within_its_output_limit(model_id, caps, asked, clean_en
     from neuralloop_books.models import make_model
 
     with MockServer("anthropic", models=(model_id,), output_caps=caps) as server:
-        clean_env.setenv("ANTHROPIC_BASE_URL", server.url)
+        clean_env.setattr(anthropic_model, "BASE_URL", server.url)
         model = make_model("anthropic", model_id, env={"ANTHROPIC_API_KEY": ANTHROPIC_KEY})
         for _ in range(len(asked) - 1 or 1):
             reply = asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
@@ -533,7 +534,7 @@ def test_legacy_claude_gets_no_adaptive_thinking(clean_env):
     from neuralloop_books.models import make_model
 
     with MockServer("anthropic", models=("claude-3-7-sonnet-latest",)) as server:
-        clean_env.setenv("ANTHROPIC_BASE_URL", server.url)
+        clean_env.setattr(anthropic_model, "BASE_URL", server.url)
         model = make_model("anthropic", "claude-3-7-sonnet-latest", env={"ANTHROPIC_API_KEY": ANTHROPIC_KEY})
         asyncio.run(model.complete("check", "SYS", "", 'Reply with {"ok": true}'))
         body = server.posts("/messages")[0]["body"]

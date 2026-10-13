@@ -5,8 +5,9 @@ from neuralloop_books.aiconfig import load
 from neuralloop_books.chapters import chapter_size
 from neuralloop_books.config import audio_length
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import ENUMS, FakeClient
 from neuralloop_books.pipeline import Options, run
+
+from .fake_client import ENUMS, FakeClient, opening
 
 
 def test_short_chapters_get_short_podcasts_unless_a_length_is_chosen():
@@ -46,5 +47,5 @@ class RecordingClient(FakeClient):
 def test_notebooklm_is_asked_for_a_short_podcast_for_a_short_chapter(epub, tmp_path):
     opts = Options(book=epub, out=tmp_path / "site", media="1", log=lambda _: None)
     client = RecordingClient()
-    asyncio.run(run(opts, NotebookLMEngine(client, ENUMS, opts)))
+    asyncio.run(run(opts, NotebookLMEngine(ENUMS, opts, opening(client))))
     assert client.audio_requests and client.audio_requests[0]["audio_length"] == ENUMS.AudioLength.SHORT
