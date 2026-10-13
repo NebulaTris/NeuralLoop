@@ -1,6 +1,6 @@
 # Spec 06 — Fast enough to feel instant
 
-Status: in progress (items 1, 2, and 6 done) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: `pipeline/`, the app
+Status: in progress (items 1, 2, 3, 4, 6, and 9 done; next: a warm worker process, item 7) · Read first: `CLAUDE.md`, specs 04 and 05 · Touches: `pipeline/`, the app
 
 ## Where the time goes (measured, Apple M5, 24 GB)
 
@@ -25,7 +25,8 @@ text items for chapter 1 arrive in under a minute, and audio starts playing whil
 3. **Just in time, one chapter ahead.** *(done: spec 08)* Chapters unlock one at a time, so only make chapter N+1 while the person studies
    chapter N. The Read step needs no AI at all: the chapter text exists seconds after the split; reading-plan labels fill
    in when the guide arrives.
-4. **NotebookLM: submit everything, then wait.** NotebookLM makes items on its servers, so waiting shouldn't take up a
+4. **NotebookLM: submit everything, then wait.** *(done: each item is asked for once, its `taskId` and `requestedAt` saved
+   in state.json, and waited for again on the next run instead of asked twice)* NotebookLM makes items on its servers, so waiting shouldn't take up a
    slot. Start all of a chapter's generations at once, then poll them together. A chapter then takes as long as its slowest
    item (usually the podcast) instead of the sum of all items. Needs one real run to find NotebookLM's concurrency limit;
    quota errors already fall back to the local engine per item.
@@ -33,13 +34,14 @@ text items for chapter 1 arrive in under a minute, and audio starts playing whil
    its excellent podcasts and videos in the background. `ai.json` already allows this per item.
 6. **Stream audio.** *(done in the pipeline; the app plays `clip`s in order until `complete`)* Voice the podcast line by line and let the app start playing as soon as the first lines exist (first
    sound in about a minute instead of 18). The transcript already has per-line start times; write it progressively.
-7. **One warm worker instead of a process per run.** A long-lived pipeline worker that the app talks to over stdin/stdout
+7. **One warm worker instead of a process per run.** *(next)* A long-lived pipeline worker that the app talks to over stdin/stdout
    JSON keeps Rumik and the models loaded: no 20-second Rumik load per book, and a recall check in 1–2 seconds instead of
    4–7. Ollama already keeps models warm for 30 minutes (`keep_alive`).
 8. **Reuse the chapter prefix.** Every local prompt starts with the same system text and chapter, so Ollama and Claude
    reuse the cached prefix instead of re-reading the chapter (already structured this way; Claude uses `cache_control`).
    Next: one combined call for guide + quiz + cards, if quality holds.
-9. **Faster voices when it matters.** Offer Rumik's 4-bit model as "faster voices" in Settings, and voice only the
+9. **Faster voices when it matters.** *(done: Settings → Voices, ai.json `voiceQuality: "fast"` is Rumik 4-bit and the
+   default; chapters are prepared just ahead of the reader, spec 08)* Offer Rumik's 4-bit model as "faster voices" in Settings, and voice only the
    chapters the person has reached.
 10. **Prewarm on launch.** When the app opens, load the recall model and Rumik in the background.
 
