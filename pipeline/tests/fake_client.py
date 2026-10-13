@@ -65,10 +65,13 @@ class FakeClient:
         )
 
     async def __aenter__(self):
+        self.opens = getattr(self, "opens", 0) + 1
         return self
 
-    async def refresh_auth(self, **kwargs):
-        self.refreshes = getattr(self, "refreshes", 0) + 1
+    @property
+    def refreshes(self) -> int:
+        """How many times the run opened the session again after its first open."""
+        return max(0, getattr(self, "opens", 0) - 1)
 
     async def __aexit__(self, *exc):
         return False
@@ -179,7 +182,7 @@ class FakeClient:
 
 
 class FakeStaleSessionClient(FakeClient):
-    """Like FakeClient, but its session goes stale after the first item until `refresh_auth` is called,
+    """Like FakeClient, but its session goes stale after the first item until the run opens it again,
     the way NotebookLM's does during a long podcast."""
 
     async def _generate(self, notebook_id, source_ids=None, **kwargs):
@@ -191,8 +194,8 @@ class FakeStaleSessionClient(FakeClient):
 
 
 class FakeRotatedSessionClient(FakeClient):
-    """A session another process rotated: every media request is refused, and refreshing this copy doesn't
-    help; only a client opened afresh from the saved session works. `shared` counts across the copies."""
+    """A session another process rotated: every media request is refused until a client is opened afresh
+    from the saved session. `shared` counts across the copies."""
 
     def __init__(self, shared: dict, delay: float = 0.0):
         super().__init__(delay)
@@ -235,7 +238,7 @@ class FakeStaleWhileWaitingClient(FakeClient):
 
 class FakeStaleTwiceWhileWaitingClient(FakeClient):
     """A long video sees Google's cookie rotate twice: the first `stale` status checks are refused, each after
-    the session was refreshed, and the item must keep refreshing (a few times) rather than give up."""
+    the session was opened again, and the item must keep refreshing (a few times) rather than give up."""
 
     def __init__(self, stale: int = 2, delay: float = 0.0):
         super().__init__(delay)
@@ -427,3 +430,12 @@ class FakeQuotaClient(FakeClient):
         if "audio_format" in kwargs or "video_format" in kwargs:
             raise RuntimeError("RateLimitError: daily limit reached")
         return await super()._generate(notebook_id, source_ids, **kwargs)
+
+
+def opening(client):
+    """`open_client` for a ready fake: every (re)open hands back the same client (counted in `opens`)."""
+
+    async def open_client():
+        return client
+
+    return open_client

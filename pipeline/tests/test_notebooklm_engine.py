@@ -25,6 +25,7 @@ from .fake_client import (
     RPCTimeoutError,
     SourceTimeoutError,
     WaitTimeoutError,
+    opening,
 )
 
 
@@ -39,7 +40,7 @@ def no_retry_pause(monkeypatch):
 
 
 def run_with(opts, client):
-    return asyncio.run(run(opts, NotebookLMEngine(client, ENUMS, opts)))
+    return asyncio.run(run(opts, NotebookLMEngine(ENUMS, opts, opening(client))))
 
 
 class LocalStandIn:
@@ -65,7 +66,7 @@ class LocalStandIn:
 
 
 def run_auto(opts, client, fallback):
-    engine = AutoEngine(lambda: NotebookLMEngine(client, ENUMS, opts), lambda: fallback, opts.log)
+    engine = AutoEngine(lambda: NotebookLMEngine(ENUMS, opts, opening(client)), lambda: fallback, opts.log)
     return asyncio.run(run(opts, engine))
 
 
@@ -388,7 +389,7 @@ def test_a_session_that_never_recovers_is_reopened_only_a_few_times_per_run(opti
         return FakeStaleTwiceWhileWaitingClient(stale=1_000)
 
     options.media = "all"
-    engine = NotebookLMEngine(None, ENUMS, options, open_client=reopen)
+    engine = NotebookLMEngine(ENUMS, options, reopen)
     state = asyncio.run(run(options, engine))
     assert len(opened) <= 1 + 6
     assert state.chapters[0]["tasks"]["audio"]["status"] == WAITING

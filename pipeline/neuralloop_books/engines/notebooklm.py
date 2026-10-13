@@ -44,9 +44,10 @@ class NoSourceYet(RuntimeError):
 class NotebookLMEngine:
     name = "NotebookLM"
 
-    def __init__(self, client, enums: ModuleType, opts, open_client=None):
-        """Pass a ready `client`, or `open_client`: a coroutine function that opens one in the run loop."""
-        self.client, self.enums, self.opts, self._open_client = client, enums, opts, open_client
+    def __init__(self, enums: ModuleType, opts, open_client):
+        """`open_client`: a coroutine function that opens the saved session in the run loop (again whenever
+        the session goes stale)."""
+        self.client, self.enums, self.opts, self._open_client = None, enums, opts, open_client
         self.maker: ChapterMaker | None = None
         self._reload = asyncio.Lock()
         self._session = 0  # bumped each time the session is reloaded
@@ -61,7 +62,7 @@ class NotebookLMEngine:
 
     async def __aenter__(self):
         # notebooklm-py hands back a context manager: the client is what entering it returns.
-        self._context = self.client if self.client is not None else await self._open_client()
+        self._context = await self._open_client()
         self.client = await self._context.__aenter__()
         return self
 
@@ -303,16 +304,12 @@ class NotebookLMEngine:
             if self._reloads >= MAX_RELOADS_PER_RUN:
                 return False
             self._reloads += 1
-            if self._open_client is None:
-                if hasattr(self.client, "refresh_auth"):
-                    await self.client.refresh_auth()
-            else:
-                context = await self._open_client()
-                client = await context.__aenter__()
-                self._retired.append(self._context)
-                self._context, self.client = context, client
-                if self.maker is not None:
-                    self.maker.client = client
+            context = await self._open_client()
+            client = await context.__aenter__()
+            self._retired.append(self._context)
+            self._context, self.client = context, client
+            if self.maker is not None:
+                self.maker.client = client
             self._session += 1
             return True
 
