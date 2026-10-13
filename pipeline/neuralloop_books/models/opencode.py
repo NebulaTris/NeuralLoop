@@ -112,7 +112,7 @@ def _read_config(path: Path) -> dict | None:
     try:
         if not path.is_file() or path.stat().st_size > MAX_CONFIG_BYTES:
             return None
-        data = json.loads(_without_comments(path.read_text(encoding="utf-8")))
+        data = json.loads(_without_comments(path.read_text(encoding="utf-8-sig")))  # a BOM is fine
     except (OSError, UnicodeDecodeError, ValueError):  # unreadable or not JSON: as if it weren't there
         return None
     return data if isinstance(data, dict) else None
