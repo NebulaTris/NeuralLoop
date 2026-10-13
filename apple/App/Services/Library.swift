@@ -31,8 +31,12 @@ struct BookEntry: Identifiable, Equatable {
 struct RunProblem: Equatable {
     let code: Int32
     let detail: String
+    let card: String
 
-    var card: String { RunProblemText.card(code: code) }
+    init(code: Int32, detail: String, tail: [String] = []) {
+        (self.code, self.detail) = (code, detail)
+        card = RunProblemText.card(code: code, tail: tail)
+    }
 }
 
 /// What one look at a book folder found (read off the main thread).
@@ -722,7 +726,7 @@ final class Library {
             problems[id] = nil
             if byPerson { message = nil }
         } else if let outcome {
-            if byPerson { message = outcome } else { problems[id] = RunProblem(code: code, detail: outcome) }
+            if byPerson { message = outcome } else { problems[id] = RunProblem(code: code, detail: outcome, tail: tail) }
         }
         Task {
             await refresh()
