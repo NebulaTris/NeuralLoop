@@ -311,6 +311,7 @@ idna==3.20 \
     #   anyio
     #   httpx
     #   httpx2
+    #   notebooklm-py
 jiter==0.17.0 \
     --hash=sha256:00b5a98df3e3a3e8cf7b619f4ac2f8bf975bbf3d95d02c5d17b8dbfe5c8b8245 \
     --hash=sha256:00d783a779c5664e16dbad5e3a3c3a75e128b07dd5f4765159658d9210a50ca5 \
@@ -534,9 +535,9 @@ mlx-metal==0.32.3 \
     --hash=sha256:fdba88ed9131448cf163be2c7ad6374746d8818205f28657aa91b6c69050f691 \
     --hash=sha256:feea99fe4d01f9e9f33ca73d869f988219a1725de1c18870baa7d5cd5aef6cb3
     # via mlx
-notebooklm-py==0.8.3 \
-    --hash=sha256:7d444c19193e405bae7277b37c29a365c936a8d278a1f62910f6b06d92aabf2a \
-    --hash=sha256:7e3e02057b3acf354d3dbc337c08869d2a4954c9c324f3271e272236cfcc2bfc
+notebooklm-py==0.8.5 \
+    --hash=sha256:18c96d31ad0ea538c1811f177dcfe86cc9c5319c8bdc4c99e5298c520b86d011 \
+    --hash=sha256:965e0ad77dfd3f93714b6a304f5c66f70248c88979d5dfbfd9d73a0270b7a46a
     # via neuralloop-books-pipeline (pipeline/pyproject.toml)
 numpy==2.5.3 \
     --hash=sha256:012e66aca395d795496446e52aeeb5866312a5d4d3f27da270e5a0b43f70dc5c \

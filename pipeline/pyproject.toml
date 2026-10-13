@@ -10,7 +10,7 @@ dependencies = ["pypdf>=4"]
 anthropic = ["anthropic>=1.8"]
 openai = ["openai>=3"]              # also OpenRouter; Ollama and opencode need no Python package
 rumik = ["mlx-audio", "numpy"]      # Rumik OSS-1 speech on Apple silicon (CC-BY-NC 4.0)
-notebooklm = ["notebooklm-py>=0.8"]
+notebooklm = ["notebooklm-py>=0.8.5"]
 video = ["av>=18", "playwright>=1.50"]  # explainer videos: an animated scene rendered frame by frame
 all = ["neuralloop-books-pipeline[anthropic,openai,rumik,notebooklm,video]"]
 dev = ["pytest>=8", "ruff>=0.6", "anthropic>=1.8", "openai>=3", "av>=18"]
