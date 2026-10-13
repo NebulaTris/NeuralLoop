@@ -794,8 +794,15 @@ struct NotReady: View {
                     }
                     #if os(macOS)
                     if making == nil, status == .waiting || status == .failed, let bookId {
+                        // A run for this book is already going: a second can't start, so say why rather than offer it.
+                        let busy = library.entry(bookId)?.preparing == true
                         Button { library.makeWithMyAI(bookId) } label: { Label("Make it with my AI now", systemImage: "bolt.fill") }
                             .buttonStyle(.borderedProminent).padding(.top, 4)
+                            .disabled(busy)
+                        if busy {
+                            Text("Pip is preparing this book right now. You can make it with your AI once that's done.")
+                                .font(Theme.body(12)).foregroundStyle(Theme.ink2).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     #endif
                 }
