@@ -30,6 +30,14 @@ public enum Activity {
         return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
     }
 
+    /// The study time since the last 15-second tick, when the app quits before the next one: only the part spent in
+    /// front (from `activeSince`, nil when it never was, `until` now or when it left the front), and never more than a
+    /// tick. All in seconds.
+    public static func partialTick(lastTick: Double, activeSince: Double?, until: Double, every: Double = 15) -> Double {
+        guard let activeSince else { return 0 }
+        return min(every, max(0, until - max(lastTick, activeSince)))
+    }
+
     public static func log(_ p: inout StudyProgress, now: Double, seconds: Double) {
         p.log[dayKey(now), default: 0] += seconds
         p.updatedAt = max(p.updatedAt, now)

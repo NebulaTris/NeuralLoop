@@ -56,6 +56,7 @@ struct BookContent: View {
     let session: BookSession
     @State private var selected: Int?
     @State private var confirmingRemove = false
+    @State private var explaining: RunProblem?
     #if DEBUG
     @State private var showingMap = UserDefaults.standard.bool(forKey: "NLBookMap")  // development: `-NLBookMap YES`
     #else
@@ -96,6 +97,11 @@ struct BookContent: View {
             #endif
             // The shelf's right-click menu has these too; here they're a click (or Tab) away.
             Menu {
+                // The shelf card's short line about a run that went wrong, in full (keyboard and VoiceOver reach it here).
+                if let problem = library.entry(session.entry.id)?.problem {
+                    Button("What happened with the last run?") { explaining = problem }
+                    Divider()
+                }
                 #if os(macOS)
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.entry.folder]) }
                 Divider()
@@ -105,6 +111,11 @@ struct BookContent: View {
                 Label("More", systemImage: "ellipsis.circle")
             }
             .help("More for this book")
+        }
+        .alert(explaining?.card ?? "", isPresented: Binding(get: { explaining != nil }, set: { if !$0 { explaining = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(explaining?.detail ?? "")
         }
         .confirmationDialog("Remove “\(session.book.title)”?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove book", role: .destructive) {

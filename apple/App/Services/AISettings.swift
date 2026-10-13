@@ -80,9 +80,16 @@ final class AISettings {
     func signIn() async {
         signingIn = true
         accountNote = "A browser window is opening. Sign in to Google there, then come back."
-        let (code, lines) = await PipelineRunner.once(["--signin"], timeout: .seconds(900))
-        accountNote = code == 0 ? "" : (lines.last ?? "Sign-in didn't finish. You can try again any time.")
+        let (code, lines) = await PipelineRunner.once(["--signin"], timeout: .seconds(900), stopsWhenCancelled: true)
         signingIn = false
+        if Task.isCancelled {
+            // The person said "Not now": the sign-in stopped, nothing to report. Who's signed in is still checked,
+            // on its own, in case they finished just before.
+            accountNote = ""
+            Task { await self.refreshAccount() }
+            return
+        }
+        accountNote = code == 0 ? "" : (lines.last ?? "Sign-in didn't finish. You can try again any time.")
         await refreshAccount()
     }
 

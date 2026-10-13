@@ -340,6 +340,8 @@ private struct SignInFirst: View {
     #endif
     /// "Not now": nothing opens afterwards, even if the check was still going.
     @State private var declined = false
+    /// The sign-in that's going, so "Not now" can stop it (and the library's sign-in after it never opens).
+    @State private var signInTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -352,7 +354,7 @@ private struct SignInFirst: View {
                 Label("Waiting for Google… finish signing in in the window that opened.", systemImage: "hourglass")
                     .font(Theme.body(14)).foregroundStyle(Theme.accent)
             } else {
-                Button { Task { await signIn() } } label: { Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus") }
+                Button { startSignIn() } label: { Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus") }
                     .buttonStyle(.borderedProminent).controlSize(.large).disabled(checking)
                 if checking {
                     Text("Checking whether you're already signed in…").font(Theme.body(12)).foregroundStyle(Theme.ink2)
@@ -360,7 +362,7 @@ private struct SignInFirst: View {
             }
             if !note.isEmpty { Text(note).font(Theme.body(12)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center).frame(maxWidth: 480) }
             Spacer(minLength: 10)
-            Button("Not now") { declined = true; next() }.buttonStyle(.borderless).foregroundStyle(Theme.ink2).keyboardShortcut(.cancelAction)
+            Button("Not now") { declined = true; signInTask?.cancel(); next() }.buttonStyle(.borderless).foregroundStyle(Theme.ink2).keyboardShortcut(.cancelAction)
         }
         .padding(30)
         .frame(width: 680, height: 600)
@@ -376,12 +378,26 @@ private struct SignInFirst: View {
             #endif
             // The refresh ignores cancellation, so "Not now" during it is only seen here.
             switch FirstSignIn.next(signedIn: signedIn, canSignIn: canSignIn, declined: declined,
-                                    cancelled: Task.isCancelled, signingIn: busy) {
+                                    cancelled: Task.isCancelled, signingIn: busy, libraryMissing: libraryMissing) {
             case .moveOn: next()
-            case .signIn: await signIn()
+            // Signed in to NotebookLM already: the same sign-in skips it and connects the library with that account.
+            case .signIn, .connectLibrary: startSignIn()
             case .stay: break
             }
         }
+    }
+
+    private func startSignIn() {
+        signInTask = Task { await signIn() }
+    }
+
+    /// The library (Google Drive) can be connected here and isn't yet. On the iPad, signing in is connecting it.
+    private var libraryMissing: Bool {
+        #if os(macOS)
+        drive.isConfigured && !drive.isSignedIn
+        #else
+        false
+        #endif
     }
 
     private static var why: String {
@@ -398,7 +414,7 @@ private struct SignInFirst: View {
         #else
         await drive.signIn()
         #endif
-        if signedIn, !declined { next() }
+        if signedIn, !declined, !Task.isCancelled { next() }
     }
 
     private var signedIn: Bool {

@@ -59,7 +59,18 @@ final class BookSession {
     }
 
     /// True while this book's window is the one in front and the app is active (the study clock only counts then).
-    var isActive = false
+    var isActive = false {
+        didSet {
+            guard isActive != oldValue else { return }
+            if isActive { activeSince = Date().timeIntervalSince1970 } else { activeUntil = Date().timeIntervalSince1970 }
+        }
+    }
+    /// For the study time since the last tick when the app quits (`flushForQuit`), in seconds since 1970.
+    @ObservationIgnored private var activeSince: Double?
+    @ObservationIgnored private var activeUntil: Double = 0
+    @ObservationIgnored private var lastTick = Date().timeIntervalSince1970
+    /// Seconds of the current tick already logged by a flush, so the next tick doesn't count them twice.
+    @ObservationIgnored private var creditedThisTick = 0.0
 
     static let emptyBook = try! JSONDecoder().decode(Book.self, from: Data(#"{"title":"Your book"}"#.utf8))
 
@@ -165,16 +176,17 @@ final class BookSession {
     func startClock() {
         catchUp()  // the book is on screen (again): show the latest from every device
         clock?.invalidate()
+        lastTick = Date().timeIntervalSince1970
+        creditedThisTick = 0
         clock = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.catchUp()  // another device's progress may have arrived
+                let credited = self.creditedThisTick
+                self.creditedThisTick = 0
+                self.lastTick = Date().timeIntervalSince1970
                 guard self.isActive, Self.appIsActive else { return }
-                // Study time isn't a change to merge by: the tick leaves updatedAt alone.
-                let updatedAt = self.progress.updatedAt
-                Activity.log(&self.progress, now: self.now, seconds: 15)
-                self.progress.updatedAt = updatedAt
-                self.ownLog[Activity.dayKey(self.now), default: 0] += 15
+                self.logStudy(15 - credited)
                 self.save(syncSoon: false)
                 #if os(macOS)
                 Nudger.studying()  // studying counts as a visit: no silly nudges about time "away"
@@ -183,15 +195,44 @@ final class BookSession {
         }
     }
 
+    /// Study time isn't a change to merge by: logging it leaves updatedAt alone.
+    private func logStudy(_ seconds: Double) {
+        guard seconds > 0 else { return }
+        let updatedAt = progress.updatedAt
+        Activity.log(&progress, now: now, seconds: seconds)
+        progress.updatedAt = updatedAt
+        ownLog[Activity.dayKey(now), default: 0] += seconds
+    }
+
     func stopClock() {
         clock?.invalidate()
         flushTracking()
-        // A remake draft typed in the last second would be lost with the session: save it now.
+        savePendingDraft()
+    }
+
+    /// A remake draft typed in the last second would be lost with the session: save it now.
+    private func savePendingDraft() {
         if let pending = pendingSave {
             pending.cancel()
             pendingSave = nil
             save()
         }
+    }
+
+    /// The app is quitting (or, on the iPad, going to the background, where it may be closed): writes everything
+    /// still waiting, right now: study time since the last tick, tracked listening and reading, a remake draft.
+    func flushForQuit() {
+        if clock?.isValid == true {
+            let until = isActive && Self.appIsActive ? Date().timeIntervalSince1970 : activeUntil
+            let seconds = Activity.partialTick(lastTick: lastTick, activeSince: activeSince, until: until) - creditedThisTick
+            if seconds > 0 {
+                logStudy(seconds)
+                creditedThisTick += seconds
+                save(syncSoon: false)
+            }
+        }
+        flushTracking()
+        savePendingDraft()
     }
 
     // MARK: steps that complete themselves (spec 09)

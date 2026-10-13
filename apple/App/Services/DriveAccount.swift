@@ -56,16 +56,22 @@ final class DriveAccount: NSObject, ASWebAuthenticationPresentationContextProvid
         note = ""
         defer { signingIn = false }
         do {
-            let callback: URL = try await withCheckedThrowingContinuation { continuation in
-                let once = ResumeOnce(continuation)
-                let session = ASWebAuthenticationSession(url: attempt.url, callbackURLScheme: oauth.redirectScheme) { url, error in
-                    if let url { once.resume(.success(url)) } else { once.resume(.failure(error ?? DriveError.notSignedIn)) }
+            // Cancelling the calling task (the first launch's "Not now") closes the sheet, like its own Cancel button.
+            let callback: URL = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    let once = ResumeOnce(continuation)
+                    let session = ASWebAuthenticationSession(url: attempt.url, callbackURLScheme: oauth.redirectScheme) { url, error in
+                        if let url { once.resume(.success(url)) } else { once.resume(.failure(error ?? DriveError.notSignedIn)) }
+                    }
+                    session.presentationContextProvider = self
+                    session.prefersEphemeralWebBrowserSession = false
+                    self.session = session
+                    // The sheet couldn't open (no window to show it on, say): say so rather than wait forever.
+                    if !session.start() { once.resume(.failure(SignInError.couldNotOpen)) }
+                    if Task.isCancelled { session.cancel() }
                 }
-                session.presentationContextProvider = self
-                session.prefersEphemeralWebBrowserSession = false
-                self.session = session
-                // The sheet couldn't open (no window to show it on, say): say so rather than wait forever.
-                if !session.start() { once.resume(.failure(SignInError.couldNotOpen)) }
+            } onCancel: {
+                Task { @MainActor in self.session?.cancel() }
             }
             session = nil
             guard let code = oauth.code(from: callback, for: attempt) else { throw DriveError.notSignedIn }

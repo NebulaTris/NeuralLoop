@@ -12,6 +12,7 @@ struct LibraryView: View {
     @Environment(Library.self) private var library
     @State private var dropping = false
     @State private var removing: BookEntry?
+    @State private var explaining: RunProblem?
     /// This window, for the file picker (only one window shows it).
     @State private var windowID = UUID().uuidString
     #if os(macOS)
@@ -44,8 +45,18 @@ struct LibraryView: View {
                             ForEach(library.entries) { entry in
                                 Button { library.path.append(entry.id) } label: { BookCard(entry: entry) }
                                     .buttonStyle(LiftStyle())
+                                    // A run that went wrong: VoiceOver reads the whole story, and it has an action to show it.
+                                    .accessibilityHint(entry.problem?.detail ?? "")
+                                    .accessibilityActions {
+                                        if let problem = entry.problem {
+                                            Button("What happened?") { explaining = problem }
+                                        }
+                                    }
                                     .contextMenu {
                                         Button("Open") { library.path.append(entry.id) }
+                                        if let problem = entry.problem {
+                                            Button("What happened?") { explaining = problem }
+                                        }
                                         #if os(macOS)
                                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.folder]) }
                                         #endif
@@ -92,6 +103,12 @@ struct LibraryView: View {
         #endif
         .alert(library.message ?? "", isPresented: Binding(get: { library.message != nil }, set: { if !$0 { library.message = nil } })) {
             Button("OK", role: .cancel) {}
+        }
+        // The whole story of an automatic run that went wrong (the card only fits a short line).
+        .alert(explaining?.card ?? "", isPresented: Binding(get: { explaining != nil }, set: { if !$0 { explaining = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(explaining?.detail ?? "")
         }
         .confirmationDialog("Remove “\(removing?.title ?? "this book")”?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible) {

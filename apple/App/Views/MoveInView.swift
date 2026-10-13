@@ -26,19 +26,30 @@ enum AppMover {
         UserDefaults.standard.set(version, forKey: "moveInLater")
     }
 
-    /// Copies the app into /Applications (or ~/Applications if that isn't writable), replacing an older copy (which goes
-    /// to the Trash, never deleted outright), then opens the new one and quits this one. Says how it went.
+    /// Copies the app into /Applications (or ~/Applications if that isn't writable), then opens the new copy and quits
+    /// this one. The new copy is made under a temporary name and checked first; only then does an older copy go to the
+    /// Trash (never deleted outright) and the new one take its place, so a copy that fails never leaves nothing behind.
+    /// This copy quits only once the new one has opened. Says how it went.
     /// The copy (over a gigabyte, with the runtime) happens off the main thread, so Pip keeps carrying yarn meanwhile.
     @MainActor static func moveIn() async -> MoveOutcome {
         switch await Task.detached(operation: { copyIn() }).value {
         case .alreadyThere: return .alreadyHome
-        case .copied(let destination): reopen(from: destination); return .reopening
         case .failed(let problem): return .problem(problem)
+        case .copied(let destination):
+            let problem = await reopen(from: destination)
+            switch MoveInPlan.afterReopen(opened: problem == nil) {
+            case .quit:
+                NSApp.terminate(nil)
+                return .reopening
+            case .keepRunning:
+                return .movedButNotOpened(folder: destination.deletingLastPathComponent().path, problem ?? "")
+            }
         }
     }
 
     /// `reopening`: this copy is about to quit. `alreadyHome`: it's the one in Applications, so nothing to do.
-    enum MoveOutcome: Equatable { case reopening, alreadyHome, problem(String) }
+    /// `movedButNotOpened`: the new copy is in place, but macOS wouldn't open it, so this one keeps running.
+    enum MoveOutcome: Equatable { case reopening, alreadyHome, problem(String), movedButNotOpened(folder: String, String) }
 
     enum CopyOutcome: Sendable { case alreadyThere, copied(URL), failed(String) }
 
@@ -50,32 +61,81 @@ enum AppMover {
         let here = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
         for folder in [URL(fileURLWithPath: "/Applications", isDirectory: true), personal] {
             let destination = folder.appendingPathComponent(name)
-            // Already there: nothing to move (and never trash the copy that's running).
-            if destination.standardizedFileURL.resolvingSymlinksInPath() == here { return .alreadyThere }
-            do {
-                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-                if fm.fileExists(atPath: destination.path) {
-                    // Only an older NeuralLoop goes to the Trash, never another app that happens to share the name.
-                    guard Bundle(url: destination)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
-                        lastProblem = "There's already a different app called \(name) in \(folder.path). Rename or move it, then try again."
-                        continue
-                    }
-                    try fm.trashItem(at: destination, resultingItemURL: nil)
-                }
-                try fm.copyItem(at: Bundle.main.bundleURL, to: destination)
-                return .copied(destination)
-            } catch {
-                lastProblem = error.localizedDescription
+            let found: MoveInPlan.Destination =
+                destination.standardizedFileURL.resolvingSymlinksInPath() == here ? .thisCopy
+                : !fm.fileExists(atPath: destination.path) ? .empty
+                : Bundle(url: destination)?.bundleIdentifier == Bundle.main.bundleIdentifier ? .olderCopy : .otherApp
+            switch MoveInPlan.decide(found) {
+            case .alreadyThere:
+                return .alreadyThere
+            case .tryNextFolder:
+                lastProblem = "there's already a different app called \(name) in \(folder.path). Rename or move it, then try again"
+            case .steps(let steps):
+                guard let problem = carryOut(steps, into: folder, destination: destination) else { return .copied(destination) }
+                lastProblem = problem
             }
         }
         return .failed(lastProblem)
     }
 
-    private static func reopen(from destination: URL) {
+    /// Does the steps in order; when one fails, undoes what was done and says why.
+    nonisolated private static func carryOut(_ steps: [MoveInPlan.Step], into folder: URL, destination: URL) -> String? {
+        let fm = FileManager.default
+        let staging = folder.appendingPathComponent(".moving-\(UUID().uuidString)-\(destination.lastPathComponent)")
+        var trashed: URL?
+        for step in steps {
+            do {
+                switch step {
+                case .copyToStaging:
+                    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try fm.copyItem(at: Bundle.main.bundleURL, to: staging)
+                case .checkStaging:
+                    guard isGoodCopy(staging) else { throw MoveProblem.incompleteCopy }
+                case .trashOld:
+                    var result: NSURL?
+                    try fm.trashItem(at: destination, resultingItemURL: &result)
+                    trashed = result as URL?
+                case .putInPlace:
+                    try fm.moveItem(at: staging, to: destination)
+                }
+            } catch {
+                for undo in MoveInPlan.undo(failedAt: step, trashedOld: trashed != nil) {
+                    switch undo {
+                    case .removeStaging: try? fm.removeItem(at: staging)
+                    case .restoreOld: if let trashed { try? fm.moveItem(at: trashed, to: destination) }
+                    }
+                }
+                return error.localizedDescription
+            }
+        }
+        return nil
+    }
+
+    /// The copy has this app's identifier, version, and executable (read from its Info.plist, never cached).
+    nonisolated private static func isGoodCopy(_ copy: URL) -> Bool {
+        let info = (try? Data(contentsOf: copy.appendingPathComponent("Contents/Info.plist")))
+            .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] } ?? [:]
+        let executable = (info["CFBundleExecutable"] as? String).map { copy.appendingPathComponent("Contents/MacOS/\($0)").path }
+        return MoveInPlan.isGoodCopy(bundleID: info["CFBundleIdentifier"] as? String, version: info["CFBundleVersion"] as? String,
+                                     hasExecutable: executable.map { FileManager.default.isExecutableFile(atPath: $0) } ?? false,
+                                     expectedID: Bundle.main.bundleIdentifier,
+                                     expectedVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+    }
+
+    enum MoveProblem: LocalizedError {
+        case incompleteCopy
+        var errorDescription: String? { "the copy in Applications didn't come out complete" }
+    }
+
+    /// Opens the new copy. Returns nil when it opened, or why it didn't (macOS can refuse to open a downloaded app).
+    private static func reopen(from destination: URL) async -> String? {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: destination, configuration: configuration) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 }
@@ -84,6 +144,8 @@ struct MoveInView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var moving = false
     @State private var problem: String?
+    /// Where the new copy went, when macOS wouldn't open it.
+    @State private var movedTo: URL?
 
     var body: some View {
         VStack(spacing: 18) {
@@ -113,40 +175,72 @@ struct MoveInView: View {
             }
 
             if let problem {
-                Text("I couldn't move in by myself (\(problem)). No worries: drag NeuralLoop into Applications in Finder, then open it from there.")
+                Text(problem)
                     .font(Theme.body(12)).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(10).background(Theme.butterSoft, in: RoundedRectangle(cornerRadius: 10)).frame(maxWidth: 420)
             }
 
-            HStack(spacing: 12) {
-                Button("Maybe later") {
-                    AppMover.later()
-                    dismiss()
-                }
-                .controlSize(.large)
-                Button {
-                    moving = true
-                    problem = nil
-                    Task {
-                        switch await AppMover.moveIn() {
-                        case .reopening: break  // this copy quits in a moment
-                        case .alreadyHome: dismiss()
-                        case .problem(let reason): problem = reason; moving = false
-                        }
+            if let movedTo {
+                // Moved, but macOS wouldn't open the new copy: show it, so it's one double-click away.
+                HStack(spacing: 12) {
+                    Button("Close") {
+                        AppMover.later()
+                        dismiss()
                     }
-                } label: {
-                    Label(moving ? "Carrying my yarn…" : "Move me in", systemImage: moving ? "shippingbox.fill" : "house.fill")
-                        .font(Theme.display(15, .medium)).padding(.horizontal, 6)
+                    .controlSize(.large)
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([movedTo])
+                    } label: {
+                        Label("Show it in Finder", systemImage: "folder").font(Theme.display(15, .medium)).padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(moving || AppMover.isDevelopmentBuild)
-                .keyboardShortcut(.defaultAction)
+            } else {
+                moveButtons
             }
-            Text(AppMover.place == .diskImage ? "After I reopen, you can eject the NeuralLoop disk image." : "I'll reopen from Applications in a second. The copy here can go in the Trash.")
-                .font(Theme.body(11)).foregroundStyle(Theme.ink3)
+            if movedTo == nil {
+                Text(AppMover.place == .diskImage ? "After I reopen, you can eject the NeuralLoop disk image." : "I'll reopen from Applications in a second. The copy here can go in the Trash.")
+                    .font(Theme.body(11)).foregroundStyle(Theme.ink3)
+            }
         }
         .padding(32)
         .frame(width: 520)
         .background(Theme.paper)
+    }
+
+    private var moveButtons: some View {
+        HStack(spacing: 12) {
+            Button("Maybe later") {
+                AppMover.later()
+                dismiss()
+            }
+            .controlSize(.large)
+            Button {
+                moving = true
+                problem = nil
+                Task {
+                    switch await AppMover.moveIn() {
+                    case .reopening: break  // this copy quits in a moment
+                    case .alreadyHome: dismiss()
+                    case .problem(let reason):
+                        problem = "I couldn't move in by myself (\(reason)). No worries: drag NeuralLoop into Applications in Finder, then open it from there."
+                        moving = false
+                    case .movedButNotOpened(let folder, let reason):
+                        // The new copy is in place; this one keeps running so you're never left with nothing open.
+                        problem = "I'm unpacked in \(folder), but macOS wouldn't open the new copy (\(reason)). Quit me, then open NeuralLoop from \(folder) yourself. If macOS asks, choose Open."
+                        moving = false
+                        movedTo = URL(fileURLWithPath: folder).appendingPathComponent(Bundle.main.bundleURL.lastPathComponent)
+                    }
+                }
+            } label: {
+                Label(moving ? "Carrying my yarn…" : "Move me in", systemImage: moving ? "shippingbox.fill" : "house.fill")
+                    .font(Theme.display(15, .medium)).padding(.horizontal, 6)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(moving || AppMover.isDevelopmentBuild)
+            .keyboardShortcut(.defaultAction)
+        }
     }
 }

@@ -1,5 +1,6 @@
 // NeuralLoop for Mac: drop a book, and Pip turns every chapter into a five-step learning loop.
 
+import AppKit
 import NeuralLoopCore
 import SwiftUI
 
@@ -17,6 +18,10 @@ struct NeuralLoopApp: App {
         DriveSync.shared.onChanged = { library.reload() }
         DriveSync.shared.onRemovedElsewhere = { library.removedElsewhere($0) }
         DriveSync.shared.start()
+        // Quitting: study time, listening, and reading still waiting for their 15-second write go to disk first.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { PlayRecorder.shared.flushForQuit() }
+        }
     }
 
     var body: some Scene {
