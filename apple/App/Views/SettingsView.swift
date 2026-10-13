@@ -572,9 +572,12 @@ struct NudgesPage: View {
                     note = "Nudges paused until tomorrow. Pip will be quiet."
                 }
             }
-            if settings.pausedUntil > Date().timeIntervalSince1970 * 1000 {
-                Text("Paused until \(Date(timeIntervalSince1970: settings.pausedUntil / 1000).formatted(date: .abbreviated, time: .shortened)).")
-                    .font(Theme.body(12)).foregroundStyle(Theme.ink3)
+            // Looked at again every half minute, so the line goes once the pause is over, even with Settings open.
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                if settings.pausedUntil > context.date.timeIntervalSince1970 * 1000 {
+                    Text("Paused until \(Date(timeIntervalSince1970: settings.pausedUntil / 1000).formatted(date: .abbreviated, time: .shortened)).")
+                        .font(Theme.body(12)).foregroundStyle(Theme.ink3)
+                }
             }
         }
     }
@@ -657,7 +660,8 @@ struct NotificationsAllowed: View {
                     Button("Turn on in System Settings") { Notifier.openSystemSettings() }
                 }
             case .notAsked?:
-                Button { Task { permission = await Notifier.shared.ask() } } label: {
+                // Allowed just now: whether sounds came with it is known right away, not only on coming back to the app.
+                Button { Task { permission = await Notifier.shared.ask(); soundsOn = await Notifier.shared.soundsOn() } } label: {
                     Label("Allow notifications", systemImage: "bell.badge")
                 }
                 .buttonStyle(.borderedProminent).controlSize(compact ? .regular : .large)
