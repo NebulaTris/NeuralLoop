@@ -65,6 +65,9 @@
   study time stays right after switching Google accounts; moving NeuralLoop into Applications never leaves you
   without the app; the last seconds of study are saved when you quit; and the app no longer carries the build
   machine's folders or Windows-only audio files.
+- **Hear Pip's silly sounds any time:** Settings → Nudges has a play button for the sad violin, the sad meow song and
+  the "fahhh", the volume slider always works, "Try" plays its sound even when the big Pip can't show, and Settings
+  says when macOS has turned NeuralLoop's notification sounds off, with a button to turn them back on.
 
 ## 0.2.0: the first public preview 🐾
 
