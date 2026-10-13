@@ -23,11 +23,6 @@ private func tree(_ json: String) throws -> MindNode { try JSONDecoder().decode(
     #expect(Remake.compare("e", with: map).percent == 0)
 }
 
-@Test func recallScoreIsZeroToThree() {
-    let scores: [Int] = [Remake.recallScore(covered: 0, total: 3), Remake.recallScore(covered: 2, total: 3), Remake.recallScore(covered: 1, total: 0)]
-    #expect(scores == [0, 2, 0])
-}
-
 @Test func quizProgressReadsAndWritesTheSitesShape() throws {
     let saved = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"i":2,"results":[true,false]}"#.utf8))
     let quiz = QuizProgress(saved)

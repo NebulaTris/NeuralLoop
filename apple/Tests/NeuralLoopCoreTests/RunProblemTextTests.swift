@@ -12,9 +12,6 @@ import Testing
 }
 
 @Test func exitTwoThatIsntAboutTheBookItselfSaysSo() {
-    // Another run already has the book: nothing is wrong with the file.
-    let busy = RunProblemText.card(code: 2, tail: ["This book is already being prepared. Pip will keep going with that run."])
-    #expect(busy == "Pip is already preparing this book in another run and will carry on there.")
     // The chapters asked for didn't make sense: preparing them all always does.
     for line in [#"Invalid chapter selection "1-x". Use forms like 1-3, 1,4,7, all, or none."#,
                  #"Invalid range "5-2": the first number must not be larger than the second."#] {

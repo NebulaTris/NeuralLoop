@@ -62,13 +62,5 @@ public enum FSRS {
         return next
     }
 
-    /// "10 min", "3 h", "4 d": how long until `due`.
-    public static func formatWait(due: Double, now: Double) -> String {
-        let ms = due - now
-        if ms < 3_600_000 { return "\(max(1, Int((ms / 60_000).rounded()))) min" }
-        if ms < dayMs { return "\(Int((ms / 3_600_000).rounded())) h" }
-        return "\(Int((ms / dayMs).rounded())) d"
-    }
-
     private static func clamp(_ d: Double) -> Double { min(10, max(1, d)) }
 }

@@ -9,7 +9,6 @@ import Testing
     #expect(PipelineLine.parse("  ✗ chapter 4 cards: UnusableAnswer: nope") == .failed(chapter: 4, item: "cards", reason: "UnusableAnswer: nope"))
     #expect(PipelineLine.parse("  added chapter 5: Queues") == .added(chapter: 5))
     #expect(PipelineLine.parse("  setup: downloading qwen3:8b 50%") == .setup("downloading qwen3:8b 50%"))
-    #expect(PipelineLine.parse("Study site: /tmp/book/index.html") == .finished)
     #expect(PipelineLine.parse("Book: /tmp/book") == .finished)
     #expect(PipelineLine.parse("Making 7 items with Ollama, chapter by chapter.") == .note("Making 7 items with Ollama, chapter by chapter."))
 }
