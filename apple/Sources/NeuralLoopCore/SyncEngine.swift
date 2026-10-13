@@ -393,8 +393,11 @@ public actor SyncEngine {
         }
         // "Remove all books": inbox uploads leave the Drive.
         if !state.dropInbox.isEmpty || state.dropInboxBefore != nil {
+            // What's being dropped now: `forgetInbox` may run again while this awaits the Drive, and what it adds then
+            // stays for the next sync (only this snapshot is cleared afterwards).
+            let (dropping, droppingBefore) = (state.dropInbox, state.dropInboxBefore)
             var failed = false
-            for file in remote where SyncLayout.isInbox(file.path) && dropsFromInbox(file) {
+            for file in remote where SyncLayout.isInbox(file.path) && Self.drops(file, paths: dropping, before: droppingBefore) {
                 do {
                     try await deleteRemote(file)
                     report.deleted += 1
@@ -403,7 +406,10 @@ public actor SyncEngine {
                 } catch { failed = true; report.problems.append("\(file.path): \(error.localizedDescription)") }
             }
             remote.removeAll { gone.contains($0.id ?? $0.path) }
-            if !failed { state.dropInbox = []; state.dropInboxBefore = nil }
+            if !failed {
+                state.dropInbox.subtract(dropping)
+                if state.dropInboxBefore == droppingBefore { state.dropInboxBefore = nil }
+            }
         }
         // Our own progress already matching the Drive counts as ours (so a later clash is noticed), as does a send whose
         // answer was lost but which landed.
@@ -656,9 +662,9 @@ public actor SyncEngine {
         do { try await store.delete(file) } catch DriveError.http(404, _) {}
     }
 
-    private func dropsFromInbox(_ file: SyncFile) -> Bool {
-        if state.dropInbox.contains(file.path) { return true }
-        guard let before = state.dropInboxBefore else { return false }
+    private static func drops(_ file: SyncFile, paths: Set<String>, before: Double?) -> Bool {
+        if paths.contains(file.path) { return true }
+        guard let before else { return false }
         return (file.modified.map { $0.timeIntervalSince1970 * 1000 } ?? 0) < before
     }
 

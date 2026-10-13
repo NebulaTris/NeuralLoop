@@ -946,6 +946,47 @@ private actor RefusesSidecars: DriveStore {
     #expect(arrived.map(\.lastPathComponent) == ["u1.pdf"] && read(mac, "inbox/u1.json") == #"{"title":"Clean Code"}"#)
 }
 
+/// A Drive that runs something once, while the first delete is on its way (another call reaching the engine then).
+private actor DuringDelete: DriveStore {
+    let inner: MemoryDrive
+    private var hook: (@Sendable () async -> Void)?
+    init(_ inner: MemoryDrive) { self.inner = inner }
+    func onNextDelete(_ hook: @escaping @Sendable () async -> Void) { self.hook = hook }
+    func list() async throws -> [SyncFile] { try await inner.list() }
+    func download(_ file: SyncFile, to destination: URL) async throws { try await inner.download(file, to: destination) }
+    func upload(_ source: URL, as path: String, replacing id: String?) async throws -> SyncFile {
+        try await inner.upload(source, as: path, replacing: id)
+    }
+    func delete(_ file: SyncFile) async throws {
+        let run = hook
+        hook = nil
+        await run?()
+        try await inner.delete(file)
+    }
+}
+
+@Test func removingEveryBookWhileASyncIsTidyingTheInboxIsntForgotten() async throws {
+    let inner = MemoryDrive()
+    let drive = DuringDelete(inner)
+    let pad = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: pad) }
+    try write("%PDF", pad, "inbox/u1.pdf")
+    try write(#"{"title":"One"}"#, pad, "inbox/u1.json")
+    let padSync = SyncEngine(root: pad, device: "ipad1", role: .pad, store: drive)
+    _ = try await padSync.sync()
+    await padSync.forgetInbox(now: Date(timeIntervalSince1970: 500_000))
+    try FileManager.default.removeItem(at: pad.appendingPathComponent("inbox"))  // what the caller does
+    // While that sync deletes u1, another book reaches the Drive and the person removes every book again.
+    await drive.onNextDelete {
+        await inner.insert(Data("%PDF".utf8), as: "inbox/u2.pdf", modified: Date(timeIntervalSince1970: 1_500_000))
+        await padSync.forgetInbox(now: Date(timeIntervalSince1970: 2_000_000))
+    }
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u1.pdf") == nil)
+    _ = try await padSync.sync()
+    #expect(await inner.data(at: "inbox/u2.pdf") == nil)  // the second removal still stands
+}
+
 /// After a clash, the time counted under the old id is only taken off while that id's file is really there: in
 /// another Google account's library (where the old id never wrote) this device's whole history counts and goes up.
 @Test func timeCountedUnderAnOldIDIsOnlyLeftOutWhereThatIDsFileIs() async throws {
