@@ -1,5 +1,9 @@
 # NeuralLoop — Build Specification v3
 
+> **Note (kept as the long-term vision):** the Tauri desktop app and the per-book study site this document describes were
+> replaced by the native SwiftUI app in `apple/` (spec 04). Where this document disagrees with `CLAUDE.md` or `docs/specs`,
+> those win, including the license: the repo is source-available under the PolyForm Noncommercial License 1.0.0.
+
 **Status:** approved for build. **Supersedes:** v2 and SPEC.md v1 (kept for history).
 **What NeuralLoop is:** an **open-source system** (Apache-2.0). A person gives it a book as a PDF, EPUB, Markdown file, or link, and it generates everything else on their own computer. The reusable parts (pipeline, nudge engine, knowledge graph, Loop Pack format) are designed to be embedded in other products. The desktop app with Pip is the reference front end.
 **Out of scope for round one:** any book catalog, shared cross-user cache, accounts, payments, or paid tiers. Nothing in the core may depend on them.
