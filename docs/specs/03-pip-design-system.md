@@ -8,24 +8,28 @@ This document is the reference for anything that shows Pip. The live character s
 
 | Path | What |
 |---|---|
-| `design/pip/generate_pip.py` | **Source of truth.** Draws every pose as SVG from shared parts (head, ears, fluffy cheeks, body, tail, arms, feet) and defines the animation CSS |
-| `pipeline/site/pip-poses.js` | Generated: `window.PIP = {read, hop, nap, stretch, play, hug, study, proud, icon}` + `window.PIP_CSS` (study site) |
-| `src/pip-poses.js` | Generated: same, for the desktop app and `pip.html` |
+| `design/pip/generate_pip.py` | **Source of truth.** Draws every pose as SVG from shared parts (head, ears, fluffy cheeks, body, tail, arms, feet); every animation is data in `ANIM` there. `make pip` runs it |
+| `apple/App/Resources/pip-rig.json` | Generated: every pose as layers, each animated group's pivot and keyframes (the Mac and iPad apps) |
+| `apple/App/Resources/PipLayers/*.png` | Generated: each layer as a transparent 3x bitmap, plus the menu-bar icon (redrawn only when a layer's art hash changes) |
+| `pipeline/neuralloop_books/assets/pip-poses.js` | Generated: the poses as SVG plus the animation CSS, for explainer videos |
 | `design/pip/app-icon.svg` | App icon (happy Pip head on moss green) |
-| `src-tauri/icons/*` | Generated from the icon: `npx tauri icon design/pip/app-icon.png` after exporting a 1024×1024 PNG |
+| `apple/App/Resources/AppIcon.icns` | Generated from the icon: `python design/pip/make_app_icon.py` |
+| `docs/readme/*` | Generated README pictures (hero, poses, demo GIF): `python design/readme/make_readme_art.py` (needs ffmpeg) |
+| `apple/Sources/NeuralLoopCore/PipRig.swift` | Plays `pip-rig.json`: layers, pivots, keyframes, CSS easing (pure, tested) |
+| `apple/App/Views/PipView.swift` | `PipView(pose:size:interactive:)` and `PipPose`, the SwiftUI view every screen uses |
 
-Regenerate after any artwork change: `python design/pip/generate_pip.py` (writes both `pip-poses.js` files). Add a CI step that
-regenerates and fails if `git diff --exit-code` shows the committed files are stale.
+Never edit the generated files by hand. Regenerate after any artwork change with `make pip` (`--force` redraws every
+PNG). `make check` runs `generate_pip.py --check` and `make_app_icon.py --check`, and CI
+(`.github/workflows/check.yml`) already regenerates Pip and fails when the committed files are stale.
 
 ## Using Pip in UI code
 
-```js
-element.innerHTML = `<div class="pip moving">${window.PIP[pose]}</div>`;   // animated
-element.innerHTML = `<div class="pip">${window.PIP[pose]}</div>`;          // still (screenshots, reduced motion is automatic)
+```swift
+PipView(pose: .hop, size: 160)                      // animated; Reduce Motion stills it automatically
+PipView(pose: .read, size: 58, interactive: false)  // inside a button (book covers): no hover wiggle or click hearts
 ```
-Inject `window.PIP_CSS` once per page (`<style>`). Each pose SVG has `role="img"` and an `aria-label` like "Pip reading a book";
-when the person renamed Pip, replace the name in the label. Helpers already exist: `pip()` in `pipeline/site/src/ui/dom.js` and
-`src/js/dom.js`.
+Each pose's accessibility label (like "Pip reading a book") comes from `pip-rig.json`. Pips on the same screen start at
+different points in their loops, so they never move in sync.
 
 ## Poses and when to use them
 
@@ -39,7 +43,7 @@ when the person renamed Pip, replace the name in the label. Helpers already exis
 | `hug` | hugging a wound-up yarn ball, hearts float up | a loop closed, a session finished |
 | `study` | tiny round glasses at a laptop with a spinner | something is being prepared |
 | `proud` | chest puffed, medal swinging, stars | goal met, a great score, a finished book |
-| `icon` | happy head only | tray, headers, small sizes |
+| `icon` | happy head only | the menu-bar icon, small sizes |
 | `sad` | floppy ears hanging down, a tear, its own little rain cloud | Silly mode nudges only (the sad violin and sad meow steps): the big on-screen Pip and the notification picture |
 | `shocked` | fur on end, paws on cheeks, "!" | Silly mode nudges only (the "fahhh" step): the big on-screen Pip and the notification picture |
 
@@ -51,7 +55,7 @@ person's to change), which always say what's ready and can be turned off in Sett
 
 | Place | Size |
 |---|---|
-| Menu bar / tray | 22 px (template icon on macOS: single colour) |
+| Menu bar | 19 × 18 pt (`ICON_SIZE` in `generate_pip.py`) |
 | Headers, chips | 36–46 px (`icon`) |
 | Book cover corner | 58 px |
 | Side column, bubbles | 160–220 px |
@@ -73,16 +77,17 @@ person's to change), which always say what's ready and can be turned off in Sett
 | Eyes | `#2A1D1B` with iris `#6A3A2B` |
 | Yarn | `#6F8FE8` |
 | App icon ground | `#3E7A62` (moss green) |
-Pip's colours do not change in dark mode. UI tokens for surrounding UI are at the top of `pipeline/site/styles.css`
-(warm peach light theme, cocoa dark theme) and `src/styles.css`.
+Pip's colours do not change in dark mode. Tokens for the surrounding UI (warm peach light theme, cocoa dark theme) are in
+`apple/App/Views/Theme.swift`.
 
 ## Motion
 
-All animation is CSS on classes inside the SVG (`tail`, `lids`, `tilt`, `breathe`, `hop`, `twinkle`, `zz`, `yawn`, `swipe`,
-`roll`, `rock`, `heart`, `spin`, `type-l`, `type-r`, `swing`, `page`, `puff`, `bob`, `watch`), enabled only under
-`.moving` and only when `prefers-reduced-motion: no-preference`. Loops are 1–5 s, small amplitude (tail ±8°, breathing 2–7 %).
-Never animate the tray icon or anything to demand attention. `transform-box: fill-box` is set only on animated classes (setting
-it globally breaks the SVG's own mirroring transforms).
+Every animation is data in `ANIM` in `design/pip/generate_pip.py`, keyed by the animated groups inside each pose (`tail`,
+`lids`, `tilt`, `breathe`, `hop`, `twinkle`, `zz`, `yawn`, and so on). The same data becomes CSS for explainer videos
+(`pip-poses.js`) and keyframes in `pip-rig.json`, which `PipRig` plays in the apps. Reduce Motion stops it (`PipView` shows the
+still pose); the CSS only runs under `.moving` and `prefers-reduced-motion: no-preference`. Loops are 1–5 s, small amplitude
+(tail about ±8°, breathing 2–7 %). Never animate the menu-bar icon or anything to demand attention. In the CSS,
+`transform-box: fill-box` is set only on animated classes (setting it globally breaks the SVG's own mirroring transforms).
 
 ## Voice
 
@@ -93,4 +98,4 @@ Pip talks in short, warm sentences in the first person, offers one next step wit
 ## Future art
 
 For final artwork, give an illustrator this document and the character sheet; animate their art in Rive with a state machine
-whose inputs are the pose names above, and keep the SVG poses as the fallback.
+whose inputs are the pose names above, and keep the generated rig as the fallback.
