@@ -299,8 +299,9 @@ private struct CompanyScene: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.75), value: showing)
                 }
                 HStack(spacing: 10) {
-                    PipView(pose: .sad, size: 90, interactive: false)
-                    Text("…and a tiny sad violin if you vanish 🎻").font(Theme.body(13)).foregroundStyle(Theme.ink2)
+                    // A warm pose: only Silly mode's own nudges use the sad and shocked ones (golden rule 8).
+                    PipView(pose: .play, size: 90, interactive: false)
+                    Text("…and a tiny violin tune if you've been away a while 🎻").font(Theme.body(13)).foregroundStyle(Theme.ink2)
                 }
             }
             .padding(.horizontal, 40)
