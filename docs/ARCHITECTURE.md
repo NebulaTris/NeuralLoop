@@ -164,12 +164,12 @@ apple/
 **`App/Views`** — the screens: `LibraryView` (shelf, resume card, year log), `BookView` (chapters and the five
 steps), `Steps` (Listen & watch, Read, Recall, Map, Remember), `StudyViews` (quiz, mind map, remake, book map),
 `GraphExplorer` (the interactive concept graph), `QuickPanel` (the menu-bar panel), `SettingsView`, `ProfileButton`,
-`MoveInView` (move into Applications), `DriveSyncCard`, `LibraryDataCard` (Settings → Account's "Your library": the
-room it takes, and removing every book), `PipView`, `Theme` (colours and fonts).
+`MoveInView` (move into Applications), `LibraryDataCard` (Settings → Account's "Your library": the room it takes,
+and removing every book), `PipView`, `Theme` (colours and fonts).
 
-**`App/iPad`** — the iPad's entry point (`NeuralLoopPadApp.swift`), its settings sheet, icon, and Info.plist. The
-iPad app shares every view and service above; Mac-only parts (the pipeline, the menu bar, notifications) are behind
-`#if os(macOS)` or left out of the iPad target in `project.yml`.
+**`App/iPad`** — the iPad's entry point (`NeuralLoopPadApp.swift`), its settings sheet and `DriveSyncCard` (Drive
+sign-in and sync, iPad only), icon, and Info.plist. The iPad app shares every view and service above; Mac-only parts
+(the pipeline, the menu bar, notifications) are behind `#if os(macOS)` or left out of the iPad target in `project.yml`.
 
 **`App/Resources`** — `pip-rig.json` and `PipLayers/` (Pip's animation data and layer pictures, generated),
 `AppIcon.icns`, fonts.

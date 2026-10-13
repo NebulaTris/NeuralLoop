@@ -1,4 +1,5 @@
-// Google Drive sync: sign in, what's synced, and when. Shown in Settings → Account on the Mac and in the iPad's settings.
+// Google Drive sync on the iPad: sign in, what's synced, and when, in the iPad's settings. iPad only: the Mac's
+// Settings → Account has one Google sign-in for everything (`GoogleAccountCard`).
 
 import NeuralLoopCore
 import SwiftUI
