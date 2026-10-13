@@ -14,10 +14,13 @@ from neuralloop_books.engines.notebooklm import NotebookLMEngine
 from neuralloop_books.fake_client import (
     ENUMS,
     FakeClient,
+    FakeDownloadFailsClient,
     FakeLostReplyClient,
     FakeQuotaClient,
+    FakeSlowSourceClient,
     FakeStaleTwiceWhileWaitingClient,
     RPCTimeoutError,
+    SourceTimeoutError,
     WaitTimeoutError,
 )
 from neuralloop_books.pipeline import Options, run
@@ -388,3 +391,125 @@ def test_a_session_that_never_recovers_is_reopened_only_a_few_times_per_run(opti
     state = asyncio.run(run(options, engine))
     assert len(opened) <= 1 + 6
     assert state.chapters[0]["tasks"]["audio"]["status"] == WAITING
+
+
+# ---- 8. a chapter NotebookLM took but is slow to read is never added twice ----
+
+
+def statuses(chapter):
+    return {e["status"] for e in chapter["tasks"].values() if e["status"] != "skipped"}
+
+
+def test_a_chapter_notebooklm_is_slow_to_read_is_added_once_and_waited_for_across_runs(options):
+    """The add's own wait runs out after NotebookLM made the source: uploading again would make a duplicate
+    (four a run, more every run). The source's id is kept and the next run waits for that same source."""
+    client = FakeSlowSourceClient(only=2, slow=1)
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    second = state.chapters[1]
+    assert [t[:3] for t in client.uploads] == ["01 ", "02 "]
+    assert second["sourceId"] == "source-2" and second.get("sourceReady") is False
+    assert statuses(second) == {WAITING} and fallback.made == []
+    assert statuses(state.chapters[0]) == {DONE}
+
+    state = run_with(options, client)  # still reading it
+    assert len(client.uploads) == 2 and client.ready_waits == 1
+    assert statuses(state.chapters[1]) == {WAITING} and state.chapters[1]["sourceId"] == "source-2"
+
+    state = run_with(options, client)  # ready now
+    assert len(client.uploads) == 2
+    assert statuses(state.chapters[1]) == {DONE} and "sourceReady" not in state.chapters[1]
+
+
+class GoneThenSlow(Gone):
+    """Chapter 1's source is gone, and NotebookLM is slow reading the one added in its place."""
+
+    def __init__(self):
+        super().__init__(sources={"source-1"})
+        self.ready_waits = 0
+
+    async def _add_file(self, notebook_id, path, **kwargs):
+        source = await super()._add_file(notebook_id, path, **kwargs)
+        raise SourceTimeoutError(source.id)
+
+    async def _wait_until_ready(self, notebook_id, source_id, **kwargs):
+        self.ready_waits += 1
+        raise SourceTimeoutError(source_id)
+
+
+def test_a_source_added_again_mid_run_but_still_being_read_leaves_the_chapters_items_waiting(options):
+    run_with(options, FakeQuotaClient(delay=0))  # chapter 1's podcast and video wait
+    client = GoneThenSlow()
+    state = run_with(options, client)
+    first = state.chapters[0]
+    assert (first["tasks"]["audio"]["status"], first["tasks"]["video"]["status"]) == (WAITING, WAITING)
+    assert client.adds == ["new-source-1"] and client.ready_waits == 0
+    assert first["sourceId"] == "new-source-1" and first["sourceReady"] is False
+
+
+def test_a_chapter_notebooklm_could_not_read_is_not_uploaded_again_and_its_broken_source_is_removed(options):
+    client = FakeSlowSourceClient(only=2, broken=True)
+    state = run_with(options, client)
+    second = state.chapters[1]
+    assert [t[:3] for t in client.uploads] == ["01 ", "02 "]
+    assert client.deleted == ["source-2"] and not second.get("sourceId")
+    assert statuses(second) == {FAILED}
+
+
+# ---- 9. an item NotebookLM made but that couldn't be downloaded is downloaded again, not made again ----
+
+
+@pytest.mark.parametrize("kind", ["audio", "video", "quiz"])
+def test_an_item_made_but_not_downloaded_is_downloaded_by_the_next_run_not_made_again(options, kind):
+    client = FakeDownloadFailsClient(kinds=(kind,), times=1)
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    entry = state.chapters[0]["tasks"][kind]
+    assert entry["status"] == WAITING and entry["taskId"]
+    assert not any(task == kind for _, task in fallback.made)
+
+    state = run_auto(options, client, LocalStandIn())
+    entry = state.chapters[0]["tasks"][kind]
+    assert entry["status"] == DONE and entry["by"] == "NotebookLM"
+    assert client.generated.count(f"source-1:{kind}") == 1
+    assert not {"taskId", "requestedAt", "downloadTries"} & set(entry)
+
+
+def test_an_item_that_never_downloads_stops_after_a_few_runs(options):
+    client = FakeDownloadFailsClient(kinds=("audio", "quiz"), times=1_000)
+    for _ in range(config.NOTEBOOKLM_DOWNLOAD_TRIES - 1):
+        state = run_auto(options, client, LocalStandIn())
+        assert state.chapters[0]["tasks"]["audio"]["status"] == WAITING
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    tasks = state.chapters[0]["tasks"]
+    assert tasks["audio"]["status"] == FAILED and "taskId" not in tasks["audio"]
+    assert tasks["quiz"]["status"] == DONE and tasks["quiz"]["by"] == "Ollama"  # text may be made locally
+    assert (1, "audio") not in fallback.made
+    assert client.generated.count("source-1:audio") == 1
+
+
+# ---- 10. a lost request is never matched to another chapter's item ----
+
+
+def test_a_lost_request_is_not_matched_to_an_item_that_does_not_say_its_source(options):
+    """NotebookLM's listing can leave out which sources an item was made from: that item could be any
+    chapter's, so it's never taken for this one."""
+    options.chapters, options.media = "1", "none"
+    run_with(options, LostQuizClient())
+    client = FakeClient(delay=0)
+    client.made.append(
+        SimpleNamespace(id="someone-else|quiz", kind="quiz", source_ids=(), created_at=datetime.now())
+    )
+    asked = counting(client, "generate_quiz")
+    waited = []
+    original = client.artifacts.wait_for_completion
+
+    async def wait(notebook_id, task_id, **kwargs):
+        waited.append(task_id)
+        return await original(notebook_id, task_id, **kwargs)
+
+    client.artifacts.wait_for_completion = wait
+    state = run_with(options, client)
+    assert state.chapters[0]["tasks"]["quiz"]["status"] == DONE and len(asked) == 1
+    assert "someone-else|quiz" not in waited

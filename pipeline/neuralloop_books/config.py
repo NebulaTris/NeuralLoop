@@ -68,6 +68,9 @@ NOTEBOOKLM_RETRY_DELAYS = (20, 60, 120)
 # Google's session cookie can rotate more than once during an hour-long video: reload it up to this many times
 # per item before the item gives up (a podcast or video then waits for the next run).
 NOTEBOOKLM_SESSION_RELOADS = 3
+# An item NotebookLM made but that couldn't be downloaded is downloaded again by the next runs (never made
+# again), at most this many runs in all; then it fails as NotebookLM's.
+NOTEBOOKLM_DOWNLOAD_TRIES = 3
 
 
 def quota_message(engine_name: str) -> str:
