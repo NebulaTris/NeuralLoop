@@ -143,7 +143,9 @@ class FakeClient:
 
     async def _generate_mind_map(self, notebook_id, source_ids=None, **kwargs):
         await self._pause()
-        return SimpleNamespace(id=f"{source_ids[0]}|mindmap")
+        # Like notebooklm-py's note-backed MindMap: the note's id and the tree itself.
+        tree = _mind_map(self.source_titles.get(source_ids[0], "this chapter"))
+        return SimpleNamespace(id=f"{source_ids[0]}|mindmap", tree=tree)
 
     async def _download_quiz(self, notebook_id, path, task_id=None, **kwargs):
         Path(path).parent.mkdir(parents=True, exist_ok=True)

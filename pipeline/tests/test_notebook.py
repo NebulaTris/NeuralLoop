@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,6 +39,53 @@ def test_an_empty_quiz_or_card_deck_is_unusable(tmp_path, task):
     chapter = {"n": 1, "title": "Caching", "sourceId": "source-1", "file": "01.md"}
     with pytest.raises(UnusableAnswer):
         asyncio.run(maker.make(task, chapter))
+
+
+class MindMapClient(FakeClient):
+    """mind_maps.generate answers like notebooklm-py 0.8.5's MindMap: a note id (maybe empty) and maybe the
+    tree. Downloads are recorded; one without an id would fetch whichever mind map NotebookLM has."""
+
+    def __init__(self, note_id: str, tree: dict | None):
+        super().__init__(delay=0)
+        self.note_id, self.tree = note_id, tree
+        self.downloads: list[str | None] = []
+
+    async def _generate_mind_map(self, notebook_id, source_ids=None, **kwargs):
+        return SimpleNamespace(id=self.note_id, tree=self.tree)
+
+    async def _download_mind_map(self, notebook_id, path, mind_map_id=None, **kwargs):
+        self.downloads.append(mind_map_id)
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps({"name": "Another chapter's map"}))
+        return path
+
+
+def mind_map_with(tmp_path, client):
+    media = MediaOptions("deep-dive", "explainer", "kawaii", "en", "")
+    maker = ChapterMaker(client, ENUMS, "nb", tmp_path, media)
+    chapter = {"n": 1, "title": "Caching", "sourceId": "source-1", "file": "01.md"}
+    return asyncio.run(maker.make("mindmap", chapter))
+
+
+def test_the_mind_map_notebooklm_answers_with_is_used_without_downloading(tmp_path):
+    tree = {"name": "Caching", "children": [{"name": "Eviction"}]}
+    client = MindMapClient("", tree)
+    assert mind_map_with(tmp_path, client) == {"mindmap": tree}
+    assert client.downloads == []
+    assert json.loads((tmp_path / "raw" / "01-mindmap.json").read_text()) == tree
+
+
+def test_a_mind_map_without_its_tree_is_downloaded_by_its_own_id(tmp_path):
+    client = MindMapClient("note-7", None)
+    assert mind_map_with(tmp_path, client) == {"mindmap": {"name": "Another chapter's map"}}
+    assert client.downloads == ["note-7"]
+
+
+def test_a_mind_map_with_neither_tree_nor_id_fails_instead_of_fetching_another(tmp_path):
+    client = MindMapClient("", None)
+    with pytest.raises(UnusableAnswer):
+        mind_map_with(tmp_path, client)
+    assert client.downloads == []
 
 
 @pytest.mark.parametrize(

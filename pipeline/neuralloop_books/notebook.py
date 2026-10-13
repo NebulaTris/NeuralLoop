@@ -253,6 +253,14 @@ class ChapterMaker:
             language=self.media.language,
         )
         raw = self._raw(chapter, "mindmap")
+        tree = getattr(mind_map, "tree", None)
+        if isinstance(tree, dict):  # a note-backed map comes with its tree: nothing to download
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_text(json.dumps(tree, ensure_ascii=False), encoding="utf-8")
+            return {"mindmap": tree}
+        if not getattr(mind_map, "id", None):
+            # Downloading without an id fetches whichever mind map NotebookLM has (another chapter's).
+            raise UnusableAnswer("NotebookLM made no mind map it could hand over")
         await self.client.artifacts.download_mind_map(self.notebook_id, str(raw), mind_map.id)
         return {"mindmap": json.loads(raw.read_text(encoding="utf-8"))}
 
