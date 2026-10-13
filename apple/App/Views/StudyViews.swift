@@ -141,8 +141,16 @@ struct MindMapTree: View {
         .frame(minHeight: 360, maxHeight: 620)
         .background(Theme.sunk, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(alignment: .topLeading) {
-            Text("Tap a branch to fold or unfold it").font(Theme.body(11)).foregroundStyle(Theme.ink3).padding(10)
+            Text(Self.hint).font(Theme.body(11)).foregroundStyle(Theme.ink3).padding(10)
         }
+    }
+
+    private static var hint: String {
+        #if os(macOS)
+        "Click a branch to fold or unfold it"
+        #else
+        "Tap a branch to fold or unfold it"
+        #endif
     }
 }
 
@@ -160,26 +168,21 @@ private struct MindTreeNode: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            Button {
-                withAnimation(reduceMotion ? nil : .spring(duration: 0.3)) { open.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(node.name).font(depth == 0 ? Theme.display(16) : Theme.body(13)).foregroundStyle(Theme.ink)
-                        .lineLimit(2).frame(maxWidth: 230, alignment: .leading)
-                    if !node.children.isEmpty {
-                        Image(systemName: open ? "minus.circle" : "plus.circle").font(.system(size: 11)).foregroundStyle(color)
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(depth == 0 ? Theme.accentSoft : Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(color, lineWidth: 1.5))
+            if node.children.isEmpty {
+                // A leaf: nothing to fold, but still reachable with the keyboard (with its focus ring) and read as text.
+                chip
+                    .focusable()
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isStaticText)
+            } else {
+                Button {
+                    withAnimation(reduceMotion ? nil : .spring(duration: 0.3)) { open.toggle() }
+                } label: { chip }
+                .buttonStyle(.plain)
+                // VoiceOver hears whether a branch is open.
+                .accessibilityValue("\(open ? "Expanded" : "Collapsed"), \(node.children.count) idea\(node.children.count == 1 ? "" : "s")")
+                .accessibilityHint(open ? "Hides its ideas" : "Shows its ideas")
             }
-            .buttonStyle(.plain)
-            .disabled(node.children.isEmpty)
-            // VoiceOver hears whether a branch is open, and a leaf reads as plain text rather than a dimmed button.
-            .accessibilityValue(node.children.isEmpty ? "" : "\(open ? "Expanded" : "Collapsed"), \(node.children.count) idea\(node.children.count == 1 ? "" : "s")")
-            .accessibilityHint(node.children.isEmpty ? "" : (open ? "Hides its ideas" : "Shows its ideas"))
-            .accessibilityRemoveTraits(node.children.isEmpty ? .isButton : [])
             if open, !node.children.isEmpty {
                 Rectangle().fill(color.opacity(0.6)).frame(width: 18, height: 1.5)
                 VStack(alignment: .leading, spacing: 8) {
@@ -194,6 +197,19 @@ private struct MindTreeNode: View {
                 .overlay(alignment: .leading) { Rectangle().fill(color.opacity(0.35)).frame(width: 1.5).padding(.vertical, 14) }
             }
         }
+    }
+
+    private var chip: some View {
+        HStack(spacing: 6) {
+            Text(node.name).font(depth == 0 ? Theme.display(16) : Theme.body(13)).foregroundStyle(Theme.ink)
+                .lineLimit(2).frame(maxWidth: 230, alignment: .leading)
+            if !node.children.isEmpty {
+                Image(systemName: open ? "minus.circle" : "plus.circle").font(.system(size: 11)).foregroundStyle(color)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(depth == 0 ? Theme.accentSoft : Theme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color, lineWidth: 1.5))
     }
 
     private func childColor(_ i: Int) -> Color { depth == 0 ? GraphPalette.color(i) : color }
