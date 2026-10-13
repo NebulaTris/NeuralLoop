@@ -1,5 +1,4 @@
 # dependencies and builds
-node_modules/
 __pycache__/
 *.egg-info/
 .pytest_cache/
@@ -8,15 +7,13 @@ __pycache__/
 
 # generated books and media: never commit someone's book
 neuralloop-*/
-poc_out/
-neuralloop_media/
 *.m4a
 *.mp4
 *.mp3
 *.caf
 *.pdf
 *.epub
-# …except the sample books (the dry run and the tests use them) and Silly mode's own nudge sounds (NOTICE.md)
+# …except the sample book (the dry run and the tests use it) and Silly mode's own nudge sounds (NOTICE.md)
 !pipeline/sample/**
 !apple/App/Resources/NeuralLoop-*.caf
 
