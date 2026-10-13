@@ -49,7 +49,8 @@ first, then the change. `CLAUDE.md` has the contracts between the app and the pi
 notarized**, with the **hardened runtime off** (`ENABLE_HARDENED_RUNTIME: NO` in `apple/project.yml`). Ollama keeps its
 own Developer ID signature. So people choose **Open Anyway** once, and after each update macOS may ask once to let
 NeuralLoop use its saved Keychain items (**Always Allow**). `package-mac.sh` also stops if the build carries the example
-`GoogleClientID` from `Google.xcconfig.example`, and warns when there is none (Drive sync is then off).
+`GoogleClientID` from `Google.xcconfig.example`, and warns when there is none (Drive sync is then off) or when it doesn't
+end in `.apps.googleusercontent.com` (the app ignores such an ID, so Drive sign-in stays off).
 
 Turning on the hardened runtime needs, together:
 

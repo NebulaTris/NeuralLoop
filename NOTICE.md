@@ -45,6 +45,9 @@ The runtime (built by `scripts/build-runtime.sh`) contains:
   `licenses/PyAV-BSD-3-Clause.txt`; see below), `pypdf` (BSD-3-Clause), and `numpy` (BSD-3-Clause and others). Each
   package's license ships inside its folder in the runtime, except `tokenizers` 0.23.2 (Hugging Face, Apache-2.0),
   whose wheel carries none: its text is `licenses/Apache-2.0.txt`.
+- **PortAudio** V19.7.0 (Copyright Ross Bencina and Phil Burk, MIT, `licenses/PortAudio-MIT.txt`): the macOS
+  `libportaudio.dylib` that `sounddevice` 0.5.6 (MIT) carries in `_sounddevice_data`. The wheel's Windows DLLs (some
+  built with Steinberg's ASIO SDK) are removed from the runtime; nothing of ASIO ships.
 
 ### Inside the bundled Python
 

@@ -172,6 +172,17 @@ echo "• Pipeline dependencies (every provider, Rumik, NotebookLM), hash-checke
 "$PY" -m pip install --quiet --no-cache-dir --disable-pip-version-check \
   --require-hashes --only-binary :all: -r "$LOCK"
 
+# pip's launcher scripts (pip, hf, playwright…) hard-code this build folder's path in their first line, so they'd
+# ship the builder's folder in the DMG and couldn't run anywhere else; everything here runs as `python -m …` instead.
+for f in "$WORK"/python/bin/*; do
+  if [[ -f "$f" && ! -L "$f" ]] && grep -qsF "$WORK" "$f"; then rm -f "$f"; fi
+done
+# sounddevice's wheel carries PortAudio for Windows too (some built with Steinberg's ASIO SDK): only the Mac's is used.
+rm -rf "$WORK"/python/lib/python3.*/site-packages/_sounddevice_data/portaudio-binaries/{*.dll,.github}
+# libpython names itself by the temporary folder uv built it in; nothing links it by that name.
+install_name_tool -id @rpath/libpython3.12.dylib "$WORK/python/lib/libpython3.12.dylib" 2>/dev/null
+codesign --force --sign - "$WORK/python/lib/libpython3.12.dylib" # editing it voids its ad-hoc signature
+
 echo "• Pipeline source"
 cp "$ROOT/pipeline/nl_book.py" "$WORK/pipeline/"
 rsync -a --exclude __pycache__ --exclude '*.pyc' "$ROOT/pipeline/neuralloop_books" "$ROOT/pipeline/sample" \
@@ -235,11 +246,18 @@ echo "• Checks"
 PYTHONPYCACHEPREFIX="$DL/pycache" "$WORK/bin/neuralloop" --dry-run --no-open --out "$DL/smoke" >/dev/null
 test -f "$DL/smoke/book.json"
 # One test per line: with set -e, a failure early in an && list would not stop the script.
-for f in NOTICE.md GPL-2.0.txt Ollama-MIT.txt Apache-2.0.txt; do
+for f in NOTICE.md GPL-2.0.txt Ollama-MIT.txt Apache-2.0.txt PortAudio-MIT.txt; do
   test -f "$WORK/licenses/$f"
 done
 test ! -e "$WORK/browsers/.links"
 find "$WORK" -name __pycache__ -type d -prune -exec rm -rf {} +
+# Nothing may carry the build folder's path or the builder's home folder (a check, not a clean-up).
+if LEAKS="$(grep -rlF -e "$WORK" -e "$HOME/" "$WORK")"; then
+  echo "These files hold the build folder's or your home folder's path; they'd ship in the DMG:" >&2
+  echo "$LEAKS" >&2
+  exit 1
+fi
+test ! -e "$WORK"/python/lib/python3.*/site-packages/_sounddevice_data/portaudio-binaries/*.dll
 
 echo "$STAMP" >"$WORK/.stamp"
 echo "NeuralLoop runtime built by scripts/build-runtime.sh; safe to delete." >"$WORK/$MARKER"

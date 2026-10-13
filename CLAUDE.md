@@ -116,7 +116,8 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 
 ### Other
 `scripts/build-runtime.sh` (self-contained runtime: Python 3.12.14, hash-locked wheels from `scripts/runtime-requirements.txt`
-(refresh command at the top of the script), Ollama checked by SHA-256 and Team ID, Chromium; built in a temp folder and swapped
+(refresh command at the top of the script), Ollama checked by SHA-256 and Team ID, Chromium; pip's launcher scripts and sounddevice's Windows DLLs removed, and a check that no file holds the build folder's or
+the builder's home path; built in a temp folder and swapped
 in only after every check; writes `.stamp` and `.neuralloop-runtime`; `make runtime`) · `scripts/package-mac.sh` (`make package`:
 rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgbuild and Pip's drag-to-Applications window from
 `design/dmg`, then checks it like a download) · `scripts/dev-signing-identity.sh`
@@ -209,8 +210,8 @@ rebuilds a stale runtime, signs nested code inside out, builds the DMG with dmgb
 2. `docs/specs/06-speed.md` — reading-order queue, media lane, streamed podcast lines and submit-then-poll for NotebookLM done;
    next: a warm worker process.
 3. `docs/specs/04-native-macos-app.md` + `docs/specs/07-every-device.md` — the SwiftUI Mac app is the product (the Tauri app
-   and the per-book study site are gone; their screens live in the app). Next: Pip's animation rig, first-launch setup screen,
-   Windows and Linux laptops. Done: Pip's rig, the Google Drive library and the iPad app (spec 07; needs the owner's OAuth client
+   and the per-book study site are gone; their screens live in the app). Next: Windows and Linux laptops. Done: Pip's rig,
+   the first-launch sign-in and guided tour, the Google Drive library and the iPad app (spec 07; needs the owner's OAuth client
    ID in `apple/Config/Google.xcconfig`, see `docs/DEVELOPMENT.md`).
 4. `docs/specs/02-book-import-and-parsing.md` — parse preview, correct parsing, tests on real-world shapes.
 5. `docs/specs/01-pip-desktop-companion.md` — Pip on the desktop in a user-chosen corner.
