@@ -54,6 +54,16 @@ private let sample = #"""
     #expect(!slow.detail.contains("NotebookLM"))
 }
 
+@Test func aQuickItemIsntCalledSlowBeforeItHasRunAMinute() throws {
+    let a = try feed(#"{"items": [{"n": 1, "item": "cards", "by": "NotebookLM", "step": "Making the flashcards", "started": 0, "expected": 20}]}"#)
+    let item = try #require(a.item(1, "cards"))
+    let p = PrepProgress.of(item, now: 27_000)  // past its usual 20 s, but only just started
+    #expect(!p.slow && p.detail == "Just started · almost there")
+    #expect(!p.detail.contains("longer than usual"))
+    let later = PrepProgress.of(item, now: 2 * minute)  // long enough to say how long it's really been
+    #expect(later.slow && later.detail.hasPrefix("2 min so far, longer than usual"))
+}
+
 @Test func withNoCountAndNoEstimateTheBarJustMovesAndSaysWhenItStarted() throws {
     let a = try feed(#"{"items": [{"n": 1, "item": "video", "by": "Ollama", "step": "Writing the explainer", "started": 0, "updated": 0}]}"#)
     let p = PrepProgress.of(try #require(a.item(1, "video")), now: 3 * minute)
