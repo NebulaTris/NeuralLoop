@@ -14,6 +14,7 @@ from neuralloop_books.engines.notebooklm import NotebookLMEngine
 from neuralloop_books.fake_client import (
     ENUMS,
     FakeClient,
+    FakeDownloadFailsClient,
     FakeLostReplyClient,
     FakeQuotaClient,
     FakeSlowSourceClient,
@@ -453,3 +454,36 @@ def test_a_chapter_notebooklm_could_not_read_is_not_uploaded_again_and_its_broke
     assert [t[:3] for t in client.uploads] == ["01 ", "02 "]
     assert client.deleted == ["source-2"] and not second.get("sourceId")
     assert statuses(second) == {FAILED}
+
+
+# ---- 9. an item NotebookLM made but that couldn't be downloaded is downloaded again, not made again ----
+
+
+@pytest.mark.parametrize("kind", ["audio", "video", "quiz"])
+def test_an_item_made_but_not_downloaded_is_downloaded_by_the_next_run_not_made_again(options, kind):
+    client = FakeDownloadFailsClient(kinds=(kind,), times=1)
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    entry = state.chapters[0]["tasks"][kind]
+    assert entry["status"] == WAITING and entry["taskId"]
+    assert not any(task == kind for _, task in fallback.made)
+
+    state = run_auto(options, client, LocalStandIn())
+    entry = state.chapters[0]["tasks"][kind]
+    assert entry["status"] == DONE and entry["by"] == "NotebookLM"
+    assert client.generated.count(f"source-1:{kind}") == 1
+    assert not {"taskId", "requestedAt", "downloadTries"} & set(entry)
+
+
+def test_an_item_that_never_downloads_stops_after_a_few_runs(options):
+    client = FakeDownloadFailsClient(kinds=("audio", "quiz"), times=1_000)
+    for _ in range(config.NOTEBOOKLM_DOWNLOAD_TRIES - 1):
+        state = run_auto(options, client, LocalStandIn())
+        assert state.chapters[0]["tasks"]["audio"]["status"] == WAITING
+    fallback = LocalStandIn()
+    state = run_auto(options, client, fallback)
+    tasks = state.chapters[0]["tasks"]
+    assert tasks["audio"]["status"] == FAILED and "taskId" not in tasks["audio"]
+    assert tasks["quiz"]["status"] == DONE and tasks["quiz"]["by"] == "Ollama"  # text may be made locally
+    assert (1, "audio") not in fallback.made
+    assert client.generated.count("source-1:audio") == 1

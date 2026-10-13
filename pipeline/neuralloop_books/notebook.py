@@ -54,6 +54,24 @@ class NotebookLMBusy(RuntimeError):
 
 
 NOT_ANSWERING = "NotebookLM didn't answer this time; Pip will try again next run."
+NOT_DOWNLOADED = "NotebookLM made it, but it couldn't be downloaded this time; Pip will try again next run."
+
+
+class DownloadLater(RuntimeError):
+    """NotebookLM made the item but downloading it failed: the next run downloads that same one (its id
+    stays in state.json) instead of making it again, here or on the Mac. Other items carry on."""
+
+    try_later = True
+    only_this_item = True
+    stays_with_notebooklm = True
+    waiting_message = NOT_DOWNLOADED
+
+
+class NotDownloaded(GenerationFailed):
+    """NotebookLM made the item but it couldn't be downloaded on several runs: it fails as NotebookLM's (a
+    podcast or video is never made on the Mac instead; auto may make a text item another way)."""
+
+
 # NotebookLM's clock and ours may differ a little: an item found in the notebook counts as the one we asked
 # for when it was made at most this long before we asked.
 CLOCK_SLACK = 120.0
@@ -218,13 +236,11 @@ class ChapterMaker:
             return await generate(self.notebook_id, source_ids=sources)
 
         async def fetch(task_id):
-            activity.report("NotebookLM is making it")
-            await self._wait(task_id, LIGHT_TIMEOUT)
             raw = self._raw(chapter, task)
             await download(self.notebook_id, str(raw), task_id, output_format="json")
             return json.loads(raw.read_text(encoding="utf-8"))
 
-        return await self._once(chapter, task, ask, fetch, LIGHT_TIMEOUT)
+        return await self._once(chapter, task, ask, fetch, LIGHT_TIMEOUT, "NotebookLM is making it")
 
     async def _wait(self, task_id: str, timeout: float) -> None:
         _finished(await self.client.artifacts.wait_for_completion(self.notebook_id, task_id, timeout=timeout))
@@ -255,15 +271,15 @@ class ChapterMaker:
             )
 
         async def fetch(task_id):
-            activity.report("NotebookLM is recording the podcast")
-            await self._wait(task_id, AUDIO_TIMEOUT)
             activity.report("Downloading the podcast")
             target = self.out_dir / "media" / f"{chapter['n']:02d}-podcast.m4a"
             saved = await self.client.artifacts.download_audio(self.notebook_id, str(target), task_id)
             # NotebookLM gives no transcript; drop one an earlier engine left so it never mismatches.
             return {"audio": f"media/{Path(saved or target).name}", "transcript": None}
 
-        return await self._once(chapter, "audio", ask, fetch, AUDIO_TIMEOUT)
+        return await self._once(
+            chapter, "audio", ask, fetch, AUDIO_TIMEOUT, "NotebookLM is recording the podcast"
+        )
 
     async def _video(self, chapter, sources):
         async def ask():
@@ -278,8 +294,6 @@ class ChapterMaker:
             )
 
         async def fetch(task_id):
-            activity.report("NotebookLM is making the video")
-            await self._wait(task_id, VIDEO_TIMEOUT)
             activity.report("Downloading the video")
             target = self.out_dir / "media" / f"{chapter['n']:02d}-video.mp4"
             saved = await self.client.artifacts.download_video(self.notebook_id, str(target), task_id)
@@ -287,20 +301,23 @@ class ChapterMaker:
                 raise UnusableAnswer("No video was produced")
             return {"video": f"media/{Path(saved).name}", "explainer": None}
 
-        return await self._once(chapter, "video", ask, fetch, VIDEO_TIMEOUT)
+        return await self._once(chapter, "video", ask, fetch, VIDEO_TIMEOUT, "NotebookLM is making the video")
 
-    async def _once(self, chapter, kind, ask, fetch, timeout: float):
+    async def _once(self, chapter, kind, ask, fetch, timeout: float, making: str):
         """Ask NotebookLM for an item once: if the session goes stale or a check times out while it's being
         made, the retry waits for the same one instead of asking (and spending NotebookLM's allowance) again.
         A wait that runs its whole `timeout` gets one more; after that the item waits for the next run, which
-        waits for that same one (its id is kept in state.json) instead of asking again."""
+        waits for that same one (its id is kept in state.json) instead of asking again. Once it's made,
+        `fetch` downloads it; a download that fails is tried again by the next run, a few runs at most."""
         key = (chapter["n"], kind)
         entry = _entry(chapter, kind)
         if key not in self.pending:
             self.pending[key] = await self._resume_or_ask(chapter, kind, entry, ask)
+        task_id = self.pending[key]
         started = time.monotonic()
         try:
-            result = await fetch(self.pending[key])
+            activity.report(making)
+            await self._wait(task_id, timeout)
         except Exception as error:  # a stale session or a hiccup keeps the request for the retry
             if _whole_wait_ran_out(error, time.monotonic() - started, timeout):
                 self.whole_waits[key] = self.whole_waits.get(key, 0) + 1
@@ -314,8 +331,24 @@ class ChapterMaker:
                 self.pending.pop(key, None)
                 _forget(entry)
             raise
-        self.pending.pop(key, None)
         self.whole_waits.pop(key, None)
+        try:
+            result = await fetch(task_id)
+        except Exception as error:  # it's made: a download that fails is tried again, never made again
+            if is_auth_error(error) or is_transient_error(error):
+                raise  # this run's retry waits for (already done) and downloads the same one
+            self.pending.pop(key, None)
+            tries = (_number(entry.get("downloadTries")) or 0) + 1
+            if tries >= config.NOTEBOOKLM_DOWNLOAD_TRIES:
+                _forget(entry)
+                raise NotDownloaded(
+                    f"NotebookLM made it, but it couldn't be downloaded after {tries} tries ({_short(error)})"
+                ) from error
+            entry["downloadTries"] = int(tries)
+            with contextlib.suppress(OSError):  # the pipeline saves again as the item waits
+                self._save()
+            raise DownloadLater(f"NotebookLM made it, but downloading it failed ({_short(error)})") from error
+        self.pending.pop(key, None)
         _forget(entry)
         return result
 
@@ -406,8 +439,8 @@ def _entry(chapter: dict, kind: str) -> dict:
 
 
 def _forget(entry: dict) -> None:
-    entry.pop("taskId", None)
-    entry.pop("requestedAt", None)
+    for key in ("taskId", "requestedAt", "downloadTries"):
+        entry.pop(key, None)
 
 
 def forget_requests(chapter: dict) -> None:

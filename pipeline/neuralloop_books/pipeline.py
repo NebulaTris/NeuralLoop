@@ -260,7 +260,7 @@ async def _make(opts, state, engine, limiter, quota_hit, chapter, task, feed: Ac
             entry["by"] = result.pop("_by", engine.name)  # which engine made it (auto can mix)
             chapter.update(result)
             entry.update(status=DONE, error="")
-            for key in ("taskId", "requestedAt"):  # a NotebookLM request it was waiting for (auto may mix)
+            for key in ("taskId", "requestedAt", "downloadTries"):  # a NotebookLM request (auto may mix)
                 entry.pop(key, None)
             opts.log(f"  ✓ chapter {chapter['n']} {task} ({time.monotonic() - started:.0f}s)")
         except SetupError as error:

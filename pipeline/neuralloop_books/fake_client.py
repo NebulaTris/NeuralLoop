@@ -376,6 +376,45 @@ class FakeSlowSourceClient(FakeClient):
         await super()._delete_source(notebook_id, source_id)
 
 
+class ArtifactDownloadError(Exception):
+    """notebooklm-py's name: the item was made, but downloading it failed."""
+
+
+class FakeDownloadFailsClient(FakeClient):
+    """NotebookLM finishes every quiz, podcast and video, but downloading one of `kinds` fails its first
+    `times` tries (an expired link, a 404)."""
+
+    def __init__(self, kinds: tuple[str, ...], times: int = 1):
+        super().__init__(delay=0)
+        self.kinds, self.times = kinds, times
+        self.download_tries: dict[str, int] = {}
+        self.generated: list[str] = []
+
+    async def _generate(self, notebook_id, source_ids=None, **kwargs):
+        kind = kwargs.get("_kind") or ("audio" if "audio_format" in kwargs else "video")
+        self.generated.append(f"{source_ids[0]}:{kind}")
+        return await super()._generate(notebook_id, source_ids, **kwargs)
+
+    def _failing(self, kind: str, task_id) -> None:
+        if kind not in self.kinds:
+            return
+        tries = self.download_tries[task_id] = self.download_tries.get(task_id, 0) + 1
+        if tries <= self.times:
+            raise ArtifactDownloadError(f"Failed to download {kind}: HTTP 404")
+
+    async def _download_quiz(self, notebook_id, path, task_id=None, **kwargs):
+        self._failing("quiz", task_id)
+        return await super()._download_quiz(notebook_id, path, task_id, **kwargs)
+
+    async def _download_audio(self, notebook_id, path, task_id=None, **kwargs):
+        self._failing("audio", task_id)
+        return await super()._download_audio(notebook_id, path, task_id, **kwargs)
+
+    async def _download_video(self, notebook_id, path, task_id=None, **kwargs):
+        self._failing("video", task_id)
+        return await super()._download_video(notebook_id, path, task_id, **kwargs)
+
+
 class FakeQuotaClient(FakeClient):
     """Like FakeClient, but every media request hits NotebookLM's daily limit."""
 
