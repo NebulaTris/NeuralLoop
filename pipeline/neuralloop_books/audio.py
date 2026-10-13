@@ -34,16 +34,18 @@ def split_for_speech(text: str, limit: int = SPEECH_LIMIT) -> list[str]:
 
 
 def _split_words(sentence: str, limit: int) -> list[str]:
+    """A giant sentence split between words; a word longer than `limit` (a URL, a hash) is cut into pieces."""
     if len(sentence) <= limit:
         return [sentence]
     parts, current = [], ""
-    for word in sentence.split():
-        candidate = f"{current} {word}" if current else word
-        if len(candidate) <= limit or not current:
-            current = candidate
-        else:
-            parts.append(current)
-            current = word
+    for long_word in sentence.split():
+        for word in (long_word[i : i + limit] for i in range(0, len(long_word), limit)):
+            candidate = f"{current} {word}" if current else word
+            if len(candidate) <= limit:
+                current = candidate
+            else:
+                parts.append(current)
+                current = word
     return [*parts, current] if current else parts
 
 
