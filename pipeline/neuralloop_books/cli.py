@@ -266,9 +266,7 @@ def _grade_recall(args: argparse.Namespace) -> int:
     try:
         model = _model_for(choice, args.config.hermes_tools)
     except SetupError:
-        model = None  # no grader available: word matching still answers
-    if model is None:
-        model = _Unavailable()
+        model = _Unavailable()  # no grader available: word matching still answers
     result = asyncio.run(
         recall.grade(
             model,
