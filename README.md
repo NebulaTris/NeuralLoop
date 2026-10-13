@@ -61,8 +61,8 @@ fills in a little square for every day you study.
 
 <table>
   <tr>
-    <td width="33%" valign="top"><h3>🧠 Your AI, your choice</h3>Google NotebookLM by default. Or Claude, OpenAI, OpenRouter, a free local model (Ollama, LM Studio), opencode, or Hermes. If one can't make something, another steps in, and the book always finishes.</td>
-    <td width="33%" valign="top"><h3>🔒 Private by design</h3>Your books stay on your Mac. Only the chapter being prepared goes to the AI you chose, and your library syncs to a hidden folder in <i>your own</i> Google Drive.</td>
+    <td width="33%" valign="top"><h3>🧠 Your AI, your choice</h3>Google NotebookLM by default. Or Claude, OpenAI, OpenRouter, a free local model (Ollama, LM Studio, any OpenAI-compatible server), opencode, or Hermes. If one can't make something, another steps in, and the book always finishes.</td>
+    <td width="33%" valign="top"><h3>🔒 Private by design</h3>Your books stay on your Mac. Only the chapter being prepared goes to the AI you chose, and your library syncs only to a hidden app folder in <i>your own</i> Google Drive.</td>
     <td width="33%" valign="top"><h3>💻 Mac + iPad</h3>The Mac prepares books; the iPad picks up your library, progress, cards, and where you left off. Study offline once a chapter is open.</td>
   </tr>
   <tr>
@@ -89,6 +89,9 @@ fills in a little square for every day you study.
 3. Open NeuralLoop. The first time, macOS double-checks with you: **System Settings → Privacy & Security → Open Anyway**.
    After an update it may ask once to let NeuralLoop use its saved keys in your keychain: enter your password and
    click **Always Allow** ([why](SECURITY.md#how-the-mac-app-is-signed)).
+4. Sign in with Google when Pip asks: NotebookLM makes your podcasts and videos with that account, and your library
+   follows you to the iPad through it. **Not now** is fine too; Pip then uses your Mac's own AI, or the one you pick in
+   Settings → Your AI.
 
 <details>
 <summary><b>iPad</b> (iPadOS 17 or later)</summary>
