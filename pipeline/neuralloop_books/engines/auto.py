@@ -88,6 +88,14 @@ class AutoEngine:
                     # The fallback is at its limit for this kind of item: this one fails (or waits) as
                     # NotebookLM's, and NotebookLM still tries the next ones.
                     raise _tagged(error, self.primary.name) from None
+                if (
+                    self._fallback_text is not None
+                    and task not in MEDIA_TASKS
+                    and (leave := leave_lane.get()) is not None
+                ):
+                    # Getting the fallback ready can mean downloading the Mac's AI: wait for it (and for the
+                    # fallback) without the run's lane, which NotebookLM's own items keep using.
+                    leave()
                 try:
                     fallback = await self._fallback_ready()
                 except SetupError:
