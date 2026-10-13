@@ -98,7 +98,7 @@ Development launch flags for screenshots: `-NLOpenSettings YES -NLSettingsPage V
 | `neuralloop_books/fake_client.py` | Offline NotebookLM with identical method names (`FakeClient`, `FakeQuotaClient`, `FakeStaleSessionClient`, `ENUMS`) |
 | `neuralloop_books/selection.py`, `prompts.py`, `config.py`, `testing.py` | `parse_selection`; prompts (sent verbatim); task names, enums, timeouts, copy, `audio_length`; test book builders |
 | `neuralloop_books/assets/` | Fonts and Pip's artwork for explainer videos |
-| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account); `test_providers_e2e.py` runs every provider end to end against local stand-in services (`model_mocks.py`) · the sample book the dry run and tests use is `pipeline/sample/sample-book.{epub,pdf}` |
+| `tests` | Unit tests (`conftest.py` keeps every test away from the real NotebookLM account); `test_providers_e2e.py` runs every provider end to end against local stand-in services (`model_mocks.py`) · the sample book the dry run and tests use is `pipeline/sample/sample-book.epub` |
 
 ### `apple` — the Mac app and the iPad app (one codebase; AppKit and pipeline code behind `#if os(macOS)`)
 | File | Responsibility |
