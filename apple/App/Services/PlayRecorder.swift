@@ -75,6 +75,17 @@ final class PlayRecorder {
         }
     }
 
+    /// The app is quitting (or, on the iPad, going to the background): what was gathered for closed books is written,
+    /// every open book saves what it's still tracking, and this waits until it's all on disk.
+    func flushForQuit() {
+        flushing?.cancel()
+        flushing = nil
+        flush()
+        sessions.removeAll { $0.session == nil }
+        for open in sessions { open.session?.flushForQuit() }
+        Self.writer.sync {}  // the closed books' writes, queued just now
+    }
+
     private static let writer = DispatchQueue(label: "app.neuralloop.play-recorder")
 
     nonisolated private static func write(_ chapters: [Int: WatchProgress], lengths: [Int: [WatchKind: Double]], to folder: URL) {

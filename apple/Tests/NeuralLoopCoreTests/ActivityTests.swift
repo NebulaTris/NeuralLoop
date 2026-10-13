@@ -6,6 +6,18 @@ func local(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 12) -> Double {
     Calendar.current.date(from: DateComponents(year: y, month: m, day: d, hour: h))!.timeIntervalSince1970 * 1000
 }
 
+@Test func quittingMidTickKeepsTheSecondsSinceTheLastTick() {
+    // 9 s after the last tick, in front the whole time: those 9 s count.
+    #expect(Activity.partialTick(lastTick: 100, activeSince: 50, until: 109) == 9)
+    // In front only for the last 4 s of it: only those count.
+    #expect(Activity.partialTick(lastTick: 100, activeSince: 105, until: 109) == 4)
+    // Not in front at all: nothing.
+    #expect(Activity.partialTick(lastTick: 100, activeSince: nil, until: 109) == 0)
+    // Never more than one tick, never less than nothing (a clock change).
+    #expect(Activity.partialTick(lastTick: 100, activeSince: 0, until: 200) == 15)
+    #expect(Activity.partialTick(lastTick: 100, activeSince: 0, until: 90) == 0)
+}
+
 @Test func studyTimeIsLoggedPerLocalDay() {
     var p = StudyProgress()
     Activity.log(&p, now: local(2026, 9, 28), seconds: 15)

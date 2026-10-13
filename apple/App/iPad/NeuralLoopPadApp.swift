@@ -20,9 +20,16 @@ struct NeuralLoopPadApp: App {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
     }
 
+    @Environment(\.scenePhase) private var phase
+
     var body: some Scene {
         WindowGroup {
             PadRootView().environment(library)
+        }
+        .onChange(of: phase) {
+            // In the background the iPad may close the app without warning: study time, listening, and reading
+            // still waiting for their 15-second write go to disk now.
+            if phase == .background { PlayRecorder.shared.flushForQuit() }
         }
     }
 }
