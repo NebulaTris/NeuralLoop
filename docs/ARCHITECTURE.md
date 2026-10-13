@@ -113,7 +113,7 @@ Entry point `nl_book.py` → `neuralloop_books.cli.main()`. Everything else is t
 **Accounts and setup**: `account.py` (NotebookLM sign-in, account status, usage allowance), `aiconfig.py`
 (`ai.json`: your engine, models, voices, podcast length), `setup.py` (first run: start Ollama, download models and Rumik).
 
-**Testing helpers**: `fake_client.py` (an offline NotebookLM with the real method names), `testing.py` (builds test
+**Testing helpers**: `tests/fake_client.py` (an offline NotebookLM with the real method names; it lives with the tests and is never shipped, and its canned answers are the dry run's, from `models/fake.py`), `testing.py` (builds test
 books). `pipeline/tests/` has 217 tests; `conftest.py` makes sure no test can ever reach the real NotebookLM account.
 
 ### `apple/` — the Swift core and the apps

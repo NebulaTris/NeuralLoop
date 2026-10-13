@@ -1,7 +1,7 @@
 """Making one item (quiz, video, ...) for one chapter with a NotebookLM client.
 
 The client and its enums are passed in, so the real notebooklm-py library and the offline
-fake (fake_client.py) run exactly the same code.
+fake in the tests (tests/fake_client.py) run exactly the same code.
 """
 
 import asyncio

@@ -4,8 +4,6 @@ import asyncio
 import json
 import re
 
-from .. import fake_client
-
 _TITLE = re.compile(r'chapter "([^"]+)"')
 _IDEA = re.compile(r'Idea: "(.*)"\n')
 _ANSWER = re.compile(r"<<<(.*)>>>", re.DOTALL)
@@ -99,11 +97,11 @@ class FakeModel:
         match = _TITLE.search(prompt)
         title = match.group(1) if match else "this chapter"
         answers = {
-            "study": lambda: fake_client._study(title),
-            "graph": lambda: fake_client._graph(title),
-            "quiz": lambda: {"questions": fake_client._quiz(title)},
-            "cards": lambda: {"cards": fake_client._cards(title)},
-            "mindmap": lambda: fake_client._mind_map(title),
+            "study": lambda: study(title),
+            "graph": lambda: graph(title),
+            "quiz": lambda: {"questions": quiz(title)},
+            "cards": lambda: {"cards": cards(title)},
+            "mindmap": lambda: mind_map(title),
             "audio": lambda: _podcast(title),
             "video": lambda: _explainer(title),
             "condense": lambda: {"notes": f"- Key idea from this part ({len(source)} characters)."},
@@ -111,3 +109,121 @@ class FakeModel:
             "check": lambda: {"ok": True},
         }
         return json.dumps(answers[kind]())
+
+
+# ---- canned answers (tests/fake_client.py, the offline NotebookLM, gives the same) ----
+
+
+def study(title: str):
+    return {
+        "guide": [
+            {"section": "Part one", "level": "deep", "why": "The core idea; everything later builds on it."}
+        ],
+        "recall": [
+            {
+                "prompt": f'In your own words, what is the main idea of "{title}"?',
+                "keyPoints": ["Names the core trade-off", "Says when it matters", "Gives a concrete example"],
+            },
+            {
+                "prompt": "Something breaks in production. What would you check first, and why?",
+                "keyPoints": [
+                    "Rule out simple bugs first",
+                    "Look at monitoring signals",
+                    "Change one thing at a time",
+                ],
+            },
+            {
+                "prompt": "How would you explain this chapter to a new teammate in two minutes?",
+                "keyPoints": [
+                    "Starts with the problem",
+                    "Explains the key idea",
+                    "Ends with one practical tip",
+                ],
+            },
+        ],
+    }
+
+
+def graph(title: str):
+    names = [
+        "Basics",
+        "Core trade-off",
+        "Failure modes",
+        "Monitoring",
+        "Design patterns",
+        "Keep it simple",
+        "Testing",
+    ]
+    concepts = [
+        {
+            "id": f"k{i}",
+            "name": name,
+            "type": "claim" if i == 5 else "concept",
+            "summary": f"What '{name}' means in {title}.",
+            "detail": f"A longer note about {name}.",
+            "complexity": ("simple", "moderate", "complex")[i % 3],
+            "layer": "l1" if i < 4 else "l2",
+        }
+        for i, name in enumerate(names)
+    ]
+    edges = [
+        ("k1", "k0", "builds_on"),
+        ("k2", "k1", "depends_on"),
+        ("k3", "k2", "related"),
+        ("k4", "k1", "builds_on"),
+        ("k5", "k4", "contradicts"),
+        ("k6", "k3", "exemplifies"),
+    ]
+    return {
+        "concepts": concepts,
+        "layers": [{"id": "l1", "name": "Foundations"}, {"id": "l2", "name": "In practice"}],
+        "edges": [
+            {"source": s, "target": t, "type": kind, "description": kind.replace("_", " ")}
+            for s, t, kind in edges
+        ],
+        "tour": [
+            {"title": "Start here", "description": "The basic idea.", "nodeIds": ["k0"]},
+            {"title": "Where it breaks", "description": "Trade-offs and failures.", "nodeIds": ["k1", "k2"]},
+        ],
+    }
+
+
+def quiz(title: str):
+    def question(text, right, wrong):
+        options = [{"text": right, "isCorrect": True, "rationale": "That's the chapter's central point."}]
+        options += [
+            {"text": w, "isCorrect": False, "rationale": "Not what the chapter argues."} for w in wrong
+        ]
+        return {"question": text, "answerOptions": options, "hint": "Think about the trade-off."}
+
+    return [
+        question(
+            f'What is the main idea of "{title}"?',
+            "A core trade-off and when it matters",
+            ["A list of unrelated facts", "Only history", "Nothing matters"],
+        ),
+        question(
+            "What should you check first when something breaks?",
+            "Simple engineering bugs",
+            ["Rewrite everything", "Ignore it", "Blame the users"],
+        ),
+    ]
+
+
+def cards(title: str):
+    return [
+        {"front": f"Main idea of {title}", "back": "A core trade-off and when it matters."},
+        {"front": "First thing to check when it breaks", "back": "Simple engineering bugs."},
+        {"front": "Why monitor?", "back": "Problems show up before users complain."},
+    ]
+
+
+def mind_map(title: str):
+    return {
+        "name": title,
+        "children": [
+            {"name": "Foundations", "children": [{"name": "Key terms"}, {"name": "Core trade-off"}]},
+            {"name": "In practice", "children": [{"name": "Patterns"}, {"name": "Failure modes"}]},
+            {"name": "Takeaways"},
+        ],
+    }

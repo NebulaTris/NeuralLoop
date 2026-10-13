@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from neuralloop_books.fake_client import ENUMS, FakeClient
 from neuralloop_books.models import QuotaError
 from neuralloop_books.notebook import (
     ChapterMaker,
@@ -14,6 +13,8 @@ from neuralloop_books.notebook import (
     is_quota_error,
     is_transient_error,
 )
+
+from .fake_client import ENUMS, FakeClient
 
 
 class EmptyClient(FakeClient):

@@ -5,8 +5,9 @@ from neuralloop_books.aiconfig import load
 from neuralloop_books.chapters import chapter_size
 from neuralloop_books.config import audio_length
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import ENUMS, FakeClient
 from neuralloop_books.pipeline import Options, run
+
+from .fake_client import ENUMS, FakeClient
 
 
 def test_short_chapters_get_short_podcasts_unless_a_length_is_chosen():

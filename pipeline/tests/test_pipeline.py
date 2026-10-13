@@ -6,7 +6,13 @@ import pytest
 
 from neuralloop_books.engines.local import LocalEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import (
+from neuralloop_books.models import QuotaError, SetupError
+from neuralloop_books.models.fake import FakeModel
+from neuralloop_books.pipeline import Options, run
+from neuralloop_books.speech.fake import FakeSpeech
+from neuralloop_books.state import DONE, SKIPPED, WAITING
+
+from .fake_client import (
     ENUMS,
     FakeClient,
     FakeDownClient,
@@ -18,11 +24,6 @@ from neuralloop_books.fake_client import (
     FakeStaleTwiceWhileWaitingClient,
     FakeStaleWhileWaitingClient,
 )
-from neuralloop_books.models import QuotaError, SetupError
-from neuralloop_books.models.fake import FakeModel
-from neuralloop_books.pipeline import Options, run
-from neuralloop_books.speech.fake import FakeSpeech
-from neuralloop_books.state import DONE, SKIPPED, WAITING
 
 
 @pytest.fixture

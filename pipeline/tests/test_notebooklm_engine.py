@@ -11,7 +11,10 @@ import pytest
 from neuralloop_books import config
 from neuralloop_books.engines.auto import AutoEngine
 from neuralloop_books.engines.notebooklm import NotebookLMEngine
-from neuralloop_books.fake_client import (
+from neuralloop_books.pipeline import Options, run
+from neuralloop_books.state import DONE, FAILED, WAITING
+
+from .fake_client import (
     ENUMS,
     FakeClient,
     FakeDownloadFailsClient,
@@ -23,8 +26,6 @@ from neuralloop_books.fake_client import (
     SourceTimeoutError,
     WaitTimeoutError,
 )
-from neuralloop_books.pipeline import Options, run
-from neuralloop_books.state import DONE, FAILED, WAITING
 
 
 @pytest.fixture
