@@ -1,10 +1,24 @@
 # Spec 02 — Upload a PDF or EPUB, preview the chapters, parse it correctly
 
-Status: ready to build · Read first: `CLAUDE.md` · Touches: `pipeline/`, `src/`, `src-tauri/`
+Status: partly done (work queue item 4) · Read first: `CLAUDE.md` · Touches: `pipeline/`, `apple/`
+
+## Where it stands
+
+Done:
+- **Parsing real-world shapes** in `pipeline/neuralloop_books/chapters.py` (`split_book` → `split_pdf`, `split_epub`):
+  bookmarks, parts that open into their chapters, the 20-page fallback, EPUB nav and NCX tables of contents read as a tree,
+  chapters split at `#anchors`, short pieces grouped into chapter-sized runs, front and back matter skipped only on a whole
+  title match, appendices kept when substantial, EPUB zip safety limits, and `UnreadableBookError` (the CLI exits 2 with
+  "This book couldn't be read: …"). Tests in `pipeline/tests/`.
+- **Adding a book**: the file picker and dropping a file on the library window (`apple/App/Views/LibraryView.swift`, with a
+  "Drop your book here" overlay), and `--title` so the book keeps its name.
+
+Still ahead: the **inspect → preview → confirm** flow below (`inspect.py`, plans, `--plan`, the "Check your chapters"
+sheet) and the warnings table.
 
 ## Why
 
-Today the desktop app sends the book straight to the pipeline, which splits it and immediately starts NotebookLM work.
+Today the app sends the book straight to the pipeline, which splits it and immediately starts NotebookLM work.
 If a PDF has no bookmarks, is scanned, is encrypted, or an EPUB has an odd table of contents, the person only finds out after
 spending NotebookLM quota. This spec adds an **inspect → preview → confirm** flow so people see exactly how their book was
 split and can fix it before anything is generated, and it hardens the parser against the shapes real books come in.
@@ -12,9 +26,9 @@ split and can fix it before anything is generated, and it hardens the parser aga
 ## User experience
 
 1. **Add a book** three ways:
-   - "Add a book" button or the `+` card on the shelf (file picker, `.pdf` and `.epub`)
-   - drag a file onto the app window (the whole window shows a drop overlay: Pip holding an open box, "Drop your book here")
-   - drag a file onto desktop Pip (spec 01)
+   - "Add a book" button or the `+` card on the shelf (file picker, `.pdf` and `.epub`) *(done)*
+   - drag a file onto the app window (the whole window shows a drop overlay: Pip hugging, "Drop your book here") *(done)*
+   - drag a file onto desktop Pip (spec 01, still ahead)
    Anything else dropped shows a toast: "Pip can read PDF and EPUB books."
 2. **Reading your book** sheet: Pip in the `study` pose, "Reading your book… this takes a few seconds." A Cancel button kills the
    inspect process.
@@ -50,10 +64,10 @@ split and can fix it before anything is generated, and it hardens the parser aga
 ## Architecture
 
 ```
-Desktop (src/js/import.js) --invoke("inspect_book", {path})--> Rust (src-tauri/src/importer.rs)
-   └ spawns: python pipeline/nl_book.py inspect BOOK --json   ──> neuralloop_books/inspect.py → JSON on stdout
-Desktop preview edits a Plan (pure functions in src/js/plan.js)
-Desktop --invoke("start_pipeline", {opts:{…, plan}})--> Rust writes <book>/plan.json, passes --plan <book>/plan.json
+App (apple/App/Views/ImportSheets.swift) --PipelineRunner.once(["inspect", BOOK, "--json"])-->
+   └ runs: nl_book.py inspect BOOK --json   ──> neuralloop_books/inspect.py → JSON on stdout
+App preview edits an ImportPlan (pure functions in apple/Sources/NeuralLoopCore/ImportPlan.swift)
+App (Library.add) writes <book>/plan.json atomically and passes --plan <book>/plan.json
 Pipeline: chapters.split_book(path, out, plan=Plan) writes exactly the planned chapters
 ```
 
@@ -124,7 +138,7 @@ def plan_from_inspection(i: Inspection) -> Plan: ...   # included (non-skipped) 
   plan) instead of detecting.
 - `cli.py`: add a subcommand `inspect` (`nl_book.py inspect BOOK --json`, prints `to_json`; exit 0 even with warnings; exit 2
   for unreadable files with the `UNREADABLE`/`UNSAFE_EPUB`/`ENCRYPTED` JSON still printed). The existing
-  `nl_book.py BOOK …` form stays the build command (backwards compatible for `pipeline.rs`). Add `--plan PATH` to build.
+  `nl_book.py BOOK …` form stays the build command (backwards compatible for the app's `PipelineCommand`). Add `--plan PATH` to build.
 - `pipeline.prepare_state`: when a plan is given and the saved state was made from a different plan (compare a hash of the
   plan JSON stored in `state.json` as `planHash`), re-split and **keep** finished items for chapters whose `(start, end, title)`
   didn't change; chapters that changed are reset to `todo`. Record `planHash`.
@@ -163,63 +177,53 @@ Put new builders in `neuralloop_books/testing.py` so every suite can use them.
 
 ### Real-world check (not a unit test)
 
-Add `pipeline/scripts/check_parsing.py DIR`: runs `inspect_book` on every PDF/EPUB in a folder and prints a table (file,
+Add `scripts/check_parsing.py DIR`: runs `inspect_book` on every PDF/EPUB in a folder and prints a table (file,
 kind, chapters, skipped, warnings, seconds). Document it in `docs/DEVELOPMENT.md` so the owner can run it on their own library
 and paste the output into an issue. Never commit books.
 
-## Rust changes
+## App changes (Swift)
 
-New `src-tauri/src/importer.rs`:
+Pure logic in `NeuralLoopCore`, tested with Swift Testing in `apple/Tests` (write the tests first):
 
-```rust
-#[tauri::command]
-pub async fn inspect_book(app: AppHandle, path: String) -> Result<serde_json::Value, String>
-// validates the extension (.pdf/.epub), spawns `python nl_book.py inspect PATH --json` with the Python from settings,
-// 60 s timeout, returns the parsed JSON; maps failures to "setup: …" / "parse: …" errors.
+- `PipelineRun.swift`: `PipelineCommand` gains `inspectArguments(book:)` (`["inspect", BOOK, "--json"]`) and `--plan PATH`
+  in `arguments(…)` when a plan is given. Tests in `PipelineRunTests.swift`: argument building, the plan flag.
+- New `ImportPlan.swift` (tests in `ImportPlanTests.swift`), a `Codable`, `Sendable` model of the inspect JSON and the plan:
 
-#[tauri::command]
-pub fn cancel_inspect(...)  // kills the running inspect process (store its Child in a managed `Inspecting` state)
+```swift
+public struct ImportPlan: Codable, Sendable, Equatable { … }
+public extension ImportPlan {
+    init(inspection: Inspection)                          // included chapters, in order
+    func togglingInclude(_ index: Int) -> ImportPlan
+    func renaming(_ index: Int, to title: String) -> ImportPlan
+    func mergingWithNext(_ index: Int) -> ImportPlan      // end = next.end, title kept, next removed
+    func splittingPDF(_ index: Int, atPage page: Int) -> ImportPlan    // page strictly inside (start, end)
+    func splittingEPUB(_ index: Int, atHeading heading: String) -> ImportPlan
+    var problems: [String] { get }                        // [] or ["Chapter 3 needs a title", …]
+}
+public func describeSize(_ chapter: DetectedChapter) -> String   // "pages 12–40 · 7,800 words"
+public func warningCopy(_ warning: ImportWarning) -> String      // code → the copy in the table above
+public func isImportable(_ url: URL) -> Bool                     // by extension, case-insensitive
 ```
 
-- `pipeline.rs`: `PipelineOptions` gains `plan: Option<serde_json::Value>`; when present, write `<book>/plan.json` atomically
-  and pass `--plan <path>`. `meta.json` records `hasPlan: true`.
-- Register both commands in `lib.rs`.
-- Tests: extension validation, argument building (factor out `fn inspect_args(script, path) -> Vec<OsString>` and
-  `fn pipeline_args(...)`, test them), plan file written and passed.
+Thin services and views:
 
-## Desktop UI changes
+- `apple/App/Services/Library.swift`: `add(_:)` first runs the inspect call (`PipelineRunner.once`, 60 s timeout; Cancel
+  stops it), then shows the preview; on Start it writes `<book>/plan.json` atomically, records `hasPlan: true` in
+  `meta.json`, and passes `--plan`. "Prepare more" (`prepareMore`) skips the preview but offers "Change chapters…".
+- New `apple/App/Views/ImportSheets.swift`: the "Reading your book" and "Check your chapters" sheets. The drop overlay and
+  file picker in `LibraryView.swift` already exist and route into it; anything that isn't a PDF or EPUB shows "Pip can read
+  PDF and EPUB books."
+- Rows are keyboard-reachable with a visible focus ring, 44 pt minimum targets, `Theme` colours.
 
-New pure module `src/js/plan.js` (tested in `src/test/plan.test.mjs`):
-
-```js
-export function planFromInspection(inspection)          // included chapters, in order
-export function toggleInclude(plan, index)
-export function rename(plan, index, title)
-export function mergeWithNext(plan, index)              // end = next.end, title kept, next removed
-export function splitPdfChapter(plan, index, page)      // page strictly inside (start, end)
-export function splitEpubChapter(plan, index, heading)
-export function validatePlan(plan)                      // → [] or ["Chapter 3 needs a title", …]
-export function describeSize(chapter)                   // "pages 12–40 · 7,800 words"
-export function warningCopy(warning)                    // code → the copy in the table above
-export function isImportable(file)                      // by extension, case-insensitive
-```
-
-New `src/js/import.js`: the drop overlay (use `window.__TAURI__.webview.getCurrentWebview().onDragDropEvent`, handle
-`enter`/`over`/`leave`/`drop`; `drop` gives `paths`), the "Reading your book" sheet, and the "Check your chapters" sheet.
-`library.js` calls `startImport(path)` from `pickBook`, and "Change chapters…" in "Prepare more".
-Styles for the overlay and rows go in `src/styles.css` (reuse tokens; rows use `.card`-like surfaces, 44 px minimum targets).
-
-Browser tests (`tests/test_desktop_ui.py`, extend `FAKE_TAURI` with `inspect_book` returning a fixture):
-- `test_dropping_a_book_opens_the_preview` (dispatch the drag-drop event through the simulated webview API)
-- `test_preview_shows_warnings_and_skipped_rows`
-- `test_merging_and_renaming_changes_the_plan_sent_to_start_pipeline`
-- `test_encrypted_book_disables_start`
-- `test_dropping_a_non_book_shows_a_toast`
+Swift tests (`ImportPlanTests.swift`):
+- `planFromInspectionKeepsIncludedChaptersInOrder`, `mergingAndRenamingChangeThePlan`, `splitsStayInsideTheRange`
+- `encryptedBookCannotStart` (an `ENCRYPTED`, `UNSAFE_EPUB`, or `UNREADABLE` warning disables Start)
+- `nonBooksAreNotImportable`
 
 ## Definition of done
 
 - All tests above written first and passing; `make check` green.
 - Manually: add three books from your own library (one bookmarked PDF, one EPUB, one PDF without bookmarks); every chapter
   title and range in the preview matches the book's real table of contents, or can be fixed in the preview in under a minute.
-- `python pipeline/scripts/check_parsing.py ~/Books` runs without crashing on every file.
-- `CLAUDE.md` "Contracts" updated with the `inspect` subcommand, `--plan`, `plan.json`, and the two new commands.
+- `python scripts/check_parsing.py ~/Books` runs without crashing on every file.
+- `CLAUDE.md` "Contracts" updated with the `inspect` subcommand, `--plan`, `plan.json`, and `meta.json` `hasPlan`.
