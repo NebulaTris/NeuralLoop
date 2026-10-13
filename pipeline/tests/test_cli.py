@@ -212,6 +212,13 @@ def test_a_dry_run_never_uses_the_models_named_in_ai_json(epub, tmp_path, monkey
     assert code == 0 and set(made) == {"fake"}
 
 
+def test_a_malformed_ai_config_never_stops_a_dry_run(epub, tmp_path):
+    config = tmp_path / "ai.json"
+    config.write_text(json.dumps({"tasks": ["quiz"], "voices": [1, 2]}))
+    code = main([str(epub), "--dry-run", "--ai-config", str(config), "--out", str(tmp_path / "o")])
+    assert code == 0
+
+
 class MacModel:
     """Stands in for an Ollama model (the run checks it only after the download)."""
 
