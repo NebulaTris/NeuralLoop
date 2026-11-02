@@ -7,9 +7,18 @@ from neuralloop_books.speech.rumik import RumikSpeech, model_for
 GB = 1024**3
 
 
-def test_rumik_is_the_voice_and_macos_voices_are_gone():
+def test_rumik_is_the_voice_on_apple_silicon_and_kokoro_elsewhere(monkeypatch):
+    from neuralloop_books.speech.kokoro import KokoroSpeech
+
+    monkeypatch.setattr(speech.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(speech.platform, "machine", lambda: "arm64")
     assert isinstance(speech.make_speech("auto"), RumikSpeech)
+    for system in ("Windows", "Linux"):
+        monkeypatch.setattr(speech.platform, "system", lambda system=system: system)
+        monkeypatch.setattr(speech.platform, "machine", lambda: "x86_64")
+        assert isinstance(speech.make_speech("auto"), KokoroSpeech)
     assert isinstance(speech.make_speech("rumik", "Aisha,Siya"), RumikSpeech)
+    assert isinstance(speech.make_speech("kokoro", "af_bella,am_adam"), KokoroSpeech)
     with pytest.raises(SetupError):
         speech.make_speech("say")
 
@@ -40,3 +49,23 @@ def test_rumik_rejects_unknown_voices():
 def test_two_voices_are_required():
     with pytest.raises(SetupError):
         speech.make_speech("rumik", "Ira")
+
+
+def test_an_intel_mac_is_told_plainly_instead_of_being_sent_to_kokoro(monkeypatch):
+    """The Mac's runtime has no Kokoro (no onnxruntime, no espeak-ng): an Intel Mac gets a clear message."""
+    monkeypatch.setattr(speech.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(speech.platform, "machine", lambda: "x86_64")
+    voice = speech.make_speech("auto")
+    with pytest.raises(SetupError, match="Apple silicon") as error:
+        voice.check()
+    assert "NotebookLM" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("voice", "name"),
+    [("af_heart", "Heart"), ("am_michael", "Michael"), ("bm_george", "George"), ("ef_dora", "Dora"),
+     ("Ira", "Ira"), ("Tone A", "Tone A")],
+)  # fmt: skip
+def test_podcast_hosts_have_names_people_can_say(voice, name):
+    """The script's hosts are called by name; a voice id like af_heart is never read out."""
+    assert speech.host_name(voice) == name

@@ -14,6 +14,7 @@ The licence texts referred to here are in `licenses/`. The packaged app carries 
 | **Rumik OSS-1** voices (`rumik-ai/rumik-oss-1-mlx-4bit`, `-8bit`), downloaded on first use | Podcast and explainer narration made on your Mac | **CC BY-NC 4.0** | **Non-commercial use only.** Anyone selling NeuralLoop, or using it commercially, needs a separate licence from Rumik or a different voice engine. |
 | **Google NotebookLM**, through `notebooklm-py` | The default way study material is made | Google's terms of service; `notebooklm-py` is MIT | `notebooklm-py` uses unofficial interfaces that can change at any time. Check Google's terms before any commercial use. |
 | **FFmpeg with x264 and x265**, inside PyAV | Encoding explainer videos | FFmpeg LGPL-3.0-or-later; x264 and x265 **GPL-2.0-or-later** | See "FFmpeg, x264 and x265" below. |
+| **espeak-ng**, the program, where Kokoro voices are used (Windows, Linux) | Turning narration text into phonemes for the Kokoro voices | **GPL-3.0-or-later** | Run unmodified as its own program, as a separate process; NeuralLoop never loads its library. See "Kokoro voices" below. |
 
 ## Nudge sounds
 
@@ -119,5 +120,22 @@ binaries described in this file were built from. If any of them stops working, o
 1011), whose own build scripts aren't public, open an issue on this repository and we will provide a complete copy of
 the corresponding source for those binaries, at no more than the cost of providing it, for at least three years after
 we last distributed a runtime containing them.
+
+## Kokoro voices (Windows and Linux)
+
+Where Rumik can't run, the pipeline voices podcasts and explainers with Kokoro (`speech/kokoro.py`):
+
+| Component | Version | License | Notes |
+|---|---|---|---|
+| **Kokoro-82M** voices (`kokoro-v1.0.int8.onnx`, `kokoro-v1.0.onnx`, `voices-v1.0.bin`), downloaded on first use and checked by SHA-256 | 1.0 | Apache-2.0 (`licenses/Apache-2.0.txt`) | By hexgrad (https://huggingface.co/hexgrad/Kokoro-82M); the ONNX files are kokoro-onnx's `model-files-v1.0` release. Not bundled. |
+| Kokoro's phoneme vocabulary (`pipeline/neuralloop_books/assets/kokoro-vocab.json`) | 1.0 | Apache-2.0 (`licenses/Apache-2.0.txt`) | From Kokoro-82M's `config.json`. |
+| kokoro-onnx (Copyright 2025 thewh1teagle) | 0.6.1 | MIT (`licenses/kokoro-onnx-MIT.txt`) | Not shipped: `speech/kokoro_model.py` drives the model the way kokoro-onnx does (padding, style rows, batching, trimming). |
+| ONNX Runtime | 1.31.0 | MIT | Runs the Kokoro model. |
+| **eSpeak NG** | 1.52.0 | **GPL-3.0-or-later** (`licenses/GPL-3.0.txt`) | Turns text into Kokoro's phonemes. |
+
+eSpeak NG is GPL-3.0-or-later. The pipeline (`speech/espeak.py`) runs the unmodified `espeak-ng` program as a separate
+process, sending text and reading phonemes back; no GPL library or Python package (such as `phonemizer`,
+`espeakng_loader` or `kokoro_onnx`) is loaded into NeuralLoop's own process. The Kokoro voices themselves are
+Apache-2.0, so unlike Rumik they allow commercial use.
 
 Models that Ollama downloads (for example Qwen or Gemma) come with their own licenses, shown by Ollama.

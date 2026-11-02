@@ -9,10 +9,11 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from .. import activity, audio, context, convert, prompts
+from .. import activity, audio, context, convert, portable, prompts
 from ..chapters import chapter_size
 from ..config import CONTEXT_CHARS, audio_length
 from ..notebook import UnusableAnswer
+from ..speech import host_name
 from ..state import TODO, WORKING, BookState
 
 LANGUAGES = {
@@ -247,8 +248,8 @@ class LocalEngine:
                 prompts.PODCAST,
                 chapter,
                 format=style,
-                host_a=self.speech.voices[0],
-                host_b=self.speech.voices[1],
+                host_a=host_name(self.speech.voices[0]),
+                host_b=host_name(self.speech.voices[1]),
             ),
             convert.podcast_script,
             "podcast script",
@@ -418,7 +419,7 @@ def _write_json(path: Path, data: dict) -> None:
     """Atomic, so the app never reads half a transcript."""
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(path)
+    portable.replace(tmp, path)
 
 
 def _remove(paths: list[Path]) -> None:
