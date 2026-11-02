@@ -105,7 +105,7 @@ CONTEXT_CHARS = {
     "opencode": 24_000,
 }
 LOCAL_PROVIDERS = frozenset({"ollama", "opencode", "hermes"})  # one item at a time by default
-SPEECH_ENGINES = ("auto", "rumik", "fake")
+SPEECH_ENGINES = ("auto", "rumik", "kokoro", "fake")
 DEFAULT_INSTRUCTIONS = (
     "A friendly deep-dive for software engineers: section by section, "
     "concrete analogies and real engineering examples."

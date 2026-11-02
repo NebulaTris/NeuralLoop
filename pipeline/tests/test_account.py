@@ -6,6 +6,8 @@ import pytest
 
 from neuralloop_books import account
 
+from .platforms import posix_only
+
 
 @pytest.fixture(autouse=True)
 def login_through_run(monkeypatch, request):
@@ -140,7 +142,48 @@ def test_usage_summarises_notebooklms_windows_and_what_it_can_still_make(monkeyp
 def test_usage_when_signed_out_or_unknown(monkeypatch):
     monkeypatch.setattr(account.subprocess, "run", fake_run([(1, "")], []))
     monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
-    assert account.usage() == {"known": False}
+    assert account.usage()["known"] is False
+
+
+def test_notebooklms_output_is_read_as_utf8_on_every_system(monkeypatch):
+    """It prints its JSON with non-ASCII characters as they are; Windows' own encoding (cp1252) garbled or
+    refused them, so the allowance always read as unknown there."""
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(USAGE, ensure_ascii=False), stderr="")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.usage()["known"] is True
+    assert seen["encoding"] == "utf-8" and seen["errors"] == "replace"
+    assert seen["env"]["PYTHONIOENCODING"] == "utf-8" and seen["env"]["PYTHONUTF8"] == "1"
+
+
+def test_usage_that_fails_says_what_notebooklm_answered(monkeypatch):
+    """With --json, NotebookLM writes its error as JSON on stdout, not stderr."""
+    answer = json.dumps({"error": True, "code": "AUTH_ERROR", "message": "Session expired — sign in again"})
+
+    def run(argv, **kwargs):
+        return SimpleNamespace(returncode=1, stdout=answer, stderr="")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.usage() == {
+        "known": False,
+        "problem": "Session expired — sign in again (AUTH_ERROR)",
+        "needsSignIn": True,
+    }
+
+
+def test_usage_that_fails_says_why(monkeypatch):
+    def run(argv, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="Traceback…\nAuthError: session expired\n")
+
+    monkeypatch.setattr(account.subprocess, "run", run)
+    monkeypatch.setattr(account, "_cli", lambda: ["/venv/bin/python", "-m", "notebooklm"])
+    assert account.usage() == {"known": False, "problem": "AuthError: session expired"}
 
 
 @pytest.mark.parametrize(
@@ -223,6 +266,7 @@ def test_sign_in_says_it_is_getting_a_browser_only_the_first_time(monkeypatch, t
     assert not any("150 MB" in line for line in later)
 
 
+@posix_only
 def test_stopping_sign_in_closes_the_login_and_everything_it_opened(tmp_path):
     """The app stops a sign-in with SIGTERM ("Not now"); the login and the browser it started go too, not just
     Python."""

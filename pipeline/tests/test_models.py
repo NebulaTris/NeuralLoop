@@ -8,6 +8,8 @@ from neuralloop_books.models import QuotaError, SetupError
 from neuralloop_books.models.opencode import OpencodeModel
 from neuralloop_books.notebook import is_quota_error
 
+from .platforms import posix_only
+
 
 @pytest.fixture(autouse=True)
 def no_real_opencode_config(monkeypatch, tmp_path):
@@ -61,15 +63,16 @@ class Help:
 
     returncode = 0
 
-    async def communicate(self):
-        return b"  --standalone  Run with a private server", b""
+    async def communicate(self, stdin=None):
+        return b"  --standalone  Run with a private server\n  --query-file PATH  Read the query", b""
 
 
 @pytest.fixture(autouse=True)
 def fresh_opencode_probe_cache(monkeypatch):
-    from neuralloop_books.models import opencode
+    from neuralloop_books.models import hermes, opencode
 
     monkeypatch.setattr(opencode, "_standalone", {})
+    monkeypatch.setattr(hermes, "_query_file", {})
 
 
 def test_opencode_builds_the_command_and_reads_stdout(monkeypatch):
@@ -78,28 +81,31 @@ def test_opencode_builds_the_command_and_reads_stdout(monkeypatch):
     class Process:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
+            seen["stdin"] = stdin
             return b'\x1b[32m{"ok": true}\x1b[0m\n', b""
 
     async def fake_exec(*argv, **kwargs):
         if "--help" in argv:
             return Help()
-        seen["argv"] = argv
+        seen["argv"], seen["kwargs"] = argv, kwargs
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     model = OpencodeModel("deepseek/deepseek-v4-pro", executable="/bin/opencode")
-    answer = asyncio.run(model.complete("quiz", "SYSTEM", "CHAPTER", "PROMPT"))
+    answer = asyncio.run(model.complete("quiz", "SYSTEM", "CHAPTER ü", "PROMPT"))
     assert answer == '{"ok": true}'
-    assert seen["argv"][:5] == ("/bin/opencode", "run", "--standalone", "-m", "deepseek/deepseek-v4-pro")
-    assert "CHAPTER" in seen["argv"][5] and "PROMPT" in seen["argv"][5]
+    # The prompt goes on stdin, never the command line (cmd.exe, Windows' length limit).
+    assert seen["argv"] == ("/bin/opencode", "run", "--standalone", "-m", "deepseek/deepseek-v4-pro")
+    assert seen["kwargs"]["stdin"] == asyncio.subprocess.PIPE
+    assert "CHAPTER ü" in seen["stdin"].decode("utf-8") and "PROMPT" in seen["stdin"].decode("utf-8")
 
 
 def test_opencode_rate_limits_become_quota_errors(monkeypatch):
     class Process:
         returncode = 1
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
             return b"", b"Error: rate limit exceeded"
 
     async def fake_exec(*argv, **kwargs):
@@ -239,11 +245,14 @@ def test_hermes_agent_runs_one_shot(monkeypatch):
     class Process:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
+            seen["stdin"] = stdin
             return b'{"ok": 1}\n', b""
 
     async def fake_exec(*argv, **kwargs):
-        seen["argv"] = argv
+        if "--help" in argv:
+            return Help()
+        seen["argv"], seen["kwargs"] = argv, kwargs
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
@@ -253,7 +262,13 @@ def test_hermes_agent_runs_one_shot(monkeypatch):
         )
     )
     assert answer == '{"ok": 1}'
-    assert seen["argv"][:2] == ("/bin/hermes", "-z") and "-m" in seen["argv"]
+    # One query, read from stdin: nothing of the book on the command line.
+    assert seen["argv"] == (
+        "/bin/hermes", "chat", "-Q", "--query-file", "-", "-m", "nousresearch/hermes-4-405b"
+    )  # fmt: skip
+    assert seen["kwargs"]["stdin"] == asyncio.subprocess.PIPE
+    assert seen["stdin"].decode("utf-8").startswith("S") and "P" in seen["stdin"].decode("utf-8")
+    assert seen["kwargs"]["env"]["PYTHONUTF8"] == "1"  # Hermes is Python: UTF-8 out, whatever the code page
     assert models.make_model("hermes", None, env={}).name == "Hermes Agent"
 
 
@@ -291,7 +306,7 @@ def test_opencode_uses_the_persons_own_default_model(monkeypatch):
     class Process:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
             return b'> build \xc2\xb7 longcat\n{"ok": true}\n', b""
 
     async def fake_exec(*argv, **kwargs):
@@ -312,7 +327,7 @@ def test_opencode_errors_read_as_plain_text(monkeypatch):
     class Process:
         returncode = 1
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
             return b"", b"\x1b[91m\x1b[1mError: \x1b[0mModel unavailable: x/y"
 
     async def fake_exec(*argv, **kwargs):
@@ -374,9 +389,11 @@ def _cli_model(mod, module, script, monkeypatch):
     if module == "opencode":
         monkeypatch.setitem(mod._standalone, str(script), True)  # skip the --help probe
         return mod.OpencodeModel("m", executable=str(script))
+    monkeypatch.setitem(mod._query_file, str(script), True)  # skip the --help probe
     return mod.HermesModel("m", executable=str(script), allow_tools=True)
 
 
+@posix_only
 @pytest.mark.parametrize("module", ["opencode", "hermes"])
 def test_a_cli_model_that_times_out_is_killed(tmp_path, monkeypatch, module):
     import importlib
@@ -390,6 +407,7 @@ def test_a_cli_model_that_times_out_is_killed(tmp_path, monkeypatch, module):
     assert _gone(pid_file)
 
 
+@posix_only
 @pytest.mark.parametrize("module", ["opencode", "hermes"])
 def test_a_cancelled_cli_model_is_killed(tmp_path, monkeypatch, module):
     import importlib
@@ -430,15 +448,16 @@ def _recording_exec(seen, help_text=b""):
     class Process:
         returncode = 0
 
-        def __init__(self, argv):
-            self.argv = argv
+        def __init__(self, argv, kwargs):
+            self.argv, self.kwargs = argv, kwargs
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
+            self.kwargs["sent"] = stdin  # what went to the child's stdin, for the tests
             return (help_text if "--help" in self.argv else b'{"ok": true}'), b""
 
     async def fake_exec(*argv, **kwargs):
         seen.append((argv, kwargs))
-        return Process(argv)
+        return Process(argv, kwargs)
 
     return fake_exec
 
@@ -472,11 +491,14 @@ def test_a_model_name_can_never_become_a_command_line_option(module):
         cls("--config=/tmp/evil", executable="/bin/true")
 
 
+HERMES_HELP = b"  --query-file PATH  Read the single query from a file"
+
+
 def test_hermes_runs_in_an_empty_folder(monkeypatch):
     from neuralloop_books.models.hermes import HermesModel
 
     seen = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen, HERMES_HELP))
     asyncio.run(HermesModel("m", executable="/bin/hermes", allow_tools=True).complete("quiz", "S", "C", "P"))
     assert "neuralloop-hermes-" in seen[-1][1]["cwd"]
 
@@ -517,7 +539,7 @@ def test_hermes_runs_when_the_person_opts_in_and_never_sees_our_keys(monkeypatch
     for name, value in {**KEYS, "HERMES_HOME": "/h", "PATH": "/usr/bin", "HOME": "/Users/me"}.items():
         monkeypatch.setenv(name, value)
     seen = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen, HERMES_HELP))
     asyncio.run(HermesModel("m", executable="/bin/hermes", allow_tools=True).complete("quiz", "S", "C", "P"))
     env = seen[-1][1]["env"]
     assert not set(KEYS) & set(env)
@@ -582,12 +604,13 @@ def test_every_model_escapes_the_chapter_it_sends(monkeypatch, fresh_opencode_pr
     asyncio.run(ollama.OllamaModel("m", host="http://x").complete("quiz", "S", evil, "P"))
     assert sent["body"]["messages"][1]["content"].count("</chapter>") == 1
     seen = []
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen, b"--standalone"))
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _recording_exec(seen, b"--standalone --query-file")
+    )
     asyncio.run(HermesModel("m", executable="/bin/hermes", allow_tools=True).complete("quiz", "S", evil, "P"))
     asyncio.run(OpencodeModel("m", executable="/bin/oc").complete("quiz", "S", evil, "P"))
-    for argv, _ in seen:
-        if "--help" not in argv:
-            assert " ".join(argv).count("</chapter>") == 1
+    sent = [kwargs["sent"].decode("utf-8") for argv, kwargs in seen if "--help" not in argv]
+    assert len(sent) == 2 and all(text.count("</chapter>") == 1 for text in sent)
 
 
 def test_an_openai_compatible_timeout_fails_one_item_not_the_run():
@@ -814,3 +837,37 @@ def test_a_custom_service_keeps_its_own_address(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "https://somewhere-else.example/v1")
     model = models.make_model("custom", "m", env={"NEURALLOOP_BASE_URL": "https://api.example.ai/v1"})
     assert str(model.client.base_url).rstrip("/") == "https://api.example.ai/v1"
+
+
+def test_an_older_hermes_without_query_files_is_asked_to_update(monkeypatch):
+    from neuralloop_books.models.hermes import HermesModel
+
+    seen = []
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recording_exec(seen, b"  -q QUERY"))
+    with pytest.raises(SetupError, match="hermes update"):
+        asyncio.run(HermesModel("m", executable="/bin/hermes", allow_tools=True).complete("q", "S", "C", "P"))
+    assert all("--help" in argv for argv, _ in seen)  # only the probe ran
+
+
+@pytest.mark.parametrize("module", ["opencode", "hermes"])
+@pytest.mark.parametrize("launcher", ["C:/npm/opencode.cmd", "C:/tools/hermes.bat"])
+def test_windows_never_runs_a_cmd_or_bat_launcher(monkeypatch, module, launcher):
+    """cmd.exe reads a launcher's arguments again by its own rules; NeuralLoop runs only real programs."""
+    import importlib
+
+    from neuralloop_books import portable
+
+    mod = importlib.import_module(f"neuralloop_books.models.{module}")
+    monkeypatch.setattr(portable, "WINDOWS", True)
+    seen = []
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _recording_exec(seen, b"--standalone --query-file")
+    )
+    model = (
+        mod.OpencodeModel("m", executable=launcher)
+        if module == "opencode"
+        else mod.HermesModel("m", executable=launcher, allow_tools=True)
+    )
+    with pytest.raises(SetupError, match=r"\.exe"):
+        asyncio.run(model.complete("quiz", "S", "C", "P"))
+    assert seen == []

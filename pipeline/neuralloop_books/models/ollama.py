@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.request
 
+from .. import portable
 from ..prompts import wrap_chapter
 from ..schemas import SCHEMAS
 from ..setup import local_model_for_memory, ollama_host, total_memory
@@ -53,23 +54,23 @@ class OllamaModel:
             tags = await asyncio.to_thread(_get_json, f"{self.base_url}/api/tags", 5.0)
         except OSError as error:
             raise SetupError(
-                "Your Mac's AI (Ollama) isn't running. Quit and reopen NeuralLoop to start it, "
-                "or open the Ollama app if you installed it yourself."
+                f"Your {portable.MACHINE}'s AI (Ollama) isn't running. Quit and reopen NeuralLoop to start "
+                "it, or open the Ollama app if you installed it yourself."
             ) from error
         installed = [m["name"] for m in tags.get("models", [])]
         chat = [name for name in installed if is_chat_model(name)]
         if not chat:
             raise SetupError(
-                "Your Mac's AI has no model yet. NeuralLoop downloads one the next time it prepares a "
-                "book; check your internet connection, or pick a model in Settings → Your AI."
+                f"Your {portable.MACHINE}'s AI has no model yet. NeuralLoop downloads one the next time it "
+                "prepares a book; check your internet connection, or pick a model in Settings → Your AI."
             )
         if not self.model:
             preferred = default_local_model()
             self.model = preferred if preferred in chat else chat[0]
         elif self.model not in installed and f"{self.model}:latest" not in installed:
             raise SetupError(
-                f"Your Mac's AI doesn't have {self.model} yet. NeuralLoop downloads it the next time "
-                "it prepares a book; check your internet connection, or pick another model in "
+                f"Your {portable.MACHINE}'s AI doesn't have {self.model} yet. NeuralLoop downloads it the "
+                "next time it prepares a book; check your internet connection, or pick another model in "
                 "Settings → Your AI."
             )
 

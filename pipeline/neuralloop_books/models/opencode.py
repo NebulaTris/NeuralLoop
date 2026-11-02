@@ -1,5 +1,8 @@
 """Any model opencode is set up for (for example DeepSeek), through `opencode run` without its TUI.
 
+The prompt (book text) goes on stdin, never the command line: Windows' cmd.exe could read it, and a long
+chapter goes over Windows' command-line limit. On Windows only opencode.exe is run, never a .cmd launcher.
+
 opencode is a coding agent: left to its defaults, `opencode run` lets the model run shell commands and edit
 files. The chapter is part of the prompt, so a book could ask the model to do exactly that. NeuralLoop only
 needs text back, so every tool is denied (the model isn't even offered one), the person's project config is
@@ -22,6 +25,7 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
+from .. import portable
 from ..prompts import wrap_chapter
 from . import KEY_VARIABLES, QuotaError, SetupError, agent_env, communicate
 
@@ -163,7 +167,9 @@ def locked_down_env(empty: str, env: Mapping[str, str] | None = None) -> dict[st
     state stay the person's own. Their providers and default models come along in the config we pass,
     with the variables their `{env:…}` keys name (never our providers' keys)."""
     env = os.environ if env is None else env
-    home = Path(env.get("HOME") or Path.home())
+    # Windows' own profile folder: a HOME there is often Git Bash's or MSYS's, not where opencode looks.
+    names = ("USERPROFILE", "HOME") if portable.WINDOWS else ("HOME", "USERPROFILE")
+    home = Path(next((env[name] for name in names if env.get(name)), None) or Path.home())
     own = {
         "XDG_DATA_HOME": env.get("XDG_DATA_HOME") or str(home / ".local" / "share"),
         "XDG_CACHE_HOME": env.get("XDG_CACHE_HOME") or str(home / ".cache"),
@@ -174,10 +180,14 @@ def locked_down_env(empty: str, env: Mapping[str, str] | None = None) -> dict[st
         **agent_env(env=env),
         **own,
         "HOME": empty,
+        **({"USERPROFILE": empty} if portable.WINDOWS else {}),  # where opencode looks for home on Windows
         "XDG_CONFIG_HOME": str(Path(empty) / "config"),
         "OPENCODE_CONFIG_CONTENT": json.dumps({**json.loads(NO_TOOLS), **settings}) if settings else NO_TOOLS,
         "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
     }
+    if portable.WINDOWS:  # the profile path pieces would lead opencode back to the person's own config
+        locked.pop("HOMEDRIVE", None)
+        locked.pop("HOMEPATH", None)
     for name in _ENV_REFERENCE.findall(json.dumps(settings)):
         if (
             name in env
@@ -203,6 +213,12 @@ class OpencodeModel:
         self.executable = self.executable or shutil.which("opencode")
         if not self.executable:
             raise SetupError("opencode isn't installed. Install it from https://opencode.ai, then run again.")
+        if portable.is_script_launcher(self.executable):
+            raise SetupError(
+                f"NeuralLoop can't run opencode through {Path(self.executable).name}: it needs opencode.exe. "
+                "Install opencode with its Windows installer (or scoop or choco) so opencode.exe is on your "
+                "PATH."
+            )
         if not await self._has_standalone():
             raise SetupError(UPDATE)
 
@@ -218,6 +234,7 @@ class OpencodeModel:
                         stderr=asyncio.subprocess.PIPE,
                         cwd=empty,
                         env=locked_down_env(empty),
+                        **portable.no_window(),
                     )
                     stdout, stderr = await communicate(process, min(PROBE_TIMEOUT, TIMEOUT))
                 _standalone[self.executable] = b"--standalone" in stdout + stderr
@@ -230,16 +247,18 @@ class OpencodeModel:
     ) -> str:
         await self.check()
         message = f"{system}\n\n{wrap_chapter(source)}\n\n{prompt}"
-        argv = [self.executable, "run", "--standalone", *(["-m", self.model] if self.model else []), message]
+        argv = [self.executable, "run", "--standalone", *(["-m", self.model] if self.model else [])]
         with tempfile.TemporaryDirectory(prefix="neuralloop-opencode-") as empty:
             process = await asyncio.create_subprocess_exec(
                 *argv,
+                stdin=asyncio.subprocess.PIPE,  # `opencode run` reads the message from piped stdin
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=empty,
                 env=locked_down_env(empty),
+                **portable.no_window(),
             )
-            stdout, stderr = await communicate(process, TIMEOUT)
+            stdout, stderr = await communicate(process, TIMEOUT, message.encode("utf-8"))
         if process.returncode != 0:
             detail = _ANSI.sub("", stderr.decode(errors="replace")).strip()
             if "free tier can only be used from within opencode" in detail.lower():

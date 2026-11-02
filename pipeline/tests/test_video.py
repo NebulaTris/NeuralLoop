@@ -157,7 +157,13 @@ def test_videotoolbox_is_used_when_it_starts():
     assert container.added == ["h264_videotoolbox"]
 
 
-def test_x264_is_only_a_fallback_when_videotoolbox_cannot_start():
+def test_windows_media_foundation_comes_next_when_it_starts():
     container = FakeContainer()
-    stream = video._encoder(FakeAV(broken={"h264_videotoolbox"}), container, 24, (320, 180))
+    video._encoder(FakeAV(broken={"h264_videotoolbox"}), container, 24, (320, 180))
+    assert container.added == ["h264_mf"]
+
+
+def test_x264_is_only_a_fallback_when_no_system_encoder_can_start():
+    container = FakeContainer()
+    stream = video._encoder(FakeAV(broken={"h264_videotoolbox", "h264_mf"}), container, 24, (320, 180))
     assert container.added == ["libx264"] and stream.pix_fmt == "yuv420p"

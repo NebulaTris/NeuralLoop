@@ -243,12 +243,13 @@ def test_an_unreadable_state_file_is_kept_aside_and_the_book_split_again(options
 
 
 def test_two_runs_never_prepare_the_same_book_at_once(options):
-    import fcntl
     import os
+
+    from neuralloop_books import portable
 
     options.out.mkdir(parents=True)
     with open(options.out / ".running", "w") as held:  # another run holds the book's lock
-        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        portable.try_lock(held)
         held.write(str(os.getpid()))
         held.flush()
         with pytest.raises(ValueError, match="already being prepared"):
@@ -266,6 +267,25 @@ def test_a_second_run_started_during_the_first_stops(options):
     with _book_lock(options.out):  # released: the next run gets it
         pass
     assert not (options.out / ".running").exists()
+
+
+def test_the_lock_never_loops_on_windows_where_file_ids_may_not_match(options, monkeypatch):
+    """Windows can't delete a file someone has open, and its file ids from stat and fstat can differ."""
+    import os
+
+    from neuralloop_books import pipeline, portable
+
+    options.out.mkdir(parents=True)
+    monkeypatch.setattr(portable, "WINDOWS", True)
+    monkeypatch.setattr(portable, "try_lock", lambda handle: None)
+    monkeypatch.setattr(portable, "unlock", lambda handle: None)
+    real_stat = os.stat
+    monkeypatch.setattr(
+        pipeline.os, "stat", lambda path, *a, **k: os.stat_result((0, 1, 0, 0, 0, 0, 0, 0, 0, 0))
+        if str(path).endswith(".running") else real_stat(path, *a, **k)
+    )  # fmt: skip
+    with pipeline._book_lock(options.out):
+        pass
 
 
 def test_a_left_over_lock_file_whose_process_id_was_reused_does_not_block(options):

@@ -8,6 +8,8 @@ import subprocess
 import wave
 from pathlib import Path
 
+from . import portable
+
 # Rumik OSS-1 is trained on 30-second utterances; ~400 characters stays under that.
 SPEECH_LIMIT = 400
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
@@ -86,13 +88,36 @@ def _level(frames: bytes, width: int) -> bytes:
 
 
 def to_m4a(wav: Path) -> Path:
-    """AAC .m4a with macOS's built-in afconvert; without it (not a Mac), keep the WAV."""
-    afconvert = shutil.which("afconvert")
-    if not afconvert:
-        return wav
+    """AAC .m4a: macOS's built-in afconvert, else PyAV (Windows, Linux); with neither, keep the WAV."""
     target = wav.with_suffix(".m4a")
-    subprocess.run(
-        [afconvert, "-f", "m4af", "-d", "aac", str(wav), str(target)], check=True, capture_output=True
-    )
+    afconvert = shutil.which("afconvert")
+    if afconvert:
+        subprocess.run(
+            [afconvert, "-f", "m4af", "-d", "aac", str(wav), str(target)], check=True, capture_output=True
+        )
+    elif not _encode_aac(wav, target):
+        return wav
     wav.unlink(missing_ok=True)
     return target
+
+
+def _encode_aac(wav: Path, target: Path) -> bool:
+    """WAV → AAC in an .m4a with PyAV's FFmpeg; False when PyAV isn't installed."""
+    try:
+        import av
+    except ImportError:
+        return False
+    partial = target.with_name(target.name + ".part")
+    with av.open(str(wav)) as source, av.open(str(partial), "w", format="ipod") as out:
+        heard = source.streams.audio[0]
+        stream = out.add_stream("aac", rate=heard.rate, layout="mono" if heard.channels == 1 else "stereo")
+        stream.bit_rate = 96_000
+        resampler = av.AudioResampler(format="fltp", layout=stream.layout, rate=heard.rate)
+        for frame in source.decode(heard):
+            for ready in resampler.resample(frame):
+                out.mux(stream.encode(ready))
+        for ready in resampler.resample(None):
+            out.mux(stream.encode(ready))
+        out.mux(stream.encode(None))
+    portable.replace(partial, target)
+    return True

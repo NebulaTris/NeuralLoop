@@ -61,10 +61,27 @@ def test_to_m4a_uses_afconvert(tmp_path, monkeypatch):
     assert calls[0][:5] == ["/usr/bin/afconvert", "-f", "m4af", "-d", "aac"]
 
 
-def test_to_m4a_keeps_the_wav_without_afconvert(tmp_path, monkeypatch):
+def test_to_m4a_encodes_with_pyav_without_afconvert(tmp_path, monkeypatch):
+    """Windows and Linux: AAC through PyAV (already there for the explainer videos)."""
+    import av
+
     monkeypatch.setattr(audio.shutil, "which", lambda name: None)
+    wav = write_tone(tmp_path / "x.wav", 0.5)
+    result = audio.to_m4a(wav)
+    assert result == tmp_path / "x.m4a"
+    assert not wav.exists()
+    with av.open(str(result)) as made:
+        stream = made.streams.audio[0]
+        assert stream.codec_context.name == "aac"
+        assert abs(float(made.duration / av.time_base) - 0.5) < 0.1
+
+
+def test_to_m4a_keeps_the_wav_without_any_encoder(tmp_path, monkeypatch):
+    monkeypatch.setattr(audio.shutil, "which", lambda name: None)
+    monkeypatch.setattr(audio, "_encode_aac", lambda wav, target: False)
     wav = write_tone(tmp_path / "x.wav", 0.1)
     assert audio.to_m4a(wav) == wav
+    assert wav.exists()
 
 
 def write_level(path, level, seconds=0.5, rate=24000):

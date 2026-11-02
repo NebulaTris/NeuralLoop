@@ -24,6 +24,7 @@ from collections.abc import Callable
 from contextvars import ContextVar, Token
 from pathlib import Path
 
+from . import portable
 from .config import MEDIA_TASKS
 
 DEFAULT_SECONDS: dict[tuple[str, str], int | None] = {
@@ -189,7 +190,7 @@ class Activity:
         try:
             tmp = self.path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
-            os.replace(tmp, self.path)
+            portable.replace(tmp, self.path)
         except OSError:  # the progress feed is a nicety: never fail an item over it
             pass
 

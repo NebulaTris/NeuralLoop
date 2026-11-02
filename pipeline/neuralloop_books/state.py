@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from . import portable
 from .config import MEDIA_TASKS, TASKS
 
 TODO, WORKING, DONE, SKIPPED, WAITING, FAILED = (
@@ -73,7 +74,7 @@ class BookState:
             handle.write(json.dumps(self.data, indent=1, ensure_ascii=False))
             handle.flush()
             os.fsync(handle.fileno())  # on disk before it's swapped in: a power cut never leaves half a file
-        os.replace(tmp, self.path)
+        portable.replace(tmp, self.path)
 
     @property
     def chapters(self) -> list[dict]:

@@ -2,14 +2,13 @@
 
 import asyncio
 import contextlib
-import fcntl
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import bookdata
+from . import bookdata, portable
 from .activity import Activity
 from .chapters import clean_title, split_book
 from .config import DEFAULT_INSTRUCTIONS, MEDIA_TASKS, quota_message
@@ -123,17 +122,20 @@ ALREADY_RUNNING = "This book is already being prepared. Pip will keep going with
 def _book_lock(out: Path):
     """One run per book: a second run stops instead of racing the first on state.json.
 
-    The lock is the operating system's (flock) on `.running`, held for the whole run and released even when
-    the process is killed, so a left-over file never blocks. The file also holds the run's process id.
+    The lock is the operating system's (flock, or msvcrt.locking on Windows) on `.running`, held for the
+    whole run and released even when the process is killed, so a left-over file never blocks. The file also
+    holds the run's process id.
     """
     path = out / ".running"
     while True:
         handle = open(path, "a+")  # noqa: SIM115 - held open for the whole run
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            portable.try_lock(handle)
+        except portable.LockBusy:
             handle.close()
             raise BookProblem(ALREADY_RUNNING) from None
+        if portable.WINDOWS:  # nobody can delete an open file there, and its file ids needn't match
+            break
         try:
             same_file = os.stat(path).st_ino == os.fstat(handle.fileno()).st_ino
         except FileNotFoundError:
@@ -148,8 +150,14 @@ def _book_lock(out: Path):
         handle.flush()
         yield
     finally:
-        path.unlink(missing_ok=True)
-        handle.close()
+        if portable.WINDOWS:  # Windows can't remove a file that's still open; one opened since then stays
+            portable.unlock(handle)
+            handle.close()
+            with contextlib.suppress(PermissionError):
+                path.unlink(missing_ok=True)
+        else:
+            path.unlink(missing_ok=True)
+            handle.close()
 
 
 async def _run(opts: Options, engine) -> BookState:
