@@ -7,11 +7,10 @@ import asyncio
 import json
 import os
 import shutil
-import subprocess
 import urllib.request
 from collections.abc import Callable, Iterator
 
-from . import activity
+from . import activity, portable
 from .models import SetupError, agent_env, is_chat_model
 
 _GB = 1024**3
@@ -19,7 +18,7 @@ DEFAULT_HOST = "http://127.0.0.1:11434"
 
 
 def total_memory() -> int:
-    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return portable.total_memory()
 
 
 def local_model_for_memory(memory: int) -> str:
@@ -41,9 +40,7 @@ def _ollama_up(host: str) -> bool:
 
 
 def _spawn(argv: list[str], env: dict) -> None:
-    subprocess.Popen(
-        argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-    )
+    portable.spawn_detached(argv, env)  # stopping a run never stops Ollama
 
 
 async def ensure_ollama(host: str, log: Callable[[str], None], wait: float = 0.5, attempts: int = 60) -> None:
@@ -52,6 +49,11 @@ async def ensure_ollama(host: str, log: Callable[[str], None], wait: float = 0.5
         return
     binary = os.environ.get("NEURALLOOP_OLLAMA") or shutil.which("ollama")
     if not binary or not os.path.exists(binary):
+        if portable.WINDOWS:  # the Windows app doesn't carry Ollama
+            raise SetupError(
+                "Your PC's own AI needs Ollama, which isn't installed. Get it from ollama.com, then try "
+                "again (or pick another AI in Settings → Your AI)."
+            )
         raise SetupError("Ollama isn't running and isn't installed. Reinstall NeuralLoop, or install Ollama.")
     log("  setup: Starting Pip's local brain (Ollama)…")
     # Ollama keeps running after we exit: it gets the basics and its own settings, never our providers' keys.
@@ -63,7 +65,9 @@ async def ensure_ollama(host: str, log: Callable[[str], None], wait: float = 0.5
         await asyncio.sleep(wait)
         if _ollama_up(host):
             return
-    raise SetupError("Ollama isn't running: it didn't start. Restart your Mac, then open NeuralLoop again.")
+    raise SetupError(
+        f"Ollama isn't running: it didn't start. Restart your {portable.MACHINE}, then open NeuralLoop again."
+    )
 
 
 def _installed_models(host: str) -> list[str]:
@@ -82,7 +86,7 @@ def _stream_pull(host: str, name: str) -> Iterator[dict]:
                 yield json.loads(line)
 
 
-DOWNLOADING = "Downloading your Mac's AI (first time only)"
+DOWNLOADING = f"Downloading your {portable.MACHINE}'s AI (first time only)"
 
 
 async def ensure_model(host: str, name: str, log: Callable[[str], None], any_will_do: bool = False) -> None:
@@ -116,6 +120,35 @@ async def ensure_model(host: str, name: str, log: Callable[[str], None], any_wil
     log(f"  setup: {name} ready")
 
 
+async def ensure_voices(log: Callable[[str], None], quality: str = "fast") -> None:
+    """The local voices: Rumik on Apple silicon, Kokoro everywhere else."""
+    from .speech import apple_silicon
+
+    if apple_silicon():
+        await ensure_rumik(log, quality)
+    else:
+        await ensure_kokoro(log, quality)
+
+
+async def ensure_kokoro(log: Callable[[str], None], quality: str = "fast") -> None:
+    from .speech.kokoro import KokoroSpeech, folder, ready
+
+    speech = KokoroSpeech(None, quality=quality)
+    speech.check()
+    if not ready(folder(), quality):
+        log(f"  setup: Getting Kokoro's voices ready (about {350 if quality == 'best' else 120} MB, once)…")
+        last = [-1]
+
+        def progress(fraction: float) -> None:
+            percent = int(100 * fraction)
+            if percent >= last[0] + 10:
+                log(f"  setup: downloading voices {percent}%")
+                last[0] = percent
+
+        await asyncio.to_thread(speech.load, progress)
+    log("  setup: Kokoro ready")
+
+
 async def ensure_rumik(log: Callable[[str], None], quality: str = "fast") -> None:
     from .speech.rumik import RumikSpeech
 
@@ -134,5 +167,5 @@ async def run_setup(
     await ensure_model(host, model or local_model_for_memory(total_memory()), log)
     if recall_model is not None and recall_model.provider == "ollama" and recall_model.model:
         await ensure_model(host, recall_model.model, log)
-    await ensure_rumik(log, voice_quality)
+    await ensure_voices(log, voice_quality)
     log("Setup: ready")

@@ -8,6 +8,7 @@ import os
 import platform
 import wave
 
+from .. import portable
 from ..models import SetupError
 
 RATE = 24_000
@@ -18,7 +19,7 @@ _GB = 1024**3
 
 
 def total_memory() -> int:
-    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return portable.total_memory()
 
 
 def model_for(memory: int, quality: str = "fast") -> str:
@@ -42,7 +43,11 @@ class RumikSpeech:
                 f"Rumik's voices are {', '.join(VOICES)}; {', '.join(unknown)} isn't one of them."
             )
         if platform.system() != "Darwin" or platform.machine() != "arm64":
-            raise SetupError("Rumik voices need a Mac with Apple silicon (M1 or newer).")
+            raise SetupError(
+                "Voices made on a Mac need Apple silicon (M1 or newer), so this Mac can't voice podcasts "
+                "and videos itself. NotebookLM can still make them: choose NotebookLM for them in "
+                "Settings → Your AI."
+            )
         try:
             import mlx_audio  # noqa: F401
         except ImportError as error:

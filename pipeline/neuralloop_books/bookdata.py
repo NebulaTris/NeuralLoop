@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import book_graph
+from . import book_graph, portable
 from .config import TASKS
 from .state import BookState
 
@@ -95,7 +95,7 @@ def _write_now(out_dir: Path, snapshot: dict, options: dict) -> None:
 def _write_atomic(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    portable.replace(tmp, path)
 
 
 def _cached_chapter_json(out_dir: Path, chapter: dict) -> str:

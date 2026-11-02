@@ -329,9 +329,11 @@ with open({str(log)!r}, "a") as f:
 if args[:2] == ["run", "--help"]:
     print("opencode run [message..]\\n  --standalone  run on a private server")
     sys.exit(0)
+if args[:2] == ["chat", "--help"]:
+    print("hermes chat\\n  --query-file PATH  read the single query from a file ('-' reads stdin)")
+    sys.exit(0)
 from model_mocks import answer
-message = args[args.index("-z") + 1] if "-z" in args else args[-1]
-print(answer(message))
+print(answer(sys.stdin.buffer.read().decode("utf-8")))  # the prompt only ever comes on stdin
 """
     )
     script.chmod(0o755)

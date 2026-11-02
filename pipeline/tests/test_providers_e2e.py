@@ -16,6 +16,7 @@ from neuralloop_books.models import anthropic as anthropic_model
 from neuralloop_books.models import openai_compat, opencode
 
 from .model_mocks import MockServer, fake_cli
+from .platforms import WINDOWS, posix_only
 
 pytest.importorskip("anthropic")
 pytest.importorskip("openai")
@@ -76,6 +77,8 @@ def provider(request, clean_env, tmp_path):
     env = clean_env
     kind = request.param
     if kind in ("opencode", "hermes"):
+        if WINDOWS:
+            pytest.skip("the opencode and Hermes stand-ins are shebang scripts")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / f"{kind}.log"
@@ -366,6 +369,7 @@ def test_a_custom_model_the_server_lacks_is_named(clean_env):
             asyncio.run(model.check())
 
 
+@posix_only
 def test_opencode_free_models_that_refuse_the_command_line_are_setup_needed(clean_env, tmp_path):
     """opencode's free tier answers only inside opencode's own app: say what to pick, don't fail each item."""
     import asyncio
@@ -420,6 +424,7 @@ echo "resolved build agent: ('*', 'deny') data=$XDG_DATA_HOME cache=$XDG_CACHE_H
 """
 
 
+@posix_only
 @pytest.mark.parametrize("place", [".config/opencode", ".opencode", "xdg/opencode"])
 def test_the_persons_opencode_config_can_never_turn_tools_back_on(place, clean_env, tmp_path):
     """Agent permissions in the person's global opencode config are layered after our `*` deny, so opencode
@@ -446,6 +451,7 @@ def test_the_persons_opencode_config_can_never_turn_tools_back_on(place, clean_e
     assert f"data={home}/.local/share" in resolved and f"cache={home}/.cache" in resolved
 
 
+@posix_only
 def test_a_hermes_without_a_model_is_setup_needed(tmp_path):
     import asyncio
 
@@ -454,7 +460,8 @@ def test_a_hermes_without_a_model_is_setup_needed(tmp_path):
 
     script = tmp_path / "hermes"
     script.write_text(
-        "#!/bin/sh\necho \"hermes -z: agent failed: No inference provider configured. Run 'hermes model' to "
+        '#!/bin/sh\nif [ "$2" = --help ]; then echo "  --query-file PATH"; exit 0; fi\n'
+        "echo \"hermes: agent failed: No inference provider configured. Run 'hermes model' to "
         'choose a provider and model." >&2\nexit 1\n'
     )
     script.chmod(0o755)

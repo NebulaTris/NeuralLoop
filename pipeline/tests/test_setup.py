@@ -48,6 +48,17 @@ def test_no_ollama_anywhere_is_a_setup_error(monkeypatch):
         asyncio.run(setup.ensure_ollama("http://localhost:11434", log=lambda _: None, wait=0.01))
 
 
+def test_on_windows_no_ollama_says_where_to_get_it(monkeypatch):
+    """The Windows app doesn't carry Ollama, so reinstalling NeuralLoop wouldn't help."""
+    monkeypatch.setattr(setup, "_ollama_up", lambda host: False)
+    monkeypatch.delenv("NEURALLOOP_OLLAMA", raising=False)
+    monkeypatch.setattr(setup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(setup.portable, "WINDOWS", True)
+    with pytest.raises(SetupError, match=r"ollama\.com") as raised:
+        asyncio.run(setup.ensure_ollama("http://localhost:11434", log=lambda _: None, wait=0.01))
+    assert "Reinstall" not in str(raised.value)
+
+
 def test_model_download_reports_progress(monkeypatch):
     events = [
         {"status": "pulling manifest"},
@@ -127,7 +138,7 @@ def test_a_download_inside_a_book_run_shows_as_the_waiting_items_step(monkeypatc
         feed.end(1, "study", token=token)
 
     asyncio.run(item())
-    assert seen[0]["step"] == "Downloading your Mac's AI (first time only)"
+    assert seen[0]["step"] == f"Downloading your {setup.portable.MACHINE}'s AI (first time only)"
 
 
 def test_with_no_model_named_an_embedding_model_alone_doesnt_count(monkeypatch):

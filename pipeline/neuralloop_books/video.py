@@ -169,6 +169,7 @@ def _decode_png(png: bytes, av):
 # virtual Mac without a hardware encoder); MPEG-4 Part 2 is the final fallback.
 ENCODERS = (
     ("h264_videotoolbox", {"b": "2000k"}),
+    ("h264_mf", {"b": "2000k"}),  # Windows' own (Media Foundation), when PyAV's FFmpeg carries it
     ("libx264", {"crf": "26", "preset": "veryfast", "tune": "animation"}),
     ("mpeg4", {"b": "2000k"}),
 )

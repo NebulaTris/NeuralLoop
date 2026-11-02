@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from .platforms import posix_only
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fake_drive.py"
 
 
@@ -97,6 +99,7 @@ def test_uploads_must_say_how_big_they_are(drive, tmp_path, monkeypatch):
     assert module.FILES == {} and not [p for p in tmp_path.iterdir() if p.name != "index.json"]
 
 
+@posix_only  # the fake Drive is a Mac and Linux tool: owners and symlinks work differently on Windows
 def test_files_are_never_read_or_written_through_symlinks(drive, tmp_path):
     module, port = drive
     secret = tmp_path.parent / "secret.txt"
@@ -110,6 +113,7 @@ def test_files_are_never_read_or_written_through_symlinks(drive, tmp_path):
     assert secret.read_text() == "private"
 
 
+@posix_only  # the fake Drive is a Mac and Linux tool: owners and symlinks work differently on Windows
 def test_the_store_is_private_and_must_be_yours(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("fake_drive", SCRIPT)
     module = importlib.util.module_from_spec(spec)

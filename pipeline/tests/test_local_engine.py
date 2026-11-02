@@ -195,6 +195,18 @@ def test_podcast_hosts_are_named_after_their_voices(tmp_path, chapter):
     assert "Tone A" in prompt and "Tone B" in prompt and "never say" in prompt
 
 
+def test_kokoro_hosts_are_called_by_their_names_not_their_ids(tmp_path, chapter):
+    class KokoroLike(FakeSpeech):
+        voices = ("af_heart", "am_michael")
+
+    model = FakeModel()
+    engine = engine_for(tmp_path, model)
+    engine.speech = KokoroLike()
+    make(engine, "audio", chapter)
+    prompt = next(p for kind, p in model.calls if kind == "audio")
+    assert "Host A is Heart" in prompt and "host B is Michael" in prompt and "af_heart" not in prompt
+
+
 class WatchingSpeech(FakeSpeech):
     """Looks at the transcript file each time a new line is voiced."""
 

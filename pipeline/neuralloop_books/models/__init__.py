@@ -52,10 +52,14 @@ class TextModel(Protocol):
     ) -> str: ...
 
 
-async def communicate(process: asyncio.subprocess.Process, timeout: float) -> tuple[bytes, bytes]:
-    """(stdout, stderr) of a model's command line; on a timeout or a cancelled run, the child stops too."""
+async def communicate(
+    process: asyncio.subprocess.Process, timeout: float, stdin: bytes | None = None
+) -> tuple[bytes, bytes]:
+    """(stdout, stderr) of a model's command line, with `stdin` sent to it (the prompt: book text never goes
+    on a command line, where Windows' cmd.exe could read it and a long chapter goes over Windows' length
+    limit); on a timeout or a cancelled run, the child stops too."""
     try:
-        return await asyncio.wait_for(process.communicate(), timeout)
+        return await asyncio.wait_for(process.communicate(stdin), timeout)
     except (asyncio.TimeoutError, TimeoutError, asyncio.CancelledError):
         with contextlib.suppress(ProcessLookupError):
             process.kill()
@@ -133,6 +137,24 @@ _AGENT_ENV = (
     "http_proxy",
     "https_proxy",
     "no_proxy",
+    # Windows: without these a child can't find its own system folders, temp folder, or profile.
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "USERNAME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
 )
 
 

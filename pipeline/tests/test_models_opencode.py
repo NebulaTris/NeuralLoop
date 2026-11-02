@@ -179,8 +179,8 @@ def test_file_references_still_point_at_the_persons_files(tmp_path):
     _write(folder / "opencode.json", json.dumps({"provider": provider}))
     config, _ = _config({"HOME": str(home)})
     options = config["provider"]["a"]["options"]
-    assert options["apiKey"] == f"{{file:{home}/keys/a.txt}}"
-    assert options["b"] == f"{{file:{folder}/b.txt}}"
+    assert options["apiKey"] == f"{{file:{home / 'keys' / 'a.txt'}}}"
+    assert options["b"] == f"{{file:{folder / 'b.txt'}}}"
     assert options["c"] == "{file:/abs/c"  # not a reference: left as it is
 
 
@@ -188,6 +188,7 @@ def test_a_blank_model_uses_the_persons_default_instead_of_the_free_tier(tmp_pat
     home = tmp_path / "home"
     _write(home / ".config/opencode/opencode.json", JSONC)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # where opencode looks on Windows
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(opencode, "_standalone", {})
     seen = []
@@ -198,7 +199,7 @@ def test_a_blank_model_uses_the_persons_default_instead_of_the_free_tier(tmp_pat
         def __init__(self, argv):
             self.argv = argv
 
-        async def communicate(self):
+        async def communicate(self, stdin=None):
             return (b"--standalone" if "--help" in self.argv else b'{"ok": true}'), b""
 
     async def fake_exec(*argv, **kwargs):
@@ -212,3 +213,39 @@ def test_a_blank_model_uses_the_persons_default_instead_of_the_free_tier(tmp_pat
     sent = json.loads(kwargs["env"]["OPENCODE_CONFIG_CONTENT"])
     assert sent["model"] == "lmstudio/qwen/qwen3-8b" and sent["permission"] == {"*": "deny"}
     assert set(sent) == {"permission", "provider", "model", "small_model"}
+
+
+def test_on_windows_the_profile_folder_is_the_empty_one_too(monkeypatch, tmp_path):
+    """opencode finds its home through USERPROFILE on Windows: that points at the empty folder as well, and
+    the profile path pieces that could lead back to the person's own config are left out."""
+    from neuralloop_books import portable
+
+    monkeypatch.setattr(portable, "WINDOWS", True)
+    env = {
+        "USERPROFILE": str(tmp_path / "pip"),
+        "HOMEDRIVE": "C:",
+        "HOMEPATH": "\\Users\\pip",
+        "SYSTEMROOT": "C:\\Windows",
+        "APPDATA": str(tmp_path / "pip" / "AppData" / "Roaming"),
+        "ANTHROPIC_API_KEY": "sk-ant-never-forwarded-000000",
+    }
+    _settings, built = _config(env, empty=str(tmp_path / "empty"))
+    assert built["USERPROFILE"] == built["HOME"] == str(tmp_path / "empty")
+    assert "HOMEDRIVE" not in built and "HOMEPATH" not in built
+    assert built["SYSTEMROOT"] == "C:\\Windows"  # Windows children need it to start at all
+    assert built["XDG_DATA_HOME"] == str(tmp_path / "pip" / ".local" / "share")  # sign-ins stay theirs
+    assert "ANTHROPIC_API_KEY" not in built
+
+
+def test_on_windows_the_persons_config_is_found_in_their_profile_not_a_unix_home(monkeypatch, tmp_path):
+    """A HOME on Windows is usually Git Bash's or MSYS's; opencode's own config lives under the profile."""
+    from neuralloop_books import portable
+
+    monkeypatch.setattr(portable, "WINDOWS", True)
+    profile, msys = tmp_path / "pip", tmp_path / "msys-home"
+    (profile / ".config" / "opencode").mkdir(parents=True)
+    (profile / ".config" / "opencode" / "opencode.json").write_text(json.dumps({"model": "deepseek/v4"}))
+    env = {"USERPROFILE": str(profile), "HOME": str(msys)}
+    settings, built = _config(env, empty=str(tmp_path / "empty"))
+    assert settings.get("model") == "deepseek/v4"
+    assert built["XDG_DATA_HOME"] == str(profile / ".local" / "share")
