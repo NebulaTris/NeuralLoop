@@ -188,6 +188,7 @@ def test_a_blank_model_uses_the_persons_default_instead_of_the_free_tier(tmp_pat
     home = tmp_path / "home"
     _write(home / ".config/opencode/opencode.json", JSONC)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # where opencode looks on Windows
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(opencode, "_standalone", {})
     seen = []

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import sys
+import types
 import wave
 from typing import ClassVar
 
@@ -32,6 +33,7 @@ class FakeModel:
 def fake_kokoro(monkeypatch, tmp_path):
     """The model and espeak-ng stood in for: espeak "says" the text back with the language asked for."""
     monkeypatch.setattr(kokoro, "KokoroModel", FakeModel)
+    monkeypatch.setitem(sys.modules, "onnxruntime", types.ModuleType("onnxruntime"))  # only imported to check
     monkeypatch.setattr(kokoro.espeak, "phonemize", lambda text, lang="en-us": f"{lang}:{text}")
     monkeypatch.setattr(kokoro.espeak, "require", lambda env=None: ("espeak-ng", None))
     monkeypatch.setenv("NEURALLOOP_KOKORO_DIR", str(tmp_path / "kokoro"))
